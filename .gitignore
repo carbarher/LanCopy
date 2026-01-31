@@ -1,0 +1,25 @@
+﻿# Build output
+**/bin/
+**/obj/
+# VS/IDE
+.vs/
+.vscode/
+*.user
+*.suo
+# NuGet
+*.nupkg
+# Logs/temp
+*.log
+*.tmp
+# Python caches (por si acaso)
+**/__pycache__/
+**/*.pyc
+# Downloads y Backups
+downloads/
+Backups/
+# Archivos grandes
+startup_log.txt
+gutenberg_metadata.csv
+scripts/goodreads_bbe_books.csv
+*.csv
+*.log
