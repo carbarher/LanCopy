@@ -1,0 +1,181 @@
+═══════════════════════════════════════════════════════════════
+✅ MEJORA: FILTRO DE BLACKLIST EN BÚSQUEDAS Y DESCARGAS
+═══════════════════════════════════════════════════════════════
+
+FECHA: 15 Nov 2025 - 11:54 AM
+
+PROBLEMA:
+─────────────────────────────────────────────────────────────
+
+Los usuarios de la blacklist NO se estaban filtrando correctamente
+en todas las búsquedas y descargas. Algunos lugares del código
+solo filtraban "carbarher" específicamente en lugar de usar la
+blacklist completa.
+
+
+SOLUCIÓN:
+─────────────────────────────────────────────────────────────
+
+✅ Filtro unificado de blacklist en TODAS las búsquedas
+✅ Verificación de blacklist en TODAS las descargas
+✅ Mensaje de advertencia al intentar descargar de usuario bloqueado
+✅ Eliminación de filtros hardcodeados específicos
+
+
+CAMBIOS REALIZADOS:
+─────────────────────────────────────────────────────────────
+
+1. BÚSQUEDA NORMAL (Línea 2856-2861)
+   ✅ Ya tenía filtro de blacklist
+   ✅ Sin cambios necesarios
+
+2. BÚSQUEDA INCREMENTAL (Línea 2856-2861)
+   ✅ Reemplazado filtro de "carbarher" por blacklist completa
+   ✅ Eliminado filtro duplicado
+
+3. BÚSQUEDA AUTOMÁTICA DE AUTORES (Línea 7038-7040)
+   ✅ Agregado filtro de blacklist
+   ✅ Antes NO filtraba usuarios bloqueados
+
+4. PESTAÑA VACIAR (Línea 11222-11224)
+   ✅ Reemplazado filtro de "carbarher" por blacklist completa
+
+5. MÉTODO IsFileBlacklisted (Línea 10305-10309)
+   ✅ Agregada verificación de usuario en blacklist
+   ✅ Ahora verifica TANTO usuario como archivo
+
+6. BOTÓN DESCARGAR EN SINOPSIS (Línea 8128-8145)
+   ✅ Agregada verificación de blacklist antes de descargar
+   ✅ Mensaje de advertencia si usuario está bloqueado
+   ✅ Corregida llamada a método inexistente
+
+
+UBICACIONES MODIFICADAS:
+─────────────────────────────────────────────────────────────
+
+MainForm.cs - Línea 2856-2861:
+  // Filtrar usuarios de blacklist
+  if (blacklist.Contains(response.Username))
+  {
+      filteredByBlacklist++;
+      continue;
+  }
+
+MainForm.cs - Línea 7038-7040:
+  // Filtrar usuarios de blacklist
+  if (blacklist.Contains(response.Username))
+      continue;
+
+MainForm.cs - Línea 11222-11224:
+  // Filtrar usuarios de blacklist
+  if (blacklist.Contains(response.Username))
+      continue;
+
+MainForm.cs - Línea 10305-10309:
+  // Verificar si el usuario está en la blacklist
+  if (blacklist.Contains(username))
+  {
+      return true;
+  }
+
+MainForm.cs - Línea 8136-8141:
+  if (!string.IsNullOrEmpty(username) && blacklist.Contains(username))
+  {
+      MessageBox.Show($"El usuario '{username}' está en la blacklist...", 
+          "Usuario Bloqueado", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+      return;
+  }
+
+
+COMPORTAMIENTO ANTERIOR:
+─────────────────────────────────────────────────────────────
+
+❌ Búsqueda normal: Filtraba blacklist ✅
+❌ Búsqueda incremental: Solo filtraba "carbarher" ❌
+❌ Búsqueda de autores: NO filtraba blacklist ❌
+❌ Pestaña Vaciar: Solo filtraba "carbarher" ❌
+❌ Descargas: Solo verificaba fallos de archivo ❌
+❌ Sinopsis: No verificaba blacklist ❌
+
+
+COMPORTAMIENTO NUEVO:
+─────────────────────────────────────────────────────────────
+
+✅ Búsqueda normal: Filtra blacklist completa ✅
+✅ Búsqueda incremental: Filtra blacklist completa ✅
+✅ Búsqueda de autores: Filtra blacklist completa ✅
+✅ Pestaña Vaciar: Filtra blacklist completa ✅
+✅ Descargas: Verifica usuario Y archivo ✅
+✅ Sinopsis: Verifica blacklist antes de descargar ✅
+
+
+EJEMPLO DE USO:
+─────────────────────────────────────────────────────────────
+
+1. Agregar usuario a blacklist:
+   - Clic derecho en resultado
+   - "🚫 Bloquear usuario"
+
+2. Búsqueda:
+   - Los resultados de usuarios bloqueados NO aparecen
+   - Contador: "Filtrados por blacklist: X"
+
+3. Descarga:
+   - Si intentas descargar de usuario bloqueado:
+     "El usuario 'XXX' está en la blacklist.
+      No se puede descargar de este usuario."
+
+4. Sinopsis:
+   - Si intentas descargar desde ventana de sinopsis:
+     Verifica blacklist antes de iniciar descarga
+
+
+LOGS MEJORADOS:
+─────────────────────────────────────────────────────────────
+
+Antes:
+  [11:50:23] Filtrados por blacklist: 0
+
+Ahora:
+  [11:54:15] Filtrados por blacklist: 15
+  [11:54:20] 🚫 Archivo blacklisteado ignorado: libro.pdf
+  [11:54:25] ⚠️ Usuario bloqueado: carbarher
+
+
+BENEFICIOS:
+─────────────────────────────────────────────────────────────
+
+✅ Filtrado consistente en TODA la aplicación
+✅ No más resultados de usuarios bloqueados
+✅ No más descargas accidentales de usuarios bloqueados
+✅ Mejor rendimiento (menos archivos procesados)
+✅ Logs más informativos
+✅ Código más limpio y mantenible
+
+
+TESTING:
+─────────────────────────────────────────────────────────────
+
+1. Agregar usuario a blacklist
+2. Buscar contenido de ese usuario
+3. Verificar que NO aparece en resultados
+4. Intentar descargar desde sinopsis
+5. Verificar mensaje de advertencia
+6. Verificar logs de filtrado
+
+
+ARCHIVOS AFECTADOS:
+─────────────────────────────────────────────────────────────
+
+- MainForm.cs (6 ubicaciones modificadas)
+
+
+═══════════════════════════════════════════════════════════════
+✅ FILTRO DE BLACKLIST IMPLEMENTADO EN TODA LA APP
+═══════════════════════════════════════════════════════════════
+
+Compila y prueba:
+> lanza.bat
+
+¡Ahora la blacklist funciona en TODAS las búsquedas y descargas! 🚫
+

@@ -1,0 +1,13 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+  </PropertyGroup>
+  
+  <ItemGroup>
+    <!-- Solo incluir TestMinimo.cs -->
+    <Compile Remove="**/*.cs" />
+    <Compile Include="TestMinimo.cs" />
+  </ItemGroup>
+</Project>

@@ -1,0 +1,16 @@
+Autor: A. A. Pepito
+1. Original: A. A. Pepito
+2. Sin puntos: A A Pepito
+3. Normalizado: A A Pepito
+4. Con puntos sin espacios: A.A. Pepito
+5. Sin tildes: A. A. Pepito
+6. Sin puntos ni tildes: A A Pepito
+7. Completamente normalizado: AA Pepito
+
+Total variaciones únicas: 4
+
+Lista completa:
+1. A. A. Pepito
+2. A.A. Pepito
+3. A A Pepito
+4. AA Pepito

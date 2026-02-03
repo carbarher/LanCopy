@@ -1,0 +1,133 @@
+╔══════════════════════════════════════════════════════════════════════════════╗
+║                    🔐 GUÍA DE INSTALACIÓN MULLVAD VPN                        ║
+║                         Para SlskDown Auto-Reconnect                         ║
+╚══════════════════════════════════════════════════════════════════════════════╝
+
+📥 PASO 1: DESCARGAR MULLVAD
+═══════════════════════════════════════════════════════════════════════════════
+1. Abre tu navegador
+2. Ve a: https://mullvad.net/download/windows
+3. Descarga "MullvadVPN-[version].exe"
+4. Ejecuta el instalador
+5. Sigue las instrucciones (Next → Next → Install)
+
+💳 PASO 2: CREAR CUENTA
+═══════════════════════════════════════════════════════════════════════════════
+1. Ve a: https://mullvad.net/account/create
+2. Click en "Generate account number"
+3. GUARDA TU NÚMERO DE CUENTA (16 dígitos)
+   Ejemplo: 1234 5678 9012 3456
+4. Añade tiempo (€5 = 1 mes)
+   - Tarjeta de crédito
+   - PayPal
+   - Bitcoin (anónimo)
+   - Efectivo por correo (anónimo)
+
+🔧 PASO 3: CONFIGURAR MULLVAD
+═══════════════════════════════════════════════════════════════════════════════
+1. Abre Mullvad VPN (icono en escritorio)
+2. Pega tu número de cuenta
+3. Click "Login"
+4. Espera a que se conecte
+5. Cierra la ventana (quedará en bandeja del sistema)
+
+✅ PASO 4: VERIFICAR CLI
+═══════════════════════════════════════════════════════════════════════════════
+1. Abre CMD o PowerShell
+2. Ejecuta: mullvad status
+3. Deberías ver: "Tunnel status: Connected"
+
+Si no funciona:
+- Cierra y abre CMD de nuevo
+- O usa la ruta completa:
+  "C:\Program Files\Mullvad VPN\resources\mullvad.exe" status
+
+🎯 PASO 5: ACTIVAR EN SLSKDOWN
+═══════════════════════════════════════════════════════════════════════════════
+1. Cierra SlskDown si está abierto
+2. Abre: C:\Users\carlo\AppData\Roaming\SlskDown\config.json
+3. Busca la línea: "useVpnOnBlock": false
+4. Cámbiala a: "useVpnOnBlock": true
+5. Guarda el archivo
+6. Abre SlskDown
+
+🔍 PASO 6: VERIFICAR FUNCIONAMIENTO
+═══════════════════════════════════════════════════════════════════════════════
+Cuando SlskDown detecte un bloqueo, verás en los logs:
+
+[12:30:45] 🚨 BLOQUEO DETECTADO
+[12:30:45] 🔄 Cambiando IP con VPN...
+[12:30:45] 🔍 Detectando VPN instalada...
+[12:30:45] ✅ Mullvad VPN detectado
+[12:30:45] 🌐 IP actual: 79.155.224.30
+[12:30:45] 🔄 Conectando a Mullvad (España)...
+[12:30:47] ✅ Conectado a Mullvad
+[12:30:47] 🌐 Nueva IP: 185.213.154.123
+[12:30:47] ✅ IP cambiada exitosamente
+[12:30:47] 🔄 Reintentando conexión a Soulseek...
+
+📍 UBICACIONES DISPONIBLES
+═══════════════════════════════════════════════════════════════════════════════
+SlskDown rotará automáticamente entre:
+- España (Madrid, Barcelona)
+- Francia (París)
+- Alemania (Berlín, Frankfurt)
+- Países Bajos (Ámsterdam)
+- Suecia (Estocolmo)
+
+💡 COMANDOS ÚTILES (MANUAL)
+═══════════════════════════════════════════════════════════════════════════════
+Ver estado:
+  mullvad status
+
+Conectar:
+  mullvad connect
+
+Desconectar:
+  mullvad disconnect
+
+Cambiar ubicación:
+  mullvad relay set location es mad    (Madrid)
+  mullvad relay set location fr par    (París)
+  mullvad relay set location de ber    (Berlín)
+
+Ver IP actual:
+  mullvad status
+
+Listar ubicaciones:
+  mullvad relay list
+
+🔧 SOLUCIÓN DE PROBLEMAS
+═══════════════════════════════════════════════════════════════════════════════
+❌ "mullvad no se reconoce como comando"
+   → Reinicia CMD/PowerShell
+   → O usa ruta completa: "C:\Program Files\Mullvad VPN\resources\mullvad.exe"
+
+❌ "Account doesn't have enough credit"
+   → Añade tiempo en: https://mullvad.net/account/[tu-numero]
+
+❌ SlskDown no detecta Mullvad
+   → Verifica que Mullvad esté instalado
+   → Ejecuta: mullvad status
+   → Si funciona, reinicia SlskDown
+
+❌ No cambia la IP
+   → Verifica logs de SlskDown
+   → Asegúrate que useVpnOnBlock = true en config.json
+
+💰 PRECIO
+═══════════════════════════════════════════════════════════════════════════════
+€5 por mes (sin variaciones)
+Sin suscripción automática
+Pago único por el tiempo que quieras
+
+📞 SOPORTE
+═══════════════════════════════════════════════════════════════════════════════
+Web: https://mullvad.net/help
+Email: support@mullvad.net
+Guías: https://mullvad.net/help/tag/mullvad-app/
+
+═══════════════════════════════════════════════════════════════════════════════
+Una vez instalado y configurado, SlskDown cambiará automáticamente tu IP
+cuando detecte un bloqueo de Soulseek. ¡No tendrás que hacer nada!
+═══════════════════════════════════════════════════════════════════════════════

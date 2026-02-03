@@ -1,0 +1,111 @@
+{
+  "version": "2.0",
+  "last_updated": "2025-10-31T21:54:00Z",
+  "ui": {
+    "window_state": {
+      "maximized": false,
+      "left": 100,
+      "top": 100,
+      "width": 1200,
+      "height": 800
+    },
+    "theme": "dark",
+    "language": "es",
+    "font_size": 9,
+    "show_tooltips": true,
+    "enable_animations": true,
+    "double_buffered": true
+  },
+  "search": {
+    "max_results": 1000,
+    "default_filters": {
+      "min_size_mb": 0,
+      "max_size_mb": 1000,
+      "min_bitrate": 0,
+      "extensions": ["mp3", "flac", "wav", "m4a", "ogg"]
+    },
+    "country_filter": "all",
+    "sort_by": "size",
+    "sort_descending": true,
+    "auto_clear_results": false
+  },
+  "downloads": {
+    "auto_download_best_quality": true,
+    "max_concurrent": 5,
+    "retry_failed": true,
+    "max_retries": 3,
+    "organize_by_folder": true,
+    "create_artist_folders": true,
+    "duplicate_action": "skip"
+  },
+  "performance": {
+    "use_rust_core": true,
+    "enable_simd": true,
+    "enable_object_pooling": true,
+    "cache_size_mb": 100,
+    "parallel_searches": 10,
+    "gc_optimization": true
+  },
+  "features": {
+    "incognito_mode": false,
+    "auto_search_enabled": true,
+    "watchlist_enabled": true,
+    "blacklist_enabled": true,
+    "web_dashboard_enabled": false,
+    "real_time_updates": true,
+    "sound_notifications": false,
+    "minimize_to_tray": true
+  },
+  "advanced": {
+    "debug_mode": false,
+    "verbose_logging": false,
+    "performance_monitoring": true,
+    "experimental_features": false,
+    "force_rust_core": false,
+    "disable_fallback": false
+  },
+  "shortcuts": {
+    "search": "Enter",
+    "clear": "Escape",
+    "download": "Ctrl+D",
+    "select_all": "Ctrl+A",
+    "incognito": "F12",
+    "refresh": "F5",
+    "settings": "Ctrl+S"
+  },
+  "columns": {
+    "results": {
+      "username": {"width": 120, "visible": true},
+      "country": {"width": 60, "visible": true},
+      "filename": {"width": 300, "visible": true},
+      "size": {"width": 80, "visible": true},
+      "extension": {"width": 60, "visible": true},
+      "bitrate": {"width": 70, "visible": true},
+      "duration": {"width": 70, "visible": true},
+      "folder": {"width": 200, "visible": true}
+    },
+    "downloads": {
+      "filename": {"width": 250, "visible": true},
+      "username": {"width": 100, "visible": true},
+      "size": {"width": 80, "visible": true},
+      "progress": {"width": 150, "visible": true},
+      "speed": {"width": 80, "visible": true},
+      "status": {"width": 100, "visible": true}
+    }
+  },
+  "notifications": {
+    "download_complete": true,
+    "search_finished": false,
+    "connection_lost": true,
+    "user_found": true,
+    "error_occurred": true
+  },
+  "network": {
+    "connection_timeout": 30,
+    "search_timeout": 60,
+    "download_timeout": 300,
+    "max_retries": 3,
+    "rate_limit_searches": 10,
+    "rate_limit_downloads": 5
+  }
+}

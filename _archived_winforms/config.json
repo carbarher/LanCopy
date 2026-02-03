@@ -1,0 +1,29 @@
+{
+  "searchHistory": [
+    "asimov"
+  ],
+  "favorites": [
+    "asimov"
+  ],
+  "downloadDir": "c:\\p2p\\downloads",
+  "username": "carbar",
+  "password": "Carlos66*",
+  "autoConnect": true,
+  "maxParallelDownloads": 4,
+  "maxDownloadsPerProvider": 1,
+  "maxSearchesPerMinute": 10,
+  "maxParallelPurgeSearches": 8,
+  "useAdaptiveParallelism": true,
+  "maxRetries": 3,
+  "searchTimeout": 60,
+  "responseLimit": 0,
+  "fileLimit": 0,
+  "listenPort": 50000,
+  "enableDistributedNetwork": true,
+  "enableSoulseek": true,
+  "enableEmule": true,
+  "emulePassword": "slskdown123",
+  "aiEnabled": true,
+  "ollamaUrl": "http://localhost:11434",
+  "ollamaModel": "llama3.2:3b"
+}

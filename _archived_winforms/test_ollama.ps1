@@ -1,0 +1,165 @@
+# Script de Prueba de Ollama para SlskDown
+# Ejecutar con: powershell -ExecutionPolicy Bypass -File test_ollama.ps1
+
+Write-Host "================================================" -ForegroundColor Cyan
+Write-Host "   PRUEBA DE CONEXIÓN CON OLLAMA" -ForegroundColor Cyan
+Write-Host "================================================" -ForegroundColor Cyan
+Write-Host ""
+
+# Test 1: Verificar si Ollama está instalado
+Write-Host "[1/5] Verificando instalación de Ollama..." -ForegroundColor Yellow
+try {
+    $version = & ollama --version 2>&1
+    if ($LASTEXITCODE -eq 0) {
+        Write-Host "  ✅ Ollama instalado: $version" -ForegroundColor Green
+    } else {
+        Write-Host "  ❌ Ollama NO está instalado" -ForegroundColor Red
+        Write-Host "  📥 Descarga desde: https://ollama.ai/download" -ForegroundColor Yellow
+        exit 1
+    }
+} catch {
+    Write-Host "  ❌ Ollama NO está instalado" -ForegroundColor Red
+    Write-Host "  📥 Descarga desde: https://ollama.ai/download" -ForegroundColor Yellow
+    exit 1
+}
+
+Write-Host ""
+
+# Test 2: Verificar si el servidor está corriendo
+Write-Host "[2/5] Verificando servidor Ollama..." -ForegroundColor Yellow
+try {
+    $response = Invoke-WebRequest -Uri "http://localhost:11434/api/tags" -Method GET -TimeoutSec 5 -ErrorAction Stop
+    if ($response.StatusCode -eq 200) {
+        Write-Host "  ✅ Servidor Ollama corriendo en http://localhost:11434" -ForegroundColor Green
+    }
+} catch {
+    Write-Host "  ❌ Servidor Ollama NO está corriendo" -ForegroundColor Red
+    Write-Host "  🚀 Ejecuta en otra terminal: ollama serve" -ForegroundColor Yellow
+    Write-Host "  ⏳ Esperando 5 segundos para que inicies Ollama..." -ForegroundColor Yellow
+    Start-Sleep -Seconds 5
+    
+    # Reintentar
+    try {
+        $response = Invoke-WebRequest -Uri "http://localhost:11434/api/tags" -Method GET -TimeoutSec 5 -ErrorAction Stop
+        Write-Host "  ✅ Servidor Ollama ahora está corriendo" -ForegroundColor Green
+    } catch {
+        Write-Host "  ❌ Servidor sigue sin responder" -ForegroundColor Red
+        Write-Host "  💡 Abre otra terminal y ejecuta: ollama serve" -ForegroundColor Yellow
+        exit 1
+    }
+}
+
+Write-Host ""
+
+# Test 3: Verificar modelos instalados
+Write-Host "[3/5] Verificando modelos instalados..." -ForegroundColor Yellow
+try {
+    $models = & ollama list 2>&1
+    if ($models -match "llama2|mistral|phi|codellama") {
+        Write-Host "  ✅ Modelos encontrados:" -ForegroundColor Green
+        Write-Host $models
+    } else {
+        Write-Host "  ⚠️  No hay modelos instalados" -ForegroundColor Yellow
+        Write-Host "  📥 Descarga un modelo: ollama pull llama2" -ForegroundColor Yellow
+        Write-Host "  ⏳ ¿Quieres descargar llama2 ahora? (S/N)" -ForegroundColor Cyan
+        $download = Read-Host
+        if ($download -eq "S" -or $download -eq "s") {
+            Write-Host "  📥 Descargando llama2 (~3.8 GB)..." -ForegroundColor Yellow
+            & ollama pull llama2
+            Write-Host "  ✅ Modelo descargado" -ForegroundColor Green
+        }
+    }
+} catch {
+    Write-Host "  ❌ Error verificando modelos" -ForegroundColor Red
+}
+
+Write-Host ""
+
+# Test 4: Probar API de generación
+Write-Host "[4/5] Probando API de generación..." -ForegroundColor Yellow
+try {
+    $body = @{
+        model = "llama2"
+        prompt = "Di solo 'Hola' en español"
+        stream = $false
+    } | ConvertTo-Json
+
+    $response = Invoke-RestMethod -Uri "http://localhost:11434/api/generate" -Method POST -Body $body -ContentType "application/json" -TimeoutSec 30
+    
+    if ($response.response) {
+        Write-Host "  ✅ API funcionando correctamente" -ForegroundColor Green
+        Write-Host "  🤖 Respuesta: $($response.response)" -ForegroundColor Cyan
+    }
+} catch {
+    Write-Host "  ❌ Error en API: $($_.Exception.Message)" -ForegroundColor Red
+    if ($_.Exception.Message -match "404") {
+        Write-Host "  💡 Modelo 'llama2' no encontrado. Descárgalo con: ollama pull llama2" -ForegroundColor Yellow
+    }
+}
+
+Write-Host ""
+
+# Test 5: Verificar configuración de SlskDown
+Write-Host "[5/5] Verificando configuración de SlskDown..." -ForegroundColor Yellow
+$configPath = "$env:APPDATA\SlskDown\config.json"
+if (Test-Path $configPath) {
+    $config = Get-Content $configPath | ConvertFrom-Json
+    Write-Host "  ✅ Configuración encontrada" -ForegroundColor Green
+    Write-Host "  • IA Activada: $($config.aiEnabled)" -ForegroundColor Cyan
+    Write-Host "  • URL Ollama: $($config.ollamaUrl)" -ForegroundColor Cyan
+    Write-Host "  • Modelo: $($config.ollamaModel)" -ForegroundColor Cyan
+    
+    if ($config.aiEnabled -eq $false) {
+        Write-Host "  ⚠️  IA está desactivada en SlskDown" -ForegroundColor Yellow
+        Write-Host "  💡 Actívala en: Configuración > IA > Activar Ollama" -ForegroundColor Yellow
+    }
+} else {
+    Write-Host "  ⚠️  Archivo de configuración no encontrado" -ForegroundColor Yellow
+    Write-Host "  💡 Ejecuta SlskDown al menos una vez para crear la configuración" -ForegroundColor Yellow
+}
+
+Write-Host ""
+Write-Host "================================================" -ForegroundColor Cyan
+Write-Host "   RESUMEN" -ForegroundColor Cyan
+Write-Host "================================================" -ForegroundColor Cyan
+
+# Resumen final
+$allOk = $true
+Write-Host ""
+Write-Host "Estado de componentes:" -ForegroundColor White
+Write-Host "  • Ollama instalado: " -NoNewline
+if ($version) { Write-Host "✅" -ForegroundColor Green } else { Write-Host "❌" -ForegroundColor Red; $allOk = $false }
+
+Write-Host "  • Servidor corriendo: " -NoNewline
+try {
+    $test = Invoke-WebRequest -Uri "http://localhost:11434/api/tags" -Method GET -TimeoutSec 2 -ErrorAction Stop
+    Write-Host "✅" -ForegroundColor Green
+} catch {
+    Write-Host "❌" -ForegroundColor Red
+    $allOk = $false
+}
+
+Write-Host "  • Modelos instalados: " -NoNewline
+$modelList = & ollama list 2>&1
+if ($modelList -match "llama2|mistral|phi") { Write-Host "✅" -ForegroundColor Green } else { Write-Host "❌" -ForegroundColor Red; $allOk = $false }
+
+Write-Host ""
+
+if ($allOk) {
+    Write-Host "🎉 ¡TODO LISTO! Ollama está configurado correctamente" -ForegroundColor Green
+    Write-Host "   Puedes usar las funcionalidades de IA en SlskDown" -ForegroundColor Green
+} else {
+    Write-Host "⚠️  Hay problemas con la configuración" -ForegroundColor Yellow
+    Write-Host "   Revisa los pasos anteriores y corrige los errores" -ForegroundColor Yellow
+    Write-Host ""
+    Write-Host "Pasos para solucionar:" -ForegroundColor Cyan
+    Write-Host "  1. Descarga Ollama: https://ollama.ai/download" -ForegroundColor White
+    Write-Host "  2. Ejecuta: ollama serve" -ForegroundColor White
+    Write-Host "  3. Descarga modelo: ollama pull llama2" -ForegroundColor White
+    Write-Host "  4. Activa IA en SlskDown (Configuración)" -ForegroundColor White
+}
+
+Write-Host ""
+Write-Host "================================================" -ForegroundColor Cyan
+Write-Host "Presiona cualquier tecla para salir..." -ForegroundColor Gray
+$null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")

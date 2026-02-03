@@ -1,0 +1,145 @@
+═══════════════════════════════════════════════════════════════
+✅ CORREGIDO: ERROR AL GUARDAR COLA DE DESCARGAS
+═══════════════════════════════════════════════════════════════
+
+FECHA: 15 Nov 2025 - 10:44 AM
+
+PROBLEMA DETECTADO:
+─────────────────────────────────────────────────────────────
+
+Error en el log:
+❌ "The process cannot access the file 'download_queue.json' 
+   because it is being used by another process."
+
+CAUSA RAÍZ:
+─────────────────────────────────────────────────────────────
+
+En la línea 13553-13554 se llamaban AMBOS métodos simultáneamente:
+
+```csharp
+// ❌ ANTES (INCORRECTO):
+if (saveCounter >= 60)
+{
+    _ = SaveDownloadQueueAsync();  // Versión async
+    SaveDownloadQueue();           // Versión sync ← CONFLICTO!
+    saveCounter = 0;
+}
+```
+
+Ambos métodos intentaban escribir al mismo archivo al mismo tiempo,
+causando conflictos de acceso.
+
+
+SOLUCIONES IMPLEMENTADAS:
+─────────────────────────────────────────────────────────────
+
+1. ✅ Eliminada llamada duplicada (línea 13553)
+   - Solo se usa SaveDownloadQueueAsync()
+   - Se eliminó SaveDownloadQueue() del loop
+
+2. ✅ Agregado semáforo de guardado (línea 336)
+   - SemaphoreSlim saveQueueSemaphore = new SemaphoreSlim(1, 1)
+   - Evita guardados simultáneos
+   - Si hay un guardado en progreso, se salta el siguiente
+
+3. ✅ Mejorado SaveDownloadQueueAsync() (líneas 15121-15174)
+   - Usa semáforo para bloqueo
+   - Si ya hay guardado en progreso, retorna inmediatamente
+   - Finally garantiza que se libera el semáforo
+
+4. ✅ Agregado campo Priority a serialización (línea 15156)
+   - Antes faltaba y se perdía al restaurar
+   - Ahora se guarda y restaura correctamente
+
+
+CÓDIGO MODIFICADO:
+─────────────────────────────────────────────────────────────
+
+// Nuevo campo de clase:
+private readonly SemaphoreSlim saveQueueSemaphore = new SemaphoreSlim(1, 1);
+
+// Método mejorado:
+private async Task SaveDownloadQueueAsync()
+{
+    // Evitar guardados simultáneos
+    if (!await saveQueueSemaphore.WaitAsync(0))
+    {
+        return; // Ya hay un guardado en progreso, saltar
+    }
+    
+    try
+    {
+        // ... código de guardado ...
+        
+        var serializableQueue = snapshot.Select(t => new
+        {
+            t.File,
+            t.LocalPath,
+            Status = t.Status.ToString(),
+            Priority = t.Priority.ToString(),  // ← NUEVO
+            t.BytesDownloaded,
+            t.ProgressPercent
+        }).ToList();
+        
+        // ... guardar archivo ...
+    }
+    catch (Exception ex)
+    {
+        Log($"❌ Error guardando cola: {ex.Message}");
+    }
+    finally
+    {
+        saveQueueSemaphore.Release();  // ← Siempre libera
+    }
+}
+
+// Loop de descargas simplificado:
+if (saveCounter >= 60)
+{
+    _ = SaveDownloadQueueAsync();  // Solo async
+    saveCounter = 0;
+}
+
+
+BENEFICIOS:
+─────────────────────────────────────────────────────────────
+
+✅ No más errores de archivo bloqueado
+✅ Guardado thread-safe con semáforo
+✅ Prioridades se guardan y restauran correctamente
+✅ Si hay guardado en progreso, se salta sin error
+✅ Mejor rendimiento (no bloquea)
+
+
+RESULTADO ESPERADO:
+─────────────────────────────────────────────────────────────
+
+Antes:
+[10:42:42] ❌ Error guardando cola: The process cannot access...
+[10:42:43] 💾 Cola de descargas guardada: 148 tareas pendientes
+[10:42:43] ❌ Error guardando cola: The process cannot access...
+
+Ahora:
+[10:42:42] 💾 Cola de descargas guardada: 148 tareas pendientes
+[10:43:12] 💾 Cola de descargas guardada: 149 tareas pendientes
+[10:43:43] 💾 Cola de descargas guardada: 150 tareas pendientes
+✅ Sin errores
+
+
+ARCHIVOS MODIFICADOS:
+─────────────────────────────────────────────────────────────
+
+1. MainForm.cs
+   - Línea 336: Agregado saveQueueSemaphore
+   - Línea 13553: Eliminada llamada duplicada
+   - Líneas 15121-15174: Mejorado SaveDownloadQueueAsync()
+   - Línea 15156: Agregado campo Priority
+
+
+═══════════════════════════════════════════════════════════════
+✅ GUARDADO DE COLA AHORA ES THREAD-SAFE Y SIN CONFLICTOS
+═══════════════════════════════════════════════════════════════
+
+Compila y prueba:
+> lanza.bat
+

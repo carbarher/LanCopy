@@ -1,0 +1,447 @@
+Isaac Asimov
+Arthur C. Clarke
+Philip K. Dick
+Robert A. Heinlein
+Frank Herbert
+Ray Bradbury
+Ursula K. Le Guin
+William Gibson
+Neal Stephenson
+Orson Scott Card
+Larry Niven
+Frederik Pohl
+Stanislaw Lem
+Kurt Vonnegut
+H.G. Wells
+Jules Verne
+Douglas Adams
+Dan Simmons
+Iain M. Banks
+Alastair Reynolds
+Peter F. Hamilton
+Kim Stanley Robinson
+Greg Egan
+China Miéville
+Ann Leckie
+N.K. Jemisin
+Liu Cixin
+Ted Chiang
+Andy Weir
+John Scalzi
+Vernor Vinge
+Greg Bear
+Octavia Butler
+Connie Willis
+Lois McMaster Bujold
+Robert Charles Wilson
+Charles Stross
+Cory Doctorow
+Paolo Bacigalupi
+James S.A. Corey
+Pierce Brown
+Hugh Howey
+Blake Crouch
+Dennis E. Taylor
+Martha Wells
+Becky Chambers
+Adrian Tchaikovsky
+Arkady Martine
+Yoon Ha Lee
+Mary Robinette Kowal
+Nnedi Okorafor
+Jeff VanderMeer
+Richard K. Morgan
+Hannu Rajaniemi
+Ken Liu
+Kameron Hurley
+John Brunner
+Alfred Bester
+Clifford D. Simak
+A.E. van Vogt
+Jack Vance
+Poul Anderson
+Harlan Ellison
+Roger Zelazny
+Samuel R. Delany
+Gene Wolfe
+C.J. Cherryh
+David Brin
+Joe Haldeman
+Cordwainer Smith
+Jack Williamson
+E.E. Doc Smith
+Robert Silverberg
+Michael Moorcock
+Brian Aldiss
+J.G. Ballard
+Olaf Stapledon
+Cyril M. Kornbluth
+Theodore Sturgeon
+Leigh Brackett
+Andre Norton
+Marion Zimmer Bradley
+Anne McCaffrey
+David Weber
+Timothy Zahn
+Kevin J. Anderson
+Brandon Sanderson
+Patrick Rothfuss
+Dmitry Glukhovsky
+Sergei Lukyanenko
+Andrzej Sapkowski
+Jacek Dukaj
+Robert J. Sawyer
+Spider Robinson
+David Drake
+Jerry Pournelle
+S.M. Stirling
+Eric Flint
+Tad Williams
+Robin Hobb
+Philip José Farmer
+Harry Harrison
+Gordon R. Dickson
+Keith Laumer
+James White
+Edmond Hamilton
+Murray Leinster
+Fredric Brown
+Henry Kuttner
+C.L. Moore
+Hal Clement
+James Blish
+Damon Knight
+Algis Budrys
+Walter M. Miller Jr.
+Philip Wylie
+John Wyndham
+Arthur Conan Doyle
+Edgar Rice Burroughs
+E.R. Eddison
+Lord Dunsany
+Abraham Merritt
+Robert E. Howard
+Clark Ashton Smith
+H.P. Lovecraft
+August Derleth
+Lin Carter
+L. Sprague de Camp
+Fletcher Pratt
+Fritz Leiber
+Michael Crichton
+Tom Clancy
+Clive Cussler
+Dean Koontz
+Stephen Baxter
+Ben Bova
+Gregory Benford
+Nancy Kress
+Linda Nagata
+Justina Robson
+Gwyneth Jones
+Kathleen Ann Goonan
+Elizabeth Moon
+Catherine Asaro
+Melissa Scott
+Nicola Griffith
+Nalo Hopkinson
+Karen Joy Fowler
+Kelly Link
+Maureen F. McHugh
+Kij Johnson
+Elizabeth Bear
+Sarah Monette
+Jo Walton
+Catherynne M. Valente
+Aliette de Bodard
+Amal El-Mohtar
+Max Gladstone
+Seth Dickinson
+Kai Ashante Wilson
+Annalee Newitz
+Charlie Jane Anders
+Malka Older
+Sam J. Miller
+Rivers Solomon
+Tamsyn Muir
+Alix E. Harrow
+Rebecca Roanhorse
+Silvia Moreno-Garcia
+P. Djèlí Clark
+Tochi Onyebuchi
+Neon Yang
+Fonda Lee
+R.F. Kuang
+Xiran Jay Zhao
+Cixin Liu
+Hao Jingfang
+Chen Qiufan
+Ma Boyong
+Qiufan Chen
+Lavie Tidhar
+Lauren Beukes
+Nnedi Okorafor
+Tade Thompson
+Wole Talabi
+Suyi Davies Okungbowa
+Namwali Serpell
+Marlon James
+Nisi Shawl
+Tananarive Due
+Steven Barnes
+Walter Mosley
+Samuel Delany
+Jewelle Gomez
+Andrea Hairston
+Sheree Renée Thomas
+NK Jemisin
+Tobias S. Buckell
+Alaya Dawn Johnson
+Nalo Hopkinson
+Karen Lord
+Karin Lowachee
+Vandana Singh
+Indrapramit Das
+Saad Z. Hossain
+Samit Basu
+Anil Menon
+Ian McDonald
+Ken MacLeod
+Iain Banks
+Alistair Reynolds
+Stephen Baxter
+Adam Roberts
+Justina Robson
+Paul McAuley
+Jon Courtenay Grimwood
+Richard Morgan
+Neal Asher
+Peter Watts
+Robert Sawyer
+Karl Schroeder
+Cory Doctorow
+Emily St. John Mandel
+Margaret Atwood
+Kazuo Ishiguro
+David Mitchell
+Haruki Murakami
+Kobo Abe
+Kenzaburo Oe
+Ryu Murakami
+Yasutaka Tsutsui
+Sakyo Komatsu
+Shinichi Hoshi
+Toh EnJoe
+Project Itoh
+Hiroshi Sakurazaka
+Issui Ogawa
+Taiyo Fujii
+Miyuki Miyabe
+Natsuhiko Kyogoku
+Yusaku Kitano
+Johanna Sinisalo
+Hannu Rajaniemi
+Emmi Itäranta
+Arkady Strugatsky
+Boris Strugatsky
+Ivan Yefremov
+Alexander Belyaev
+Kir Bulychev
+Mikhail Bulgakov
+Yevgeny Zamyatin
+Andrei Platonov
+Vladimir Sorokin
+Viktor Pelevin
+Tatyana Tolstaya
+Ludmila Petrushevskaya
+Mariam Petrosyan
+Yana Vagner
+Anna Starobinets
+Olga Slavnikova
+Vladimir Sharov
+Daniil Kharms
+Sigizmund Krzhizhanovsky
+Vasily Golovanov
+Dmitry Bykov
+Alexei Ivanov
+Zakhar Prilepin
+Sergei Lebedev
+Alisa Ganieva
+Guzel Yakhina
+Eugene Vodolazkin
+Mikhail Shishkin
+Ludmila Ulitskaya
+Boris Akunin
+Fyodor Berezin
+Vadim Panov
+Nick Perumov
+Maria Semenova
+Svyatoslav Loginov
+Andrey Valentinov
+Vyacheslav Rybakov
+Alexander Zorich
+Yana Botsman
+Henry Lion Oldie
+Andrey Livadny
+Dan Abnett
+Sandy Mitchell
+Graham McNeill
+Aaron Dembski-Bowden
+Chris Wraight
+Guy Haley
+Josh Reynolds
+Ben Counter
+James Swallow
+Mike Lee
+Gav Thorpe
+William King
+C.S. Goto
+Mitchell Scanlon
+Matthew Farrer
+Simon Spurrier
+Nik Vincent
+Rachel Harrison
+Danie Ware
+Alec Worley
+Justin D. Hill
+Robert Rath
+Nate Crowley
+Mike Brooks
+Richard Williams
+Phil Kelly
+Andy Chambers
+Andy Hoare
+Andy Smillie
+Braden Campbell
+Steve Lyons
+Steve Parker
+Anthony Reynolds
+Sarah Cawkwell
+Robbie MacNiven
+David Annandale
+L.J. Goulding
+John French
+Chris Dows
+Toby Longworth
+Jonathan Green
+Marc Gascoigne
+Christian Dunn
+Nick Kyme
+Lindsey Priestley
+George Mann
+Cavan Scott
+Mark Clapham
+Richard Ford
+Paul Kearney
+Gav Thorpe
+Darius Hinks
+Josh Reynolds
+David Guymer
+C.L. Werner
+Nathan Long
+Chris Wraight
+Andy Hall
+Steven Savile
+Graeme Lyon
+Rob Sanders
+Lucien Soulban
+Matt Forbeck
+Ari Marmell
+Matt Keefe
+Rob Baxter
+Juliet E. McKenna
+Freda Warrington
+Storm Constantine
+Tanith Lee
+Mary Gentle
+Gwyneth Jones
+Justina Robson
+Tricia Sullivan
+Liz Williams
+Jaine Fenn
+Alastair Reynolds
+Adam Roberts
+Jon Courtenay Grimwood
+Geoff Ryman
+Christopher Priest
+M. John Harrison
+Keith Roberts
+Bob Shaw
+John Christopher
+Brian Stableford
+Barrington J. Bayley
+Ian Watson
+Garry Kilworth
+Eric Brown
+Stephen Palmer
+Simon Ings
+Paul Di Filippo
+Rudy Rucker
+Bruce Sterling
+Lewis Shiner
+John Shirley
+Pat Cadigan
+Greg Egan
+Sean Williams
+Damien Broderick
+Greg Egan
+Garth Nix
+Trudi Canavan
+Sara Douglass
+Jennifer Fallon
+Fiona McIntosh
+Glenda Larke
+Karen Miller
+Marianne de Pierres
+Maxine McArthur
+Sean McMullen
+Rjurik Davidson
+Kaaron Warren
+Cat Sparks
+Thoraiya Dyer
+Tansy Rayner Roberts
+Stephanie Campisi
+Faith Mudge
+Rivqa Rafael
+Kirstyn McDermott
+Jason Fischer
+Alan Baxter
+Kaaron Warren
+Lee Battersby
+Robert Hood
+Stephen Dedman
+Terry Dowling
+Greg Egan
+Sean Williams
+Simon Brown
+Paul Collins
+Jack Dann
+Janeen Webb
+Lucy Sussex
+Rosaleen Love
+Wynne Whiteford
+Dirk Strasser
+Trent Jamieson
+Margo Lanagan
+Justine Larbalestier
+Garth Nix
+Isobelle Carmody
+John Marsden
+Victor Kelleher
+Gillian Rubinstein
+Catherine Jinks
+Alison Goodman
+Amie Kaufman
+Jay Kristoff
+Will Kostakis
+Ellie Marney
+Lili Wilkinson
+Jaclyn Moriarty
+Melina Marchetta
+Markus Zusak
+John Flanagan
+Emily Rodda
+Paul Jennings
+Morris Gleitzman
+Andy Griffiths
+Terry Denton

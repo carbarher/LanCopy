@@ -1,0 +1,246 @@
+═══════════════════════════════════════════════════════════════
+📖 DOCUMENTACIÓN: ESTADO "CANCELADO" EN DESCARGAS
+═══════════════════════════════════════════════════════════════
+
+FECHA: 15 Nov 2025 - 12:02 PM
+
+PREGUNTA:
+─────────────────────────────────────────────────────────────
+
+¿Qué es el estado "Cancelado" en las descargas?
+
+
+RESPUESTA:
+─────────────────────────────────────────────────────────────
+
+El estado "Cancelado" (DownloadStatus.Cancelled) indica que una
+descarga fue DETENIDA MANUALMENTE por el usuario o por el sistema
+ANTES de completarse.
+
+
+ESTADOS DE DESCARGA:
+─────────────────────────────────────────────────────────────
+
+La aplicación tiene 6 estados posibles para las descargas:
+
+1. ⏳ Pending (Pendiente)
+   - Descarga en cola esperando su turno
+   - Aún no ha comenzado
+
+2. ⬇️ Downloading (Descargando)
+   - Descarga activa en progreso
+   - Transfiriendo bytes
+
+3. ✅ Completed (Completado)
+   - Descarga finalizada exitosamente
+   - Archivo guardado en disco
+
+4. ❌ Failed (Fallido)
+   - Descarga falló por error
+   - Timeout, conexión perdida, etc.
+
+5. 🚫 Cancelled (Cancelado)
+   - Descarga detenida manualmente
+   - Usuario canceló la operación
+
+6. ⏸️ Paused (Pausado)
+   - Descarga pausada temporalmente
+   - Puede reanudarse
+
+
+CUÁNDO SE MARCA COMO "CANCELADO":
+─────────────────────────────────────────────────────────────
+
+1. CANCELACIÓN MANUAL:
+   - Usuario hace clic en botón "Cancelar"
+   - Usuario detiene descarga desde menú contextual
+   - Usuario cierra la aplicación durante descarga
+
+2. CANCELACIÓN AUTOMÁTICA:
+   - OperationCanceledException lanzada
+   - CancellationToken activado
+   - Timeout de operación
+
+3. CANCELACIÓN DE COLA:
+   - Descarga pendiente removida de la cola
+   - Usuario cancela antes de que inicie
+
+
+CÓDIGO RELEVANTE:
+─────────────────────────────────────────────────────────────
+
+ENUM (Línea 314-322):
+  private enum DownloadStatus
+  {
+      Pending,
+      Downloading,
+      Completed,
+      Failed,
+      Cancelled,    // ← Estado cancelado
+      Paused
+  }
+
+
+MÉTODO CancelDownload (Línea 15076-15091):
+  private void CancelDownload(DownloadTask task)
+  {
+      if (task.Status == DownloadStatus.Downloading)
+      {
+          // Cancelar descarga activa
+          task.CancellationToken?.Cancel();
+      }
+      else if (task.Status == DownloadStatus.Pending)
+      {
+          // Remover de cola
+          lock (downloadQueueLock)
+          {
+              downloadQueue.Remove(task);
+          }
+          task.Status = DownloadStatus.Cancelled;
+          UpdateDownloadUI(task, "⏹️ Cancelado");
+      }
+  }
+
+
+CATCH DE CANCELACIÓN (Línea 14559-14565):
+  catch (OperationCanceledException)
+  {
+      task.Status = DownloadStatus.Cancelled;
+      task.EndTime = DateTime.Now;
+      UpdateDownloadUI(task, "⏹️ Cancelado");
+      AutoLog($"⏹️ Descarga cancelada: {task.File.FileName}");
+  }
+
+
+VISUALIZACIÓN EN UI:
+─────────────────────────────────────────────────────────────
+
+TEXTO (Línea 16262):
+  DownloadStatus.Cancelled => "🚫 Cancelado"
+
+COLOR (Línea 16276):
+  DownloadStatus.Cancelled => Color.Orange
+
+ICONO EN GRILLA:
+  "⏹️ Cancelado" (naranja)
+
+
+DIFERENCIA CON "FALLIDO":
+─────────────────────────────────────────────────────────────
+
+❌ FALLIDO:
+  - Error del sistema o red
+  - Timeout, conexión perdida
+  - Usuario no disponible
+  - Archivo no encontrado
+  - Se puede reintentar automáticamente
+  - Color: Rojo
+
+🚫 CANCELADO:
+  - Acción intencional del usuario
+  - Operación detenida manualmente
+  - No se reintenta automáticamente
+  - Color: Naranja
+
+
+FILTRO EN GRILLA:
+─────────────────────────────────────────────────────────────
+
+En el filtro de estado (Línea 1487):
+  "Fallidos" => estado.Contains("❌") || 
+                estado.Contains("Error") || 
+                estado.Contains("Timeout") || 
+                estado.Contains("Cancelado")
+
+⚠️ NOTA: Las descargas canceladas se agrupan con "Fallidos"
+         en el filtro de la grilla.
+
+
+EJEMPLO DE FLUJO:
+─────────────────────────────────────────────────────────────
+
+1. Usuario busca libro
+2. Usuario hace clic en "Descargar"
+3. Descarga entra en cola (Pending)
+4. Descarga comienza (Downloading)
+5. Usuario hace clic en "Cancelar"
+6. Sistema lanza OperationCanceledException
+7. Estado cambia a Cancelled
+8. UI muestra "⏹️ Cancelado" en naranja
+9. Log: "⏹️ Descarga cancelada: libro.pdf"
+
+
+LOGS RELACIONADOS:
+─────────────────────────────────────────────────────────────
+
+[12:02:15] ⏹️ Descarga cancelada: libro.pdf
+[12:02:20] ⏹️ Cancelado (usuario detuvo descarga)
+
+
+ESTADÍSTICAS:
+─────────────────────────────────────────────────────────────
+
+Las descargas canceladas NO cuentan como:
+  ❌ Fallos (no afectan tasa de éxito)
+  ❌ Completadas (no se descargó)
+  ✅ Canceladas (categoría propia)
+
+
+ACCIONES DISPONIBLES:
+─────────────────────────────────────────────────────────────
+
+Para descargas canceladas, el usuario puede:
+
+1. ✅ Reintentar manualmente
+   - Clic derecho → "Reintentar"
+   - Botón "🔄 Redescargar"
+
+2. ✅ Eliminar de la lista
+   - Clic derecho → "Eliminar"
+   - Botón "🗑️ Limpiar"
+
+3. ❌ NO se reintenta automáticamente
+   - A diferencia de "Fallido"
+   - Requiere acción manual
+
+
+CASOS DE USO:
+─────────────────────────────────────────────────────────────
+
+1. Usuario se equivocó de archivo
+   → Cancela y busca otro
+
+2. Descarga muy lenta
+   → Cancela y busca fuente alternativa
+
+3. Usuario cierra aplicación
+   → Descargas activas se cancelan
+
+4. Límite de descargas alcanzado
+   → Nuevas descargas se cancelan
+
+5. Usuario cambió de opinión
+   → Cancela descarga pendiente
+
+
+MEJORAS FUTURAS:
+─────────────────────────────────────────────────────────────
+
+🔮 Distinguir cancelación manual vs automática
+🔮 Estadísticas de cancelaciones por usuario
+🔮 Opción de "Cancelar todo"
+🔮 Confirmación antes de cancelar
+🔮 Historial de cancelaciones
+
+
+═══════════════════════════════════════════════════════════════
+✅ ESTADO "CANCELADO" DOCUMENTADO
+═══════════════════════════════════════════════════════════════
+
+RESUMEN:
+  - Estado para descargas detenidas manualmente
+  - Color naranja (🚫)
+  - No se reintenta automáticamente
+  - Diferente de "Fallido" (error del sistema)
+  - Requiere acción manual para reintentar
+

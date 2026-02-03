@@ -1,0 +1,327 @@
+Homero
+Hesíodo
+Esquilo
+Sófocles
+Eurípides
+Aristófanes
+Herodoto
+Tucídides
+Platón
+Aristóteles
+Safo
+Virgilio
+Ovidio
+Horacio
+Cicerón
+Séneca
+Plauto
+Catulo
+Lucrecio
+Dante Alighieri
+Francesco Petrarca
+Giovanni Boccaccio
+Geoffrey Chaucer
+Miguel de Cervantes
+William Shakespeare
+Christopher Marlowe
+Ben Jonson
+John Milton
+John Donne
+Edmund Spenser
+François Rabelais
+Michel de Montaigne
+Pierre Corneille
+Molière
+Jean Racine
+Jean de La Fontaine
+Blaise Pascal
+John Bunyan
+Daniel Defoe
+Jonathan Swift
+Alexander Pope
+Samuel Richardson
+Henry Fielding
+Laurence Sterne
+Voltaire
+Jean-Jacques Rousseau
+Denis Diderot
+Marqués de Sade
+Johann Wolfgang von Goethe
+Friedrich Schiller
+Gotthold Ephraim Lessing
+E.T.A. Hoffmann
+William Blake
+Robert Burns
+Samuel Taylor Coleridge
+William Wordsworth
+Percy Bysshe Shelley
+John Keats
+Lord Byron
+Walter Scott
+Jane Austen
+Mary Shelley
+Horace Walpole
+Matthew Gregory Lewis
+Charles Dickens
+William Makepeace Thackeray
+Charlotte Brontë
+Emily Brontë
+Anne Brontë
+Elizabeth Gaskell
+George Eliot
+Anthony Trollope
+Thomas Hardy
+Lewis Carroll
+Robert Louis Stevenson
+Oscar Wilde
+Bram Stoker
+Joseph Conrad
+Rudyard Kipling
+H.G. Wells
+Arthur Conan Doyle
+Wilkie Collins
+Benjamin Disraeli
+Thomas Carlyle
+John Ruskin
+Alfred Lord Tennyson
+Robert Browning
+Elizabeth Barrett Browning
+Algernon Charles Swinburne
+Gerard Manley Hopkins
+Giacomo Leopardi
+Alessandro Manzoni
+Carlo Collodi
+Ugo Foscolo
+Victor Hugo
+Honoré de Balzac
+Stendhal
+Gustave Flaubert
+Émile Zola
+Guy de Maupassant
+Alexandre Dumas (padre)
+Alexandre Dumas (hijo)
+Charles Baudelaire
+Arthur Rimbaud
+Paul Verlaine
+Stéphane Mallarmé
+Gustave Flaubert
+Jules Verne
+George Sand
+Alphonse Daudet
+Pierre Choderlos de Laclos
+Jean de La Bruyère
+Marquise de Sévigné
+Heinrich Heine
+Novalis
+Heinrich von Kleist
+Jakob Grimm
+Wilhelm Grimm
+Annette von Droste-Hülshoff
+Theodor Fontane
+Adalbert Stifter
+Gottfried Keller
+Conrad Ferdinand Meyer
+Washington Irving
+James Fenimore Cooper
+Nathaniel Hawthorne
+Herman Melville
+Edgar Allan Poe
+Ralph Waldo Emerson
+Henry David Thoreau
+Walt Whitman
+Emily Dickinson
+Harriet Beecher Stowe
+Louisa May Alcott
+Mark Twain
+Henry James
+Stephen Crane
+Kate Chopin
+Edith Wharton
+Fiódor Dostoievski
+Leo Tolstói
+Nikolai Gogol
+Iván Turguénev
+Alexandr Pushkin
+Mijaíl Lérmontov
+Antón Chéjov
+Ivan Goncharov
+Nikolai Leskov
+Mijaíl Saltykov-Shchedrín
+Fernando de Rojas
+Garcilaso de la Vega
+Lope de Vega
+Francisco de Quevedo
+Luis de Góngora
+Tirso de Molina
+Pedro Calderón de la Barca
+Santa Teresa de Jesús
+San Juan de la Cruz
+Gustavo Adolfo Bécquer
+Leandro Fernández de Moratín
+José de Espronceda
+Mariano José de Larra
+Benito Pérez Galdós
+Leopoldo Alas Clarín
+Emilia Pardo Bazán
+Vicente Blasco Ibáñez
+Juan Valera
+José Zorrilla
+Fernán Caballero
+Rosalía de Castro
+Luis Vaz de Camões
+Gil Vicente
+Eça de Queirós
+Almeida Garrett
+Alexandre Herculano
+Júlio Dinis
+Camilo Castelo Branco
+Antero de Quental
+Adam Mickiewicz
+Juliusz Słowacki
+Zygmunt Krasiński
+Henryk Sienkiewicz
+Bolesław Prus
+Eliza Orzeszkowa
+Mikolaj Rej
+Jan Kochanowski
+Molière
+Pedro Calderón de la Barca
+William Congreve
+Richard Brinsley Sheridan
+Oliver Goldsmith
+Henrik Ibsen
+August Strindberg
+Ludvig Holberg
+Bjørnstjerne Bjørnson
+Alexander Kielland
+Jonas Lie
+Knut Hamsun
+Tarjei Vesaas
+Hans Christian Andersen
+Søren Kierkegaard
+Henrik Pontoppidan
+Jens Peter Jacobsen
+Holger Drachmann
+Selma Lagerlöf
+August Strindberg
+Verner von Heidenstam
+Pär Lagerkvist
+Erik Gustaf Geijer
+Esaias Tegnér
+Carl Jonas Love Almqvist
+Nikolai Grundtvig
+Steen Steensen Blicher
+Mikhail Lomonosov
+Gavrila Derzhavin
+Vasily Zhukovsky
+Konstantin Batyushkov
+Denis Fonvizin
+Alexander Radishchev
+Alexander Griboyedov
+Kondraty Ryleyev
+Vissarion Belinsky
+Alexander Herzen
+Mikhail Bakunin
+Nikolay Nekrasov
+Afanasy Fet
+Apollon Maykov
+Yakov Polonsky
+Alexey Tolstoy
+Sully Prudhomme
+José María de Heredia
+Théophile Gautier
+Alfred de Vigny
+Alfred de Musset
+Gérard de Nerval
+Théodore de Banville
+Joséphin Péladan
+Marcel Proust
+François-René de Chateaubriand
+Alphonse de Lamartine
+George Gordon Byron
+John Clare
+Thomas Hood
+Walter Savage Landor
+Leigh Hunt
+Robert Southey
+Hartley Coleridge
+John Galt
+Maria Edgeworth
+Susan Ferrier
+Margaret Oliphant
+Dinah Mulock Craik
+Charlotte Mary Yonge
+Rhoda Broughton
+Mary Elizabeth Braddon
+Ouida
+Marie Corelli
+John Gower
+William Langland
+John Skelton
+Thomas Wyatt
+Henry Howard
+Philip Sidney
+Edmund Waller
+John Dryden
+Samuel Butler
+Thomas Gray
+William Collins
+Oliver Goldsmith
+George Crabbe
+William Cowper
+James Thomson
+Robert Blair
+Mark Akenside
+Christopher Smart
+William Shenstone
+Anna Laetitia Barbauld
+Charlotte Smith
+Joanna Baillie
+Mary Robinson
+Letitia Elizabeth Landon
+Felicia Hemans
+Caroline Norton
+Elizabeth Siddal
+Christina Rossetti
+Michael Drayton
+George Chapman
+John Marston
+Thomas Dekker
+Thomas Middleton
+John Fletcher
+Philip Massinger
+John Webster
+Thomas Heywood
+Cyril Tourneur
+John Ford
+James Shirley
+William Davenant
+Thomas Killigrew
+George Etherege
+William Wycherley
+John Vanbrugh
+George Farquhar
+Colley Cibber
+Richard Steele
+Joseph Addison
+John Gay
+Henry Fielding
+Samuel Foote
+Arthur Murphy
+Richard Cumberland
+Hannah Cowley
+Elizabeth Inchbald
+Joanna Baillie
+Richard Brinsley Sheridan
+Thomas Holcroft
+George Colman el Viejo
+George Colman el Joven
+James Kenney
+Douglas Jerrold
+Tom Taylor
+W.S. Gilbert
+Arthur Wing Pinero
+Henry Arthur Jones
+Sydney Grundy
+Alfred Sutro
+

@@ -1,0 +1,78 @@
+[
+  {
+    "Name": "Libros en espa\u00F1ol (EPUB/PDF)",
+    "Enabled": true,
+    "Priority": 10,
+    "AuthorPattern": "",
+    "FilenamePattern": "",
+    "MinSize": 102400,
+    "MaxSize": 52428800,
+    "MinBitrate": 0,
+    "RequiredExtensions": [
+      "epub",
+      "pdf",
+      "mobi"
+    ],
+    "ExcludedWords": [],
+    "RequiredWords": [],
+    "SpanishOnly": true,
+    "TargetFolder": "",
+    "NotifyOnMatch": true,
+    "MaxDownloadsPerDay": 0,
+    "MatchCount": 0,
+    "DownloadCount": 0,
+    "LastMatch": "0001-01-01T00:00:00"
+  },
+  {
+    "Name": "Alta calidad (\u003E192 kbps)",
+    "Enabled": false,
+    "Priority": 8,
+    "AuthorPattern": "",
+    "FilenamePattern": "",
+    "MinSize": 0,
+    "MaxSize": 0,
+    "MinBitrate": 192,
+    "RequiredExtensions": [
+      "mp3",
+      "flac",
+      "m4a"
+    ],
+    "ExcludedWords": [],
+    "RequiredWords": [],
+    "SpanishOnly": false,
+    "TargetFolder": "",
+    "NotifyOnMatch": false,
+    "MaxDownloadsPerDay": 0,
+    "MatchCount": 0,
+    "DownloadCount": 0,
+    "LastMatch": "0001-01-01T00:00:00"
+  },
+  {
+    "Name": "Excluir comics",
+    "Enabled": true,
+    "Priority": 5,
+    "AuthorPattern": "",
+    "FilenamePattern": "",
+    "MinSize": 0,
+    "MaxSize": 0,
+    "MinBitrate": 0,
+    "RequiredExtensions": [
+      "epub",
+      "pdf"
+    ],
+    "ExcludedWords": [
+      "comic",
+      "manga",
+      "cbr",
+      "cbz"
+    ],
+    "RequiredWords": [],
+    "SpanishOnly": false,
+    "TargetFolder": "",
+    "NotifyOnMatch": true,
+    "MaxDownloadsPerDay": 0,
+    "MatchCount": 0,
+    "DownloadCount": 0,
+    "LastMatch": "0001-01-01T00:00:00"
+  }
+]

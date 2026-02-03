@@ -1,0 +1,35 @@
+[07:58:16] Intentando conectar como: carbar
+[07:58:16] Cliente creado, puerto: 50000, red distribuida: True
+[07:58:16] Conexión exitosa. Estado: Connected, LoggedIn
+[07:58:32] Iniciando búsqueda: asimov
+[07:58:32] Parámetros: responseLimit=500, fileLimit=500, timeout=60
+[07:58:32] Iniciando búsqueda en red Soulseek...
+[07:58:34] Búsqueda completada, procesando respuestas...
+[07:58:34] Respuestas recibidas: 6
+[07:58:34] Filtros: minSize=0MB, maxSize=10000MB, ext=Todas
+[07:58:34] Procesadas 6 respuestas, 49 archivos, 49 mostrados
+[07:58:36] Búsqueda completada: 49 archivos
+[07:58:42] Iniciando búsqueda: asimov
+[07:58:42] Parámetros: responseLimit=500, fileLimit=500, timeout=60
+[07:58:42] Iniciando búsqueda en red Soulseek...
+[07:58:42] Búsqueda completada, procesando respuestas...
+[07:58:42] Respuestas recibidas: 9
+[07:58:42] Filtros: minSize=0MB, maxSize=10000MB, ext=Todas
+[07:58:42] Procesadas 9 respuestas, 69 archivos, 69 mostrados
+[07:58:42] Búsqueda completada: 69 archivos
+[07:58:44] Iniciando búsqueda: asimov
+[07:58:44] Parámetros: responseLimit=500, fileLimit=500, timeout=60
+[07:58:44] Iniciando búsqueda en red Soulseek...
+[07:58:45] Búsqueda completada, procesando respuestas...
+[07:58:45] Respuestas recibidas: 24
+[07:58:45] Filtros: minSize=0MB, maxSize=10000MB, ext=Todas
+[07:58:45] Procesadas 24 respuestas, 107 archivos, 107 mostrados
+[07:58:45] Búsqueda completada: 107 archivos
+[07:59:21] Iniciando búsqueda: asimov
+[07:59:21] Parámetros: responseLimit=1000, fileLimit=1000, timeout=60
+[07:59:21] Iniciando búsqueda en red Soulseek...
+[07:59:22] Búsqueda completada, procesando respuestas...
+[07:59:22] Respuestas recibidas: 14
+[07:59:22] Filtros: minSize=0MB, maxSize=10000MB, ext=Todas
+[07:59:22] Procesadas 14 respuestas, 89 archivos, 89 mostrados
+[07:59:22] Búsqueda completada: 89 archivos

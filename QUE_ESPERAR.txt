@@ -1,0 +1,79 @@
+═══════════════════════════════════════════════════════════════
+  🔍 QUÉ ESPERAR EN LOS LOGS - RECONEXIÓN AUTOMÁTICA
+═══════════════════════════════════════════════════════════════
+
+📋 SECUENCIA NORMAL (cuando funciona):
+─────────────────────────────────────────────────────────────
+[11:03:00] 🔌 Intentando conectar a Soulseek...
+[11:03:00]    🌐 IP actual: 79.155.224.30
+[11:03:00]    🔌 Puerto aleatorio: 50123
+[11:03:00]    Listener: DESHABILITADO
+[11:03:00]    Red distribuida: DESHABILITADA
+[11:03:05] ✅ Conexión exitosa en puerto 50123
+[11:03:05] ✅ CONECTADO A SOULSEEK - Usuario: carbar
+
+═══════════════════════════════════════════════════════════════
+
+🔄 SECUENCIA CON RECONEXIÓN (cuando falla):
+─────────────────────────────────────────────────────────────
+[11:03:00] 🔌 Intentando conectar a Soulseek...
+[11:03:00]    🌐 IP actual: 79.155.224.30
+[11:03:05] ❌ Intento 1 falló: Timeout
+[11:03:08] ⏳ Esperando 3s antes del siguiente intento...
+[11:03:11] ❌ Intento 2 falló: Timeout
+[11:03:11] ⏳ Esperando 6s antes del siguiente intento...
+[11:03:17] ❌ Intento 3 falló: Timeout
+[11:03:17] ⏳ Esperando 9s antes del siguiente intento...
+[11:03:26] ❌ Intento 4 falló: Timeout
+[11:03:26] ⏳ Esperando 12s antes del siguiente intento...
+[11:03:38] ❌ Intento 5 falló: Timeout
+[11:03:38] ❌ Error final de conexión después de 5 intentos
+[11:03:38] 🔄 Activando reconexión automática después de fallo...
+[11:03:38] [DEBUG] CheckAndReconnect() llamado
+[11:03:38] [DEBUG] En lock: autoReconnect=True, isReconnecting=False
+[11:03:38] [DEBUG] isReconnecting establecido a true
+[11:03:38] 🔄 Intento de reconexión #1 - Razón: Desconectado
+[11:03:38] ⚠️ Conexión perdida (Desconectado). Reintentando en 60s...
+[11:04:38] 🔌 Intentando conectar a Soulseek...
+[11:04:38]    🌐 IP actual: 79.155.224.30
+[11:04:43] ✅ Conexión exitosa en puerto 50124
+[11:04:43] ✅ CONECTADO A SOULSEEK - Usuario: carbar
+[11:04:43] ✅ Reconexión exitosa (intento 1)
+
+═══════════════════════════════════════════════════════════════
+
+🎯 PUNTOS CLAVE A OBSERVAR:
+─────────────────────────────────────────────────────────────
+1. ✅ "Activando reconexión automática" - SE ACTIVA
+2. ✅ "[DEBUG] CheckAndReconnect() llamado" - SE EJECUTA
+3. ✅ "Reintentando en 60s..." - ESPERA 60 SEGUNDOS
+4. ✅ "Intento de reconexión #1" - REINTENTA
+5. ✅ "Reconexión exitosa" - CONECTA
+
+═══════════════════════════════════════════════════════════════
+
+⏱️ TIEMPOS DE ESPERA:
+─────────────────────────────────────────────────────────────
+Intento #1: 60 segundos
+Intento #2: 90 segundos (1.5 minutos)
+Intento #3: 120 segundos (2 minutos)
+Intento #4: 180 segundos (3 minutos)
+Intento #5+: 240 segundos (4 minutos)
+
+═══════════════════════════════════════════════════════════════
+
+💡 SI NO VES "Activando reconexión automática":
+─────────────────────────────────────────────────────────────
+1. Verifica que autoReconnect=true en config.json
+2. Cierra y reabre SlskDown
+3. Revisa que la versión sea la última compilada
+
+═══════════════════════════════════════════════════════════════
+
+🎉 ÉXITO:
+Si ves estos mensajes, la reconexión automática FUNCIONA:
+- "🔄 Activando reconexión automática"
+- "[DEBUG] CheckAndReconnect() llamado"
+- "Reintentando en 60s..."
+
+═══════════════════════════════════════════════════════════════

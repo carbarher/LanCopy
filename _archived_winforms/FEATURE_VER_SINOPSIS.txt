@@ -1,0 +1,218 @@
+═══════════════════════════════════════════════════════════════
+✅ NUEVA FUNCIONALIDAD: VER SINOPSIS DE LIBROS
+═══════════════════════════════════════════════════════════════
+
+FECHA: 15 Nov 2025 - 11:46 AM
+
+OBJETIVO:
+─────────────────────────────────────────────────────────────
+
+Ver sinopsis, descripción y metadata de libros ANTES de descargarlos
+para decidir si realmente te interesa el contenido.
+
+
+CARACTERÍSTICAS:
+─────────────────────────────────────────────────────────────
+
+✅ Sinopsis Completa
+   - Descripción del libro
+   - Información del autor
+   - Fecha de publicación
+   - Número de páginas
+   - Calificación promedio
+
+✅ Múltiples Fuentes
+   - Google Books API (primaria)
+   - Open Library API (fallback)
+   - Caché local de 24 horas
+
+✅ Interfaz Elegante
+   - Ventana dedicada con diseño moderno
+   - Información organizada y legible
+   - Botón directo para descargar
+
+✅ Rendimiento Optimizado
+   - Caché en memoria (MemoryCache)
+   - Respuestas instantáneas para libros ya consultados
+   - Timeout de 10 segundos por API
+
+
+CÓMO USAR:
+─────────────────────────────────────────────────────────────
+
+1. Busca un libro en la pestaña "🔍 Buscar"
+2. Haz clic derecho sobre un resultado
+3. Selecciona "📖 Ver Sinopsis"
+4. Espera unos segundos mientras se obtiene la información
+5. Lee la sinopsis y decide si descargar
+
+
+VENTANA DE SINOPSIS:
+─────────────────────────────────────────────────────────────
+
+┌─────────────────────────────────────────────────────────┐
+│ 📖 El Nombre del Viento                                 │
+├─────────────────────────────────────────────────────────┤
+│                                                         │
+│ ✍️ Patrick Rothfuss                                     │
+│ 📅 2007 | 📄 662 páginas | ⭐ 4.5/5                     │
+│                                                         │
+├─────────────────────────────────────────────────────────┤
+│                                                         │
+│ Kvothe es un joven huérfano que se convierte en el     │
+│ mago más famoso de su tiempo. Esta es la historia de   │
+│ cómo llegó a ser una leyenda viviente, contada por     │
+│ él mismo...                                             │
+│                                                         │
+│ [Sinopsis completa aquí]                                │
+│                                                         │
+├─────────────────────────────────────────────────────────┤
+│                              [Cerrar] [⬇️ Descargar]    │
+└─────────────────────────────────────────────────────────┘
+
+
+FUENTES DE DATOS:
+─────────────────────────────────────────────────────────
+
+1. GOOGLE BOOKS API:
+   - URL: https://www.googleapis.com/books/v1/volumes
+   - Datos: Título, autor, descripción, fecha, páginas, rating
+   - Ventaja: Más completo, mejor calidad
+   - Limitación: No todos los libros están disponibles
+
+2. OPEN LIBRARY API:
+   - URL: https://openlibrary.org/search.json
+   - Datos: Título, autor, descripción, año, páginas
+   - Ventaja: Biblioteca más amplia
+   - Limitación: Menos metadata, sin ratings
+
+
+EXTRACCIÓN DE TÍTULO Y AUTOR:
+─────────────────────────────────────────────────────────
+
+El sistema detecta automáticamente el título y autor del
+nombre del archivo usando patrones comunes:
+
+✅ "Autor - Título.epub"
+✅ "Título - Autor.pdf"
+✅ "Autor_Título.mobi"
+✅ "Título (Autor).epub"
+✅ "[Autor] Título.pdf"
+
+
+EJEMPLOS DE USO:
+─────────────────────────────────────────────────────────
+
+EJEMPLO 1: Libro Popular
+─────────────────────────
+Archivo: "Brandon Sanderson - El Imperio Final.epub"
+
+Resultado:
+  📖 El Imperio Final
+  ✍️ Brandon Sanderson
+  📅 2006 | 📄 541 páginas | ⭐ 4.4/5
+  
+  "Durante mil años han caído las cenizas y nada florece.
+   Durante mil años los skaa han sido esclavizados y viven
+   sumidos en un miedo inevitable..."
+
+
+EJEMPLO 2: Libro Clásico
+─────────────────────────
+Archivo: "1984 - George Orwell.pdf"
+
+Resultado:
+  📖 1984
+  ✍️ George Orwell
+  📅 1949 | 📄 328 páginas | ⭐ 4.2/5
+  
+  "Winston Smith trabaja en el Ministerio de la Verdad
+   reescribiendo la historia. Pero su vida cambia cuando
+   conoce a Julia..."
+
+
+CACHÉ DE METADATA:
+─────────────────────────────────────────────────────────
+
+El sistema guarda en caché las sinopsis consultadas:
+
+- Duración: 24 horas
+- Ubicación: Memoria (MemoryCache)
+- Clave: "synopsis_{título}_{autor}"
+- Beneficio: Respuesta instantánea en consultas repetidas
+
+
+CÓDIGO MODIFICADO:
+─────────────────────────────────────────────────────────
+
+1. MainForm.cs (línea 1149-1151):
+   - Agregar menú contextual "📖 Ver Sinopsis"
+
+2. MainForm.cs (línea 7929-8152):
+   - Método ShowBookSynopsis()
+   - Ventana de carga
+   - Ventana de sinopsis con diseño completo
+
+3. MainForm.cs (línea 8154-8195):
+   - Método FetchBookMetadataFromGoogleBooks()
+   - Consulta a Google Books API
+   - Parseo de JSON
+
+4. MainForm.cs (línea 8197-8264):
+   - Método FetchBookMetadataFromOpenLibrary()
+   - Consulta a Open Library API
+   - Parseo de JSON con descripción anidada
+
+5. MainForm.cs (línea 16698-16707):
+   - Clase BookMetadata
+   - Propiedades: Title, Author, Description, etc.
+
+
+BENEFICIOS:
+─────────────────────────────────────────────────────────
+
+✅ Toma decisiones informadas antes de descargar
+✅ Ahorra tiempo y espacio en disco
+✅ Descubre más sobre libros desconocidos
+✅ Evita descargar libros que no te interesan
+✅ Información adicional útil (páginas, rating, fecha)
+
+
+LIMITACIONES:
+─────────────────────────────────────────────────────────
+
+⚠️ No todos los libros tienen sinopsis disponible
+⚠️ Requiere conexión a internet
+⚠️ Depende de la calidad de las APIs externas
+⚠️ Nombres de archivo mal formateados pueden fallar
+
+
+PRÓXIMAS MEJORAS:
+─────────────────────────────────────────────────────────
+
+🔮 Integración con Goodreads API
+🔮 Mostrar portada del libro
+🔮 Reseñas de usuarios
+🔮 Libros relacionados / similares
+🔮 Guardar sinopsis en base de datos local
+🔮 Búsqueda por ISBN
+
+
+EJEMPLO DE LOG:
+─────────────────────────────────────────────────────────
+
+[11:46:23] 📖 Sinopsis obtenida de caché: El Imperio Final
+[11:46:45] 📖 Sinopsis mostrada: El Imperio Final
+[11:47:12] ⚠️ Error en Google Books: Timeout
+[11:47:15] 📖 Sinopsis obtenida de caché: 1984
+
+
+═══════════════════════════════════════════════════════════
+✅ VER SINOPSIS IMPLEMENTADO
+═══════════════════════════════════════════════════════════
+
+Compila y prueba:
+> lanza.bat
+
+Ahora puedes leer sinopsis antes de descargar! 📖
+

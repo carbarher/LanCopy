@@ -1,0 +1,28 @@
+﻿# Build
+bin/
+obj/
+# IDE
+.vs/
+.vscode/
+*.user
+*.suo
+# Paquetes/Artefactos
+*.nupkg
+*.pdb
+*.log
+*.tmp
+# Runtime logs (WinForms)
+error_log*.txt
+program_start*.txt
+fatal_error*.txt
+mainform_error*.txt
+run_marker*.txt
+runtime_logs/
+# Backups y archivos grandes accidentales
+*.zip
+*.gz
+*.7z
+*.csv
+# Python caches si hubiera
+__pycache__/
+*.pyc

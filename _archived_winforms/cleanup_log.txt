@@ -1,0 +1,76 @@
+CleanupTempFiles llamado: 14:36:20.963
+  - startup_log.txt NO existe
+CleanupTempFiles llamado: 14:38:14.781
+  - startup_log.txt NO existe
+CleanupTempFiles llamado: 15:39:32.753
+  - startup_log.txt NO existe
+CleanupTempFiles llamado: 15:43:53.159
+  - startup_log.txt NO existe
+CleanupTempFiles llamado: 15:53:58.502
+  - startup_log.txt NO existe
+CleanupTempFiles llamado: 15:57:55.968
+  - startup_log.txt NO existe
+CleanupTempFiles llamado: 16:01:13.707
+  - startup_log.txt NO existe
+CleanupTempFiles llamado: 16:05:49.699
+  - startup_log.txt NO existe
+CleanupTempFiles llamado: 16:07:11.172
+  - startup_log.txt NO existe
+CleanupTempFiles llamado: 16:09:59.901
+  - startup_log.txt NO existe
+CleanupTempFiles llamado: 16:16:56.098
+  - startup_log.txt NO existe
+CleanupTempFiles llamado: 16:19:45.965
+  - startup_log.txt NO existe
+CleanupTempFiles llamado: 16:27:51.188
+  - startup_log.txt NO existe
+CleanupTempFiles llamado: 16:34:19.662
+  - startup_log.txt NO existe
+CleanupTempFiles llamado: 16:42:58.952
+  - startup_log.txt NO existe
+CleanupTempFiles llamado: 16:48:03.979
+  - startup_log.txt NO existe
+CleanupTempFiles llamado: 16:59:43.346
+  - startup_log.txt NO existe
+CleanupTempFiles llamado: 17:02:11.981
+  - startup_log.txt NO existe
+CleanupTempFiles llamado: 17:12:46.488
+  - startup_log.txt NO existe
+CleanupTempFiles llamado: 17:15:01.871
+  - startup_log.txt NO existe
+CleanupTempFiles llamado: 17:18:58.256
+  - startup_log.txt NO existe
+CleanupTempFiles llamado: 17:24:33.004
+  - startup_log.txt NO existe
+CleanupTempFiles llamado: 17:33:06.811
+  - startup_log.txt NO existe
+CleanupTempFiles llamado: 17:35:21.877
+  - startup_log.txt NO existe
+CleanupTempFiles llamado: 17:35:40.750
+  - startup_log.txt NO existe
+CleanupTempFiles llamado: 17:36:03.773
+  - startup_log.txt NO existe
+CleanupTempFiles llamado: 17:49:39.414
+  - startup_log.txt existe, tamaño: 4493 bytes
+  - startup_log.txt NO eliminado (tamaño OK)
+CleanupTempFiles llamado: 17:50:00.015
+  - startup_log.txt existe, tamaño: 4493 bytes
+  - startup_log.txt NO eliminado (tamaño OK)
+CleanupTempFiles llamado: 18:24:29.007
+  - startup_log.txt NO existe
+CleanupTempFiles llamado: 18:26:19.770
+  - startup_log.txt NO existe
+CleanupTempFiles llamado: 18:42:45.647
+  - startup_log.txt NO existe
+CleanupTempFiles llamado: 18:57:24.843
+  - startup_log.txt NO existe
+CleanupTempFiles llamado: 19:09:29.700
+  - startup_log.txt NO existe
+CleanupTempFiles llamado: 20:19:10.977
+  - startup_log.txt NO existe
+CleanupTempFiles llamado: 20:22:31.679
+  - startup_log.txt NO existe
+CleanupTempFiles llamado: 20:24:30.465
+  - startup_log.txt NO existe
+CleanupTempFiles llamado: 20:25:59.869
+  - startup_log.txt NO existe

@@ -1,0 +1,216 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net9.0-windows</TargetFramework>
+    <Nullable>enable</Nullable>
+    <UseWindowsForms>true</UseWindowsForms>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AssemblyName>p2p</AssemblyName>
+    <AssemblyVersion>4.2.0.0</AssemblyVersion>
+    <FileVersion>4.2.0.0</FileVersion>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <TreatWarningsAsErrors>false</TreatWarningsAsErrors>
+    <EnableNETAnalyzers>false</EnableNETAnalyzers>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <!-- Usar Program como punto de entrada -->
+    <StartupObject>SlskDown.Program</StartupObject>
+    <!-- Deshabilitar generación automática de AssemblyInfo -->
+    <GenerateAssemblyInfo>false</GenerateAssemblyInfo>
+    <GenerateTargetFrameworkAttribute>false</GenerateTargetFrameworkAttribute>
+    <!-- SOLUCIÓN NUCLEAR: Deshabilitar inclusión automática de archivos -->
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <EnableDefaultItems>false</EnableDefaultItems>
+    <!-- Suprimir advertencias comunes (sin nulabilidad ni campos no usados) -->
+    <NoWarn>CS0067;CS0168;CS0169;CS0219;CS0414;CS0649;CS1998;CS4014;CS8600;CS8601;CS8602;CS8603;CS8604;CS8618;CS8619;CS8620;CS8622;CS8625;CS8629;CS8632;CS8714;CS8767;CA1416;CA1805;CA1852;CA1031;CA1062;CA1303;CA1304;CA1305;CA1307;CA1309;CA1310;CA1311;CA1508;CA1707;CA1711;CA1716;CA1720;CA1724;CA1806;CA1822;CA1829;CA1835;CA1847;CA1848;CA1854;CA1859;CA1860;CA1861;CA1862;CA1865;CA1866;CA1868;CA1869;CA2007;CA2201;CA2211;CA2219;CA2249;CA5351;CA5394;SYSLIB1045;SYSLIB1054;NU1701;NETSDK1206;WFAC010</NoWarn>
+    
+    <!-- MEJORA #45: Optimizaciones avanzadas del compilador .NET 9 -->
+    <TieredCompilation>true</TieredCompilation>
+    <TieredCompilationQuickJit>false</TieredCompilationQuickJit>
+    <PublishReadyToRun>true</PublishReadyToRun>
+    <InvariantGlobalization>false</InvariantGlobalization>
+    <ServerGarbageCollection>true</ServerGarbageCollection>
+    <ConcurrentGarbageCollection>true</ConcurrentGarbageCollection>
+    <RetainVMGarbageCollection>true</RetainVMGarbageCollection>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Dapper" Version="2.1.66" />
+    <PackageReference Include="Open.NAT" Version="2.1.0" />
+    <PackageReference Include="Soulseek" Version="8.5.0" />
+    <PackageReference Include="Microsoft.Data.Sqlite" Version="9.0.0" />
+    <!-- MEJORA #2: SQLite para caché persistente -->
+    <PackageReference Include="System.Data.SQLite.Core" Version="1.0.118" />
+    <!-- Optimizaciones avanzadas -->
+    <PackageReference Include="K4os.Compression.LZ4" Version="1.3.8" />
+    <!-- NUEVA: Caché moderna en lugar de System.Runtime.Caching -->
+    <PackageReference Include="Microsoft.Extensions.Caching.Memory" Version="9.0.0" />
+    <!-- NUEVA: Resilience y retry policies -->
+    <PackageReference Include="Polly" Version="8.4.2" />
+    <!-- NUEVA: Serialización binaria ultra-rápida -->
+    <PackageReference Include="MessagePack" Version="2.5.192" />
+    <PackageReference Include="MessagePack.Annotations" Version="2.5.192" />
+    <!-- NUEVA: I/O Pipelines para streaming eficiente -->
+    <PackageReference Include="System.IO.Pipelines" Version="9.0.0" />
+    <!-- NUEVA: Benchmarking para medir mejoras -->
+    <PackageReference Include="BenchmarkDotNet" Version="0.14.0" />
+    <!-- NUEVA: Compresión Zstandard (70-80% reducción) -->
+    <PackageReference Include="ZstdSharp.Port" Version="0.7.6" />
+    <!-- NUEVA: Métricas en tiempo real -->
+    <PackageReference Include="System.Diagnostics.DiagnosticSource" Version="9.0.0" />
+    <!-- NUEVA: Machine Learning para ranking inteligente -->
+    <PackageReference Include="Microsoft.ML" Version="3.0.1" />
+    <PackageReference Include="Microsoft.ML.FastTree" Version="3.0.1" />
+    <!-- NUEVA: GPU Acceleration con ILGPU -->
+    <PackageReference Include="ILGPU" Version="1.5.1" />
+    <PackageReference Include="ILGPU.Algorithms" Version="1.5.1" />
+    <!-- Lectura de documentos de Office -->
+    <PackageReference Include="DocumentFormat.OpenXml" Version="3.0.0" />
+    <!-- Lectura de EPUB -->
+    <PackageReference Include="VersOne.Epub" Version="3.3.1" />
+    <!-- Lectura de PDF -->
+    <PackageReference Include="itext7" Version="8.0.5" />
+    <!-- Gráficos de métricas -->
+    <PackageReference Include="ScottPlot.WinForms" Version="5.0.47" />
+    <!-- NUEVA: Logging estructurado con Serilog -->
+    <PackageReference Include="Serilog" Version="4.1.0" />
+    <PackageReference Include="Serilog.Sinks.File" Version="6.0.0" />
+    <PackageReference Include="Serilog.Sinks.SQLite" Version="6.0.0" />
+    <PackageReference Include="Serilog.Enrichers.Thread" Version="4.0.0" />
+    <!-- NUEVA: Object Pooling -->
+    <PackageReference Include="Microsoft.Extensions.ObjectPool" Version="9.0.0" />
+    <!-- UI Modernas -->
+    <PackageReference Include="MaterialSkin.2" Version="2.1.4" />
+    <PackageReference Include="FontAwesome.Sharp" Version="6.6.0" />
+    <PackageReference Include="MetroFramework" Version="1.2.0.3" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Content Include="Data\canonical_authors_priority.txt">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+    <Content Include="Data\gutenberg_authors.txt">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Incluir SOLO archivos necesarios manualmente -->
+    <Compile Include="MainForm.cs" />
+    <Compile Include="MainForm.ChatAI.cs" />
+    <Compile Include="MainForm.Caches.cs" />
+    <Compile Include="MainForm.Stubs.cs" />
+    <Compile Include="MainForm.ConfigTab.cs" />
+    <Compile Include="MainForm.AutoTab.cs" />
+    <Compile Include="MainForm.SearchTab.cs" />
+    <Compile Include="MainForm.Tooltips.cs" />
+    <Compile Include="MainForm.SearchHelpers.cs" />
+    <Compile Include="MainForm.Timers.cs" />
+    <Compile Include="MainForm.FileCleanup.cs" />
+    <Compile Include="LRUCache.cs" />
+    <!-- <Compile Include="MainForm.CalibreStubs.cs" /> DESHABILITADO: conflicto con CalibreTabMethods.cs -->
+    <!-- <Compile Include="MainForm.BrowseStub.cs" /> DESHABILITADO: conflicto con BrowseUserMethods.cs -->
+    <Compile Include="CalibreTabMethods.cs" />
+    <Compile Include="BrowseUserMethods.cs" />
+    <Compile Include="MainForm.Designer.cs" />
+    <!-- Excluir TODOS los backups de MainForm -->
+    <Compile Remove="MainForm.*.backup*" />
+    <Compile Remove="MainForm.*.bak*" />
+    <Compile Remove="MainForm.*.broken*" />
+    <Compile Remove="MainForm.*.old*" />
+    <Compile Include="Program.cs" />
+    <Compile Include="AuthorNormalizer.cs" />
+    <Compile Include="RustCore.cs" />
+    <Compile Include="RustAdvancedCore.cs" />
+    <Compile Include="RustFileOperations.cs" />
+    <Compile Include="RustSearchIndex.cs" />
+    <Compile Include="RustOptimizations.cs" />
+    <Compile Include="MainFormOptimizations.cs" />
+    <Compile Include="SlskDownCore.cs" />
+    <Compile Include="SlskNativeInterop.cs" />
+    <Compile Include="AdaptiveParallelism.cs" />
+    <Compile Include="AutoSearchCheckpoint.cs" />
+    <Compile Include="AutoReconnectService.cs" />
+    <Compile Include="ConnectionMonitor.cs" />
+    <Compile Include="CircuitBreakerPersistence.cs" />
+    <Compile Include="LockFreeStructures.cs" />
+    <Compile Include="RetryPolicy.cs" />
+    <Compile Include="BatchUIUpdater.cs" />
+    <Compile Include="SearchFilterRules.cs" />
+    <Compile Include="LanguageFilterStats.cs" />
+    <Compile Include="SeriesDetector.cs" />
+    <Compile Include="BookMetadataService.cs" />
+    <Compile Include="BookMetadataViewer.cs" />
+    <Compile Include="AutoSearchState.cs" />
+    <Compile Include="FileHashCache.cs" />
+    <Compile Include="DuplicateDetector.cs" />
+    <Compile Include="LazyMetadataLoader.cs" />
+    <Compile Include="ZstdCompression.cs" />
+    <Compile Include="ObjectPooling.cs" />
+    <Compile Include="SpanOptimizations.cs" />
+    <Compile Include="NicotinePlusOptimizations.cs" />
+    <Compile Include="DownloadOptimizations.cs" />
+    <!-- Incluir todos los archivos de Core excepto carpetas problemáticas -->
+    <Compile Include="Core\**\*.cs" Exclude="Core\Async\**;Core\Voice\**;Core\Neural\**;Core\GPU\**;Core\Plugins\**;Core\Performance\**;Core\RustInteropWrappers\**;Core\UnifiedCircuitBreaker.cs;Core\RustInteropMain.cs;Core\ObjectPools\**;Core\EnhancedDownloadManager.cs;Core\Transfers\TransferCleanup.cs;Core\UserQueueManager.cs;Core\Wishlist\IntelligentWishlist.cs;Core\Wishlist\WishlistIntegrationHelper.cs;Core\CompressionHelper.cs;Core\DownloadRule.cs;Core\AI\AIQualityPredictor.cs;Core\AI\AIRecommendationEngine.cs;Core\AI\MalwareDetector.cs;Core\AI\IntelligentSearchEngine.cs;Core\NicotinePhase4.cs;Core\NicotineExtras.cs;ExportLibrary.cs" />
+    <!-- Excluir carpeta EMule completa (no se usa) -->
+    <Compile Remove="EMule\**\*.cs" />
+    <Compile Include="Models\**\*.cs" />
+    <Compile Include="Services\**\*.cs" />
+    <Compile Include="Data\**\*.cs" />
+    <Compile Include="Database\**\*.cs" />
+    <Compile Include="Infrastructure\**\*.cs" Exclude="Infrastructure\StructuredLogger.cs" />
+    <Compile Include="Utils\**\*.cs" Exclude="Utils\SpanStringUtils.cs" />
+    <Compile Include="UI\**\*.cs" Exclude="UI\DashboardControl.cs;UI\ConfigurationTabManager.cs;UI\SearchTabManager.cs;UI\EnhancedProgressControl.cs;UI\DownloadsTabManager.cs;UI\DarkFileDialog.cs;UI\DarkFolderBrowserDialog.cs;UI\CredentialPromptDialog.cs;UI\VirtualListView.cs;UI\VirtualListViewHelper.cs;UI\DashboardForm.cs;UI\GeoControlPanel.cs;UI\GeoMapForm.cs;UI\NetworkConfigurationForm.cs;UI\SettingsUserControl.cs;UI\TransferStatusHelper.cs;UI\EnhancedDashboard.cs;UI\StatsDashboard.cs" />
+  </ItemGroup>
+  
+  <!-- Exclusión explícita adicional para RustInteropMain.cs y archivos de tests -->
+  <ItemGroup>
+    <Compile Remove="Core\RustInteropMain.cs" />
+    <Compile Remove="Core\AdaptiveParallelism.cs" />
+    <Compile Remove="TestRustIntegration.cs" />
+    <Compile Remove="RustCoreStub.cs" />
+    <Compile Remove="Core\RustCore.cs" />
+    <Compile Remove="Core\RustAdvancedCore.cs" />
+    <Compile Remove="Core\RustFileOperations.cs" />
+    <Compile Remove="Core\RustSearchIndex.cs" />
+  </ItemGroup>
+
+  <!-- TODOS los Compile Remove eliminados (innecesarios con EnableDefaultCompileItems=false) -->
+
+  <!-- Compilar Rust automáticamente ANTES de compilar C# -->
+  <!-- DESACTIVADO: Compilar manualmente con: cd rust_core y cargo build release -->
+  <!--
+  <Target Name="BuildRustCore" BeforeTargets="PreBuildEvent">
+    <Message Text="Compilando Rust core..." Importance="high" />
+    <Exec Command="cd rust_core &amp;&amp; cargo build - -release" 
+          Condition="Exists('rust_core\Cargo.toml')" 
+          IgnoreExitCode="false" />
+    <Message Text="Rust core compilado" Importance="high" />
+  </Target>
+  -->
+
+  <!-- Copiar DLL de Rust al directorio de salida (Build y Publish) -->
+  <Target Name="CopyRustDLL" AfterTargets="Build;Publish">
+    <PropertyGroup>
+      <RustCoreReleaseDll>rust_core\target\release\slskdown_core.dll</RustCoreReleaseDll>
+      <RustCoreDebugDll>rust_core\target\debug\slskdown_core.dll</RustCoreDebugDll>
+      <RustCopyDestinationDir Condition="'$(PublishDir)' != ''">$(PublishDir)</RustCopyDestinationDir>
+      <RustCopyDestinationDir Condition="'$(PublishDir)' == ''">$(TargetDir)</RustCopyDestinationDir>
+    </PropertyGroup>
+    <!-- DLL del nuevo módulo rust_core -->
+    <Copy SourceFiles="$(RustCoreReleaseDll)" DestinationFolder="$(TargetDir)" SkipUnchangedFiles="true" Condition="Exists('$(RustCoreReleaseDll)')" />
+
+    <Copy SourceFiles="$(RustCoreDebugDll)" DestinationFolder="$(TargetDir)" SkipUnchangedFiles="true" Condition="!Exists('$(RustCoreReleaseDll)') AND Exists('$(RustCoreDebugDll)')" />
+
+    <Copy SourceFiles="$(RustCoreReleaseDll)" DestinationFolder="$(PublishDir)" SkipUnchangedFiles="true" Condition="'$(PublishDir)' != '' AND Exists('$(RustCoreReleaseDll)')" />
+
+    <Copy SourceFiles="$(RustCoreDebugDll)" DestinationFolder="$(PublishDir)" SkipUnchangedFiles="true" Condition="'$(PublishDir)' != '' AND !Exists('$(RustCoreReleaseDll)') AND Exists('$(RustCoreDebugDll)')" />
+    <!-- DLL del módulo antiguo (si existe) -->
+    <Copy SourceFiles="slsk_native\target\release\slsk_native.dll" DestinationFolder="$(TargetDir)" SkipUnchangedFiles="true" Condition="Exists('slsk_native\target\release\slsk_native.dll')" />
+
+    <Copy SourceFiles="slsk_native\target\release\slsk_native.dll" DestinationFolder="$(PublishDir)" SkipUnchangedFiles="true" Condition="'$(PublishDir)' != '' AND Exists('slsk_native\target\release\slsk_native.dll')" />
+
+    <Message Text="✅ DLL de Rust copiada a $(TargetDir)" Condition="Exists('$(RustCoreReleaseDll)') OR Exists('$(RustCoreDebugDll)')" Importance="high" />
+    <Warning Text="⚠️ DLL Rust no encontrada. Compila Rust: cd rust_core &amp;&amp; cargo build --release" Condition="!Exists('$(RustCoreReleaseDll)') AND !Exists('$(RustCoreDebugDll)')" />
+  </Target>
+
+</Project>

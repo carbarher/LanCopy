@@ -1,0 +1,40 @@
+NUEVO LAYOUT CONFIG - 2 COLUMNAS COMPACTAS
+
+=== COLUMNA 1 (X=20) ===
+FILTROS DE ARCHIVOS [Cyan Bold]
+- Tamaño min/máx (KB): inline, 90px cada uno
+- Extensiones: 260px width
+- [Guardar filtros] botón
+
+PARÁMETROS DE BÚSQUEDA [Cyan Bold]
+- Timeout (seg): 90px
+- Máx archivos/búsq: 90px
+- Máx usuarios/búsq: 90px  
+- Máx archivos/autor: 90px
+
+DESCARGAS [Cyan Bold]
+- Carpeta: 180px + [...] + [📂]
+- Concurrencia + Reintentos: inline
+
+[💾 GUARDAR CONFIGURACIÓN] - Verde, bold, 220px
+
+=== COLUMNA 2 (X=500) ===
+CONEXIÓN [Cyan Bold]
+- Estado + [Test] inline
+- Usuario: 180px
+- Password: 180px + [Ver]
+- [Guardar credenciales]
+
+OPTIMIZACIÓN AUTO-BÚSQUEDA [Cyan Bold]
+- ☑ Omitir duplicados
+- ☑ Modo silencioso
+- ☑ Usar caché (24h)
+- ☑ Priorizar autores
+- ☑ Paralelo + [# simultáneos: 2]
+
+CAMBIOS:
+- Eliminado "Incremental (2 pasos)" - ya no se usa
+- Títulos en Cyan para mejor contraste
+- Spacing consistente: 30px entre filas
+- Botones compactos con iconos
+- Agrupación lógica por función

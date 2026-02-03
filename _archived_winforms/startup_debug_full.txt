@@ -1,0 +1,111 @@
+[2026-01-05 15:36:41.884] MainForm_Load: INICIO
+[2026-01-05 15:36:41.884] MainForm_Load: Configurando dataDir...
+[2026-01-05 15:36:41.888] MainForm_Load: dataDir=C:\Users\carlo\AppData\Roaming\SlskDown
+[2026-01-05 15:36:41.888] MainForm_Load: Resolviendo IConfigService...
+[2026-01-05 15:36:41.889] MainForm_Load: Inicializando servicios base...
+[2026-01-05 15:36:42.174] MainForm_Load: Cargando configuración...
+[2026-01-05 15:36:42.192] [15:36:42][N] 🔍 Iniciando LoadConfig() con ConfigManager
+[2026-01-05 15:36:42.193] [15:36:42][N] 📁 Buscando config en: C:\Users\carlo\AppData\Roaming\SlskDown\config.json
+[2026-01-05 15:36:42.193] [15:36:42][N] 📂 Directorio base: C:\p2p\SlskDown\bin\Release\net9.0-windows\
+[2026-01-05 15:36:42.300] [15:36:42][N] ✅ Ventana restaurada: 2839x1521 en (42,95), estado=0
+[2026-01-05 15:36:42.300] [15:36:42][N] ✅ Config cargado - username: 'carbar' (longitud: 6)
+[2026-01-05 15:36:42.301] [15:36:42][N] ✅ Config cargado - responseLimit: 0, fileLimit: 0
+[2026-01-05 15:36:42.316] [15:36:42][N] No se encontró blacklist
+[2026-01-05 15:36:42.324] [15:36:42][N] ✅ LoadConfig completado. responseLimit=0, fileLimit=0
+[2026-01-05 15:36:42.334] ⚙️ Preferencias: use_rust_core=True, force_rust_core=False, disable_fallback=False (C:\p2p\SlskDown\user_preferences.json)
+
+[2026-01-05 15:36:42.334] MainForm_Load: Verificando Rust...
+[2026-01-05 15:36:42.337] 🧩 Rust diag: is64=True baseDir=C:\p2p\SlskDown\bin\Release\net9.0-windows\
+
+[2026-01-05 15:36:42.409] 🦀 Rust Pack 1 (Operaciones Masivas) disponible - 6 funcionalidades activas
+
+[2026-01-05 15:36:42.409]    ✅ Ordenamiento paralelo (5.3x)
+
+[2026-01-05 15:36:42.409]    ✅ Filtrado masivo (10x)
+
+[2026-01-05 15:36:42.409]    ✅ Deduplicación (21x)
+
+[2026-01-05 15:36:42.410]    ✅ Normalización de nombres (10x)
+
+[2026-01-05 15:36:42.410]    ✅ Compresión Zstd (4x)
+
+[2026-01-05 15:36:42.410]    ✅ Benchmarks
+
+[2026-01-05 15:36:42.417] 🦀 Rust Pack 2 (Operaciones de Archivos) disponible - 6 funcionalidades activas
+
+[2026-01-05 15:36:42.417]    ✅ Detectar encoding
+
+[2026-01-05 15:36:42.417]    ✅ Validar integridad (MP3, FLAC, PDF, EPUB)
+
+[2026-01-05 15:36:42.417]    ✅ Extraer metadatos MP3 (100x)
+
+[2026-01-05 15:36:42.418]    ✅ Búsqueda multi-patrón Aho-Corasick (100x)
+
+[2026-01-05 15:36:42.418]    ✅ Contar keywords
+
+[2026-01-05 15:36:42.418]    ✅ Convertir encoding
+
+[2026-01-05 15:36:42.420] 🦀 Rust Pack 3 (Búsqueda Full-Text) disponible - Índice invertido + Fuzzy search (1000x)
+
+[2026-01-05 15:36:42.656] ✅ Rust Pack 3 self-test OK (191ms)
+
+[2026-01-05 15:36:42.656] MainForm_Load: Creando Tabs y BatchUpdaters...
+[2026-01-05 15:36:44.182] ✅ SlskDatabase inicializada en C:\Users\carlo\AppData\Roaming\SlskDown\slskdown.db
+
+[2026-01-05 15:36:46.301] MainForm_Load: Inicializando Soulseek (early)...
+[2026-01-05 15:36:46.302] Inicializando cliente Soulseek...
+
+[2026-01-05 15:36:46.303] [15:36:46][N] ✅ Cliente Soulseek preparado
+
+[2026-01-05 15:36:46.320] MainForm_Load: Programando auto-connect...
+[2026-01-05 15:36:46.322] 🔍 Auto-connect startup: autoConnect=True, username_len=6, password_len=9
+
+[2026-01-05 15:36:46.323] ⏰ Auto-connect: timer iniciado (2s)
+
+[2026-01-05 15:36:46.434] MainForm_Load: Escaneando credenciales...
+[2026-01-05 15:36:46.441] MainForm_Load: Inicializando base de datos...
+[2026-01-05 15:36:46.444] ✅ SlskDatabase inicializada en C:\Users\carlo\AppData\Roaming\SlskDown\slskdown.db
+
+[2026-01-05 15:36:46.444] MainForm_Load: Inicializando ContentDuplicateDetector...
+[2026-01-05 15:36:46.448] MainForm_Load: Creando carpetas de descarga...
+[2026-01-05 15:36:46.448] MainForm_Load: Inicializando DownloadManager...
+[2026-01-05 15:36:46.463] ✅ QueuePositionTracker iniciado (refresh cada 2 min)
+
+[2026-01-05 15:36:46.467] download_flow_log_init: dataDir='C:\Users\carlo\AppData\Roaming\SlskDown' path='C:\Users\carlo\AppData\Roaming\SlskDown\download_flow_log.csv'
+
+[2026-01-05 15:36:46.467] download_flow_log_exists: path='C:\Users\carlo\AppData\Roaming\SlskDown\download_flow_log.csv'
+
+[2026-01-05 15:36:46.468] MainForm_Load: Reinicializando Soulseek...
+[2026-01-05 15:36:46.468] Inicializando cliente Soulseek...
+
+[2026-01-05 15:36:46.468] [15:36:46][N] ✅ Cliente Soulseek preparado
+
+[2026-01-05 15:36:46.469] 🔍 Auto-connect startup: autoConnect=True, username_len=6, password_len=9
+
+[2026-01-05 15:36:46.474] MainForm_Load: FINALIZADO OK
+[2026-01-05 15:36:48.331] 🚀 Auto-connect: iniciando ConnectToSoulseek()
+
+[2026-01-05 15:36:48.347] [15:36:48][N] 🔄 ConnectToSoulseek llamado desde: Start
+[2026-01-05 15:36:48.349] [15:36:48][N] 🧹 Limpiando estado antes de conectar...
+[2026-01-05 15:36:48.352] [15:36:48][N] ✅ Estado limpiado - listo para conectar
+[2026-01-05 15:36:48.369] [15:36:48][N] 🔐 Intentando conectar como: carbar
+[2026-01-05 15:36:48.371] [15:36:48][N] Intento 1/5 - Puerto: 53608
+[2026-01-05 15:36:48.401] [15:36:48][N] 🔐 Iniciando ConnectAsync con usuario: carbar (longitud: 6)
+[2026-01-05 15:36:48.402] [15:36:48][N] 🔐 Password longitud: 9 caracteres
+[2026-01-05 15:36:48.404] [15:36:48][N] ⏱️  Timeout configurado: 180 segundos
+[2026-01-05 15:36:48.458] [15:36:48][N] 🔌 Estado cambió: Disconnected → Connecting
+[2026-01-05 15:36:48.635] [15:36:48][S] 🔌 Estado cambió: Connecting → Connected
+[2026-01-05 15:36:48.637] [15:36:48][S] 🔌 Estado cambió: Connected → Connected, LoggingIn
+[2026-01-05 15:36:49.040] [15:36:49][S] 🔌 Estado cambió: Connected, LoggingIn → Connected, LoggedIn
+[2026-01-05 15:36:49.058] [15:36:49][S] ✅ ConnectAsync completado exitosamente
+[2026-01-05 15:36:49.059] [15:36:49][S] ✅ Conexión exitosa en puerto 53608
+[2026-01-05 15:36:49.066] [15:36:49][S] ✅ Bloom Filter inicializado: 701 archivos cargados
+[2026-01-05 15:36:49.069] [15:36:49][S] 🦀 Bloom Filters activados (200x más rápido que HashSet)
+[2026-01-05 15:36:49.097] [15:36:49][S] 📊 Nueva sesión iniciada: 15:36:49
+[2026-01-05 15:36:49.104] [15:36:49][S] 💔 Heartbeat detenido
+[2026-01-05 15:36:49.106] [15:36:49][S] 💓 Heartbeat iniciado (cada 30s)
+[2026-01-05 15:36:49.123] [15:36:49][S] 🏥 Monitor de salud iniciado
+[2026-01-05 15:36:51.887] [15:36:51][S] ✅ Cache CRC32 inicializado: 701 archivos
+[2026-01-05 15:36:58.207] ⏹️ QueuePositionTracker detenido
+
+[2026-01-05 15:36:58.212] ⏹️ Download Manager detenido

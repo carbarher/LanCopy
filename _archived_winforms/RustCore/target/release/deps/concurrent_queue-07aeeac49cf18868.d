@@ -1,0 +1,11 @@
+c:\p2p\SlskDown\RustCore\target\release\deps\concurrent_queue-07aeeac49cf18868.d: C:\Users\carlo\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\concurrent-queue-2.5.0\src\lib.rs C:\Users\carlo\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\concurrent-queue-2.5.0\src\bounded.rs C:\Users\carlo\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\concurrent-queue-2.5.0\src\single.rs C:\Users\carlo\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\concurrent-queue-2.5.0\src\unbounded.rs C:\Users\carlo\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\concurrent-queue-2.5.0\src\sync.rs
+
+c:\p2p\SlskDown\RustCore\target\release\deps\libconcurrent_queue-07aeeac49cf18868.rlib: C:\Users\carlo\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\concurrent-queue-2.5.0\src\lib.rs C:\Users\carlo\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\concurrent-queue-2.5.0\src\bounded.rs C:\Users\carlo\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\concurrent-queue-2.5.0\src\single.rs C:\Users\carlo\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\concurrent-queue-2.5.0\src\unbounded.rs C:\Users\carlo\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\concurrent-queue-2.5.0\src\sync.rs
+
+c:\p2p\SlskDown\RustCore\target\release\deps\libconcurrent_queue-07aeeac49cf18868.rmeta: C:\Users\carlo\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\concurrent-queue-2.5.0\src\lib.rs C:\Users\carlo\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\concurrent-queue-2.5.0\src\bounded.rs C:\Users\carlo\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\concurrent-queue-2.5.0\src\single.rs C:\Users\carlo\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\concurrent-queue-2.5.0\src\unbounded.rs C:\Users\carlo\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\concurrent-queue-2.5.0\src\sync.rs
+
+C:\Users\carlo\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\concurrent-queue-2.5.0\src\lib.rs:
+C:\Users\carlo\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\concurrent-queue-2.5.0\src\bounded.rs:
+C:\Users\carlo\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\concurrent-queue-2.5.0\src\single.rs:
+C:\Users\carlo\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\concurrent-queue-2.5.0\src\unbounded.rs:
+C:\Users\carlo\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\concurrent-queue-2.5.0\src\sync.rs:

@@ -1,0 +1,50 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <Nullable>enable</Nullable>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Soulseek" Version="1.0.1" />
+    <PackageReference Include="Newtonsoft.Json" Version="13.0.3" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Archivos principales -->
+    <Compile Include="Program.cs" />
+    <Compile Include="MainForm.cs" />
+    <Compile Include="MainForm.Designer.cs" />
+    
+    <!-- Models -->
+    <Compile Include="Models\DownloadModels.cs" />
+    <Compile Include="Models\AudioMetadata.cs" />
+    <Compile Include="Models\MissingTypes.cs" />
+    
+    <!-- Services básicos -->
+    <Compile Include="Services\FileHelpers.cs" />
+    <Compile Include="Services\UIHelpers.cs" />
+    
+    <!-- Core básicos -->
+    <Compile Include="Core\DownloadManager.cs" />
+    <Compile Include="Core\RateLimitDetector.cs" />
+    
+    <!-- Data -->
+    <Compile Include="Data\ConfigManager.cs" />
+    
+    <!-- Utilidades -->
+    <Compile Include="LRUCache.cs" />
+    <Compile Include="ConnectionMonitor.cs" />
+    <Compile Include="LockFreeStructures.cs" />
+    <Compile Include="SearchThrottler.cs" />
+    <Compile Include="ThemeManager.cs" />
+    <Compile Include="DarkMessageBox.cs" />
+    <Compile Include="LazyTabLoader.cs" />
+    <Compile Include="LogCompressor.cs" />
+    <Compile Include="MemoryMonitor.cs" />
+  </ItemGroup>
+</Project>

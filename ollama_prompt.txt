@@ -1,0 +1,61 @@
+Analiza este proyecto de migración de UI de WinForms a Avalonia:
+
+CONTEXTO:
+Hemos migrado el sistema de auto-búsqueda de autores de SlskDown (WinForms) a SlskDownAvalonia (Avalonia UI).
+
+IMPLEMENTACIÓN:
+
+1. LAYOUT DE AUTO-BÚSQUEDA:
+   - DataGrid con columnas: ⭐ Priorizado | Autor | Archivos | Estado
+   - Panel derecho con log de auto-búsqueda y controles
+   - Tema oscuro con colores personalizados (#2D2D2D, #1E1E1E)
+   - Distribución 35%-65% (autores-log)
+
+2. NORMALIZACIÓN DE AUTORES:
+   - Elimina acentos usando NormalizationForm.FormD
+   - Remueve puntos, comas, punto y coma
+   - Normaliza espacios múltiples a uno solo
+   - Evita duplicados: "José García" = "Jose Garcia"
+   - Comparación case-insensitive con ToLowerInvariant()
+
+3. SISTEMA DE PRIORIZADOS:
+   - 25,216 autores de Project Gutenberg cargados en HashSet
+   - Verificación O(1) con IsGutenbergAuthor()
+   - Marcado automático con ★ dorado al agregar/cargar
+   - Botón "📚 Cargar Gutenberg" carga toda la lista
+   - Propiedad IsPriority en modelo AuthorItem
+
+4. ARQUITECTURA MVVM:
+   - Modelo: AuthorItem con INotifyPropertyChanged
+   - ViewModel: ObservableCollection<AuthorItem> en MainViewModel
+   - Vista: DataGrid con binding bidireccional XAML
+   - Persistencia: Sincronización con Config.Authors (JSON)
+   - Separación de concerns: UI, lógica de negocio, datos
+
+5. LOGS ESTRUCTURADOS:
+   - Formato: [HH:mm:ss][S/N] mensaje
+   - S = Conectado a Soulseek, N = No conectado
+   - Logs de gestión: blacklist/whitelist con emojis
+   - Progreso de auto-búsqueda: [1/100] Buscando: autor
+   - Estadísticas finales: autores procesados, archivos encontrados
+
+6. FUNCIONALIDADES IMPLEMENTADAS:
+   - Agregar autor individual con normalización
+   - Cargar lista desde archivo TXT
+   - Cargar todos los autores de Gutenberg (25K+)
+   - Seleccionar/deseleccionar todos
+   - Eliminar autores seleccionados
+   - Habilitar/deshabilitar como priorizados
+   - Purgar autores sin resultados
+   - Auto-búsqueda secuencial con delays
+   - Descarga automática opcional
+
+PREGUNTAS:
+1. ¿Qué opinas de la arquitectura MVVM implementada?
+2. ¿La normalización de autores es robusta? ¿Falta algún caso edge?
+3. ¿El uso de HashSet para 25K autores es óptimo o hay mejor alternativa?
+4. ¿Los logs son suficientemente informativos?
+5. ¿Qué mejoras de rendimiento sugerirías para la auto-búsqueda?
+6. ¿Hay patrones de diseño que deberíamos aplicar?
+7. ¿La sincronización entre Authors y Config.Authors es correcta?
+8. ¿Qué pruebas unitarias recomendarías?

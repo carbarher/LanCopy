@@ -1,0 +1,4 @@
+// Backup del archivo ExportLibrary.cs original
+// Este archivo fue deshabilitado porque contiene métodos duplicados con MainForm.cs
+// Específicamente: ExtractAuthorFromFilename() y FormatFileSize()
+// Fecha: 2026-01-05

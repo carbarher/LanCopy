@@ -1,0 +1,468 @@
+═══════════════════════════════════════════════════════════════════════════════
+  SLSKDOWN - ROADMAP DE MEJORAS Y NUEVAS FUNCIONALIDADES
+═══════════════════════════════════════════════════════════════════════════════
+
+Fecha: 4 de enero de 2026
+Estado: Planificación inicial
+
+═══════════════════════════════════════════════════════════════════════════════
+  OPTIMIZACIONES DE RENDIMIENTO
+═══════════════════════════════════════════════════════════════════════════════
+
+[1] CACHÉ DE VALIDACIÓN DE ARCHIVOS (SHA256)
+    ─────────────────────────────────────────────────────────────────────────
+    Objetivo: Evitar re-validar archivos ya verificados
+    
+    Implementación:
+    • Calcular hash SHA256 de cada archivo validado
+    • Guardar en base de datos SQLite: hash → estado (válido/corrupto)
+    • Al reevaluar, verificar primero si el hash existe en caché
+    • Solo validar estructura si el hash no está en caché
+    
+    Beneficios:
+    • Reevaluaciones instantáneas de archivos conocidos
+    • Reducir I/O de disco en validaciones masivas
+    • Detectar archivos duplicados por contenido (no solo nombre)
+    
+    Complejidad: Media
+    Impacto: Alto
+    Tiempo estimado: 4-6 horas
+
+
+[2] VALIDACIÓN PARALELA
+    ─────────────────────────────────────────────────────────────────────────
+    Objetivo: Usar todos los cores del CPU para validar archivos
+    
+    Implementación:
+    • Reemplazar foreach por Parallel.ForEach en reevaluaciones
+    • Configurar MaxDegreeOfParallelism según cores disponibles
+    • Thread-safe logging y contadores
+    • Barra de progreso sincronizada
+    
+    Ejemplo:
+    Parallel.ForEach(files, new ParallelOptions 
+    { 
+        MaxDegreeOfParallelism = Environment.ProcessorCount 
+    }, file => 
+    {
+        // Validar archivo
+    });
+    
+    Beneficios:
+    • Reevaluación de 328 archivos: ~30 segundos → ~5 segundos
+    • Mejor uso de recursos del sistema
+    • Escalable a miles de archivos
+    
+    Complejidad: Baja
+    Impacto: Alto
+    Tiempo estimado: 2-3 horas
+
+
+[3] LAZY LOADING DE METADATOS
+    ─────────────────────────────────────────────────────────────────────────
+    Objetivo: Cargar metadatos solo cuando se necesitan
+    
+    Implementación:
+    • No extraer metadatos al cargar lista de descargas
+    • Cargar solo cuando el usuario expande/selecciona un item
+    • Caché en memoria de metadatos ya cargados
+    • Background worker para pre-cargar items visibles
+    
+    Beneficios:
+    • Inicio de aplicación más rápido
+    • Menor uso de memoria inicial
+    • UI más responsiva con miles de archivos
+    
+    Complejidad: Media
+    Impacto: Medio
+    Tiempo estimado: 3-4 horas
+
+
+═══════════════════════════════════════════════════════════════════════════════
+  FUNCIONALIDADES NUEVAS
+═══════════════════════════════════════════════════════════════════════════════
+
+[5] DETECCIÓN DE DUPLICADOS POR HASH SHA256
+    ─────────────────────────────────────────────────────────────────────────
+    Objetivo: Detectar duplicados por contenido, no solo por nombre
+    
+    Implementación:
+    • Calcular SHA256 de cada archivo descargado
+    • Comparar hashes en lugar de nombres
+    • Detectar mismo libro en diferentes formatos (EPUB vs MOBI vs PDF)
+    • Sugerir cuál conservar basado en:
+      - Formato preferido (configurable)
+      - Tamaño (mayor = mejor calidad)
+      - Fecha de descarga (más reciente)
+    
+    UI:
+    • Nueva columna "Duplicados" en lista
+    • Botón "Limpiar duplicados inteligente"
+    • Diálogo de confirmación mostrando qué se eliminará
+    
+    Beneficios:
+    • Detectar duplicados que tienen nombres diferentes
+    • Ahorrar espacio en disco
+    • Mantener solo la mejor versión de cada libro
+    
+    Complejidad: Media-Alta
+    Impacto: Alto
+    Tiempo estimado: 6-8 horas
+
+
+[7] CONVERSIÓN AUTOMÁTICA DE FORMATOS
+    ─────────────────────────────────────────────────────────────────────────
+    Objetivo: Convertir automáticamente libros al formato preferido
+    
+    Implementación:
+    • Detectar instalación de Calibre (ebook-convert.exe)
+    • Configuración: formato preferido (EPUB, MOBI, AZW3, PDF)
+    • Opción: "Convertir automáticamente al descargar"
+    • Proceso:
+      1. Descargar archivo
+      2. Validar integridad
+      3. Convertir a formato preferido
+      4. Validar archivo convertido
+      5. Eliminar original (opcional)
+    
+    Formatos soportados:
+    • MOBI → EPUB
+    • AZW3 → EPUB
+    • EPUB → MOBI
+    • PDF → EPUB (con limitaciones)
+    • FB2 → EPUB
+    
+    UI:
+    • Checkbox "Auto-convertir a EPUB"
+    • Dropdown para seleccionar formato destino
+    • Botón "Convertir seleccionados"
+    • Barra de progreso de conversión
+    
+    Beneficios:
+    • Biblioteca unificada en un solo formato
+    • Compatible con e-readers específicos
+    • Ahorro de espacio (EPUB suele ser más pequeño)
+    
+    Complejidad: Media
+    Impacto: Alto
+    Tiempo estimado: 5-7 horas
+
+
+═══════════════════════════════════════════════════════════════════════════════
+  IDEAS AVANZADAS (IA Y ML)
+═══════════════════════════════════════════════════════════════════════════════
+
+[8] IA PARA DETECCIÓN DE CONTENIDO
+    ─────────────────────────────────────────────────────────────────────────
+    Objetivo: Verificar que el contenido coincida con el título
+    
+    Implementación:
+    • Extraer primeras páginas del libro (OCR si es PDF/imagen)
+    • Usar modelo de lenguaje local (Ollama, LLaMA)
+    • Comparar título del archivo vs contenido extraído
+    • Detectar:
+      - Libros mal etiquetados
+      - Archivos spam disfrazados
+      - Idioma incorrecto
+      - Género/categoría
+    
+    Ejemplo:
+    Archivo: "Don Quijote - Cervantes.epub"
+    Contenido: "Harry Potter and the..."
+    → ⚠️ Contenido no coincide con título
+    
+    Tecnologías:
+    • Tesseract OCR para PDFs escaneados
+    • Ollama + Phi-3 para análisis de texto
+    • ML.NET para clasificación de género
+    
+    Beneficios:
+    • Detectar archivos incorrectos antes de leer
+    • Auto-clasificar por género
+    • Mejorar calidad de la biblioteca
+    
+    Complejidad: Alta
+    Impacto: Medio-Alto
+    Tiempo estimado: 15-20 horas
+
+
+[10] MODO BIBLIOTECA DIGITAL (SERVIDOR WEB)
+    ─────────────────────────────────────────────────────────────────────────
+    Objetivo: Leer libros desde cualquier dispositivo
+    
+    Implementación:
+    • Servidor web ASP.NET Core embebido
+    • Puerto configurable (default: 8080)
+    • Interfaz web tipo Calibre Web
+    • Funcionalidades:
+      - Explorar biblioteca
+      - Leer EPUB en navegador (epub.js)
+      - Descargar a dispositivo
+      - Búsqueda y filtros
+      - Sincronización con e-readers
+    
+    Seguridad:
+    • Solo accesible en red local (127.0.0.1)
+    • Opcional: autenticación con usuario/contraseña
+    • HTTPS con certificado auto-firmado
+    
+    UI:
+    • Botón "Iniciar servidor web"
+    • Mostrar URL: http://localhost:8080
+    • QR code para acceso desde móvil
+    
+    Beneficios:
+    • Leer desde tablet/móvil sin transferir archivos
+    • Acceso remoto a biblioteca
+    • Interfaz moderna y responsive
+    
+    Complejidad: Alta
+    Impacto: Alto
+    Tiempo estimado: 20-30 horas
+
+
+[11] BÚSQUEDA SEMÁNTICA
+    ─────────────────────────────────────────────────────────────────────────
+    Objetivo: Buscar libros por significado, no solo palabras exactas
+    
+    Implementación:
+    • Generar embeddings de títulos/autores/descripciones
+    • Usar modelo sentence-transformers (all-MiniLM-L6-v2)
+    • Almacenar vectores en base de datos vectorial (Qdrant, Milvus)
+    • Búsquedas:
+      - "Libros similares a X"
+      - "Novelas de fantasía épica"
+      - "Autores parecidos a García Márquez"
+    
+    Ejemplo:
+    Búsqueda: "realismo mágico latinoamericano"
+    Resultados:
+    • Cien años de soledad - García Márquez
+    • La casa de los espíritus - Allende
+    • Pedro Páramo - Rulfo
+    
+    Beneficios:
+    • Descubrir libros relacionados
+    • Recomendaciones personalizadas
+    • Búsqueda por concepto, no solo palabras
+    
+    Complejidad: Alta
+    Impacto: Medio
+    Tiempo estimado: 12-15 horas
+
+
+[12] DETECCIÓN DE COLECCIONES INCOMPLETAS
+    ─────────────────────────────────────────────────────────────────────────
+    Objetivo: Encontrar tomos faltantes de series
+    
+    Implementación:
+    • Detectar patrones de series:
+      - "Nombre Serie - Tomo 1"
+      - "Nombre Serie (1 de 5)"
+      - "Nombre Serie #1"
+    • Extraer número de tomo y total (si está disponible)
+    • Identificar tomos faltantes
+    • Buscar automáticamente en Soulseek
+    • Notificar cuando se encuentren
+    
+    Ejemplo:
+    Biblioteca:
+    • Harry Potter - Tomo 1
+    • Harry Potter - Tomo 3
+    • Harry Potter - Tomo 5
+    
+    → ⚠️ Faltan tomos: 2, 4, 6, 7
+    → 🔍 Buscar automáticamente
+    
+    UI:
+    • Pestaña "Colecciones"
+    • Lista de series con progreso (3/7 tomos)
+    • Botón "Buscar faltantes"
+    
+    Beneficios:
+    • Completar series automáticamente
+    • Visualizar progreso de colecciones
+    • No olvidar tomos pendientes
+    
+    Complejidad: Media-Alta
+    Impacto: Alto
+    Tiempo estimado: 8-10 horas
+
+
+═══════════════════════════════════════════════════════════════════════════════
+  QUICK WINS
+═══════════════════════════════════════════════════════════════════════════════
+
+[15] EXPORTAR BIBLIOTECA
+    ─────────────────────────────────────────────────────────────────────────
+    Objetivo: Exportar lista de libros a diferentes formatos
+    
+    Formatos soportados:
+    
+    • CSV (Excel compatible)
+      Columnas: Título, Autor, Formato, Tamaño, Fecha, Ruta
+      Uso: Análisis en Excel, importar a otras apps
+    
+    • JSON (estructurado)
+      {
+        "biblioteca": [
+          {
+            "titulo": "Don Quijote",
+            "autor": "Cervantes",
+            "formato": "epub",
+            "tamaño_mb": 2.5,
+            "fecha_descarga": "2026-01-04",
+            "ruta": "C:\\Libros\\Cervantes\\Don Quijote.epub",
+            "hash_sha256": "abc123..."
+          }
+        ]
+      }
+      Uso: Backup, importar a Calibre, scripts personalizados
+    
+    • TXT (legible)
+      ════════════════════════════════════════════════
+      BIBLIOTECA DIGITAL - 1,234 libros
+      ════════════════════════════════════════════════
+      
+      [EPUB] Don Quijote - Cervantes (2.5 MB)
+      [PDF]  Cien años de soledad - García Márquez (3.2 MB)
+      [MOBI] 1984 - Orwell (1.8 MB)
+      
+      Uso: Documentación, compartir lista
+    
+    • Markdown (documentación)
+      # Mi Biblioteca Digital
+      
+      ## Autores (328)
+      - Cervantes (5 libros)
+      - García Márquez (12 libros)
+      - Orwell (3 libros)
+      
+      ## Por formato
+      - EPUB: 450 libros
+      - PDF: 320 libros
+      - MOBI: 280 libros
+      
+      Uso: README, wiki personal, GitHub
+    
+    UI:
+    • Menú: Archivo → Exportar biblioteca
+    • Seleccionar formato (CSV, JSON, TXT, Markdown)
+    • Opciones:
+      - Incluir solo libros validados
+      - Incluir hash SHA256
+      - Agrupar por autor/formato
+    
+    Beneficios:
+    • Backup de metadatos
+    • Importar a Calibre u otras apps
+    • Compartir lista con amigos
+    • Análisis de biblioteca
+    
+    Complejidad: Baja
+    Impacto: Medio
+    Tiempo estimado: 2-3 horas
+
+
+═══════════════════════════════════════════════════════════════════════════════
+  MEJORAS TÉCNICAS
+═══════════════════════════════════════════════════════════════════════════════
+
+[17] MIGRAR A .NET 9
+    ─────────────────────────────────────────────────────────────────────────
+    Objetivo: Aprovechar mejoras de rendimiento y nuevas APIs
+    
+    Cambios necesarios:
+    • Actualizar TargetFramework: net8.0-windows → net9.0-windows
+    • Actualizar paquetes NuGet a versiones compatibles
+    • Revisar breaking changes (pocos esperados)
+    • Aprovechar nuevas características:
+      - System.Text.Json mejoras
+      - LINQ optimizaciones
+      - Span<T> y Memory<T> mejoras
+      - Nuevas APIs de archivos
+    
+    Beneficios de .NET 9:
+    • ~15% más rápido en operaciones I/O
+    • Menor uso de memoria (~10-20%)
+    • Mejor rendimiento en LINQ
+    • Soporte hasta noviembre 2026 (LTS)
+    • Nuevas APIs para trabajar con archivos
+    
+    Riesgos:
+    • Posibles incompatibilidades con librerías antiguas
+    • Requiere Visual Studio 2022 actualizado
+    • Usuarios necesitan .NET 9 Runtime
+    
+    Plan de migración:
+    1. Crear rama git: feature/dotnet9
+    2. Actualizar .csproj
+    3. Actualizar paquetes NuGet
+    4. Compilar y resolver errores
+    5. Ejecutar tests
+    6. Validar funcionalidad completa
+    7. Merge a main
+    
+    Complejidad: Baja-Media
+    Impacto: Medio
+    Tiempo estimado: 3-5 horas
+
+
+═══════════════════════════════════════════════════════════════════════════════
+  PRIORIZACIÓN RECOMENDADA
+═══════════════════════════════════════════════════════════════════════════════
+
+FASE 1 - Quick Wins (1-2 semanas)
+  ✓ [2]  Validación paralela
+  ✓ [15] Exportar biblioteca (TXT incluido)
+  ✓ [17] Migrar a .NET 9
+
+FASE 2 - Optimizaciones Core (2-3 semanas)
+  ✓ [1] Caché de validación SHA256
+  ✓ [5] Detección de duplicados por hash
+  ✓ [3] Lazy loading de metadatos
+
+FASE 3 - Funcionalidades Avanzadas (1-2 meses)
+  ✓ [7]  Conversión automática de formatos
+  ✓ [12] Detección de colecciones incompletas
+  ✓ [10] Modo biblioteca digital
+
+FASE 4 - IA y ML (2-3 meses)
+  ✓ [11] Búsqueda semántica
+  ✓ [8]  IA para detección de contenido
+
+
+═══════════════════════════════════════════════════════════════════════════════
+  MÉTRICAS DE ÉXITO
+═══════════════════════════════════════════════════════════════════════════════
+
+Rendimiento:
+  • Reevaluación de 1000 archivos: < 10 segundos
+  • Inicio de aplicación: < 2 segundos
+  • Detección de duplicados: < 5 segundos
+
+Calidad:
+  • Falsos positivos en validación: < 1%
+  • Precisión en detección de duplicados: > 99%
+  • Éxito en conversión de formatos: > 95%
+
+Usabilidad:
+  • Tiempo para exportar biblioteca: < 3 segundos
+  • Tiempo para encontrar un libro: < 1 segundo
+  • Satisfacción del usuario: ⭐⭐⭐⭐⭐
+
+
+═══════════════════════════════════════════════════════════════════════════════
+  NOTAS FINALES
+═══════════════════════════════════════════════════════════════════════════════
+
+Este roadmap es un documento vivo que se actualizará según:
+  • Feedback del usuario
+  • Nuevas ideas y tecnologías
+  • Prioridades cambiantes
+  • Recursos disponibles
+
+Última actualización: 4 de enero de 2026
+Próxima revisión: Tras completar Fase 1
+
+═══════════════════════════════════════════════════════════════════════════════

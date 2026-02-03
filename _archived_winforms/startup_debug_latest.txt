@@ -1,0 +1,107 @@
+[2026-01-05 16:02:22.979] MainForm_Load: INICIO
+[2026-01-05 16:02:22.979] MainForm_Load: Configurando dataDir...
+[2026-01-05 16:02:22.984] MainForm_Load: dataDir=C:\Users\carlo\AppData\Roaming\SlskDown
+[2026-01-05 16:02:22.985] MainForm_Load: Resolviendo IConfigService...
+[2026-01-05 16:02:22.985] MainForm_Load: Inicializando servicios base...
+[2026-01-05 16:02:23.327] MainForm_Load: Cargando configuración...
+[2026-01-05 16:02:23.352] [16:02:23][N] 🔍 Iniciando LoadConfig() con ConfigManager
+[2026-01-05 16:02:23.352] [16:02:23][N] 📁 Buscando config en: C:\Users\carlo\AppData\Roaming\SlskDown\config.json
+[2026-01-05 16:02:23.353] [16:02:23][N] 📂 Directorio base: C:\p2p\SlskDown\bin\Release\net9.0-windows\
+[2026-01-05 16:02:23.478] [16:02:23][N] ✅ Ventana restaurada: 2839x1521 en (42,95), estado=0
+[2026-01-05 16:02:23.478] [16:02:23][N] ✅ Config cargado - username: 'carbar' (longitud: 6)
+[2026-01-05 16:02:23.478] [16:02:23][N] ✅ Config cargado - responseLimit: 0, fileLimit: 0
+[2026-01-05 16:02:23.493] [16:02:23][N] No se encontró blacklist
+[2026-01-05 16:02:23.503] [16:02:23][N] ✅ LoadConfig completado. responseLimit=0, fileLimit=0
+[2026-01-05 16:02:23.515] ⚙️ Preferencias: use_rust_core=True, force_rust_core=False, disable_fallback=False (C:\p2p\SlskDown\user_preferences.json)
+
+[2026-01-05 16:02:23.515] MainForm_Load: Verificando Rust...
+[2026-01-05 16:02:23.518] 🧩 Rust diag: is64=True baseDir=C:\p2p\SlskDown\bin\Release\net9.0-windows\
+
+[2026-01-05 16:02:23.594] 🦀 Rust Pack 1 (Operaciones Masivas) disponible - 6 funcionalidades activas
+
+[2026-01-05 16:02:23.595]    ✅ Ordenamiento paralelo (5.3x)
+
+[2026-01-05 16:02:23.595]    ✅ Filtrado masivo (10x)
+
+[2026-01-05 16:02:23.595]    ✅ Deduplicación (21x)
+
+[2026-01-05 16:02:23.595]    ✅ Normalización de nombres (10x)
+
+[2026-01-05 16:02:23.595]    ✅ Compresión Zstd (4x)
+
+[2026-01-05 16:02:23.596]    ✅ Benchmarks
+
+[2026-01-05 16:02:23.605] 🦀 Rust Pack 2 (Operaciones de Archivos) disponible - 6 funcionalidades activas
+
+[2026-01-05 16:02:23.605]    ✅ Detectar encoding
+
+[2026-01-05 16:02:23.605]    ✅ Validar integridad (MP3, FLAC, PDF, EPUB)
+
+[2026-01-05 16:02:23.605]    ✅ Extraer metadatos MP3 (100x)
+
+[2026-01-05 16:02:23.606]    ✅ Búsqueda multi-patrón Aho-Corasick (100x)
+
+[2026-01-05 16:02:23.606]    ✅ Contar keywords
+
+[2026-01-05 16:02:23.606]    ✅ Convertir encoding
+
+[2026-01-05 16:02:23.608] 🦀 Rust Pack 3 (Búsqueda Full-Text) disponible - Índice invertido + Fuzzy search (1000x)
+
+[2026-01-05 16:02:23.909] ✅ Rust Pack 3 self-test OK (254ms)
+
+[2026-01-05 16:02:23.910] MainForm_Load: Creando Tabs y BatchUpdaters...
+[2026-01-05 16:02:25.508] ✅ SlskDatabase inicializada en C:\Users\carlo\AppData\Roaming\SlskDown\slskdown.db
+
+[2026-01-05 16:02:27.821] MainForm_Load: Inicializando Soulseek (early)...
+[2026-01-05 16:02:27.823] Inicializando cliente Soulseek...
+
+[2026-01-05 16:02:27.824] [16:02:27][N] ✅ Cliente Soulseek preparado
+
+[2026-01-05 16:02:27.843] MainForm_Load: Programando auto-connect...
+[2026-01-05 16:02:27.846] 🔍 Auto-connect startup: autoConnect=True, username_len=6, password_len=9
+
+[2026-01-05 16:02:27.846] ⏰ Auto-connect: timer iniciado (2s)
+
+[2026-01-05 16:02:27.964] MainForm_Load: Escaneando credenciales...
+[2026-01-05 16:02:27.979] MainForm_Load: Inicializando base de datos...
+[2026-01-05 16:02:27.982] ✅ SlskDatabase inicializada en C:\Users\carlo\AppData\Roaming\SlskDown\slskdown.db
+
+[2026-01-05 16:02:27.982] MainForm_Load: Inicializando ContentDuplicateDetector...
+[2026-01-05 16:02:27.986] MainForm_Load: Creando carpetas de descarga...
+[2026-01-05 16:02:27.987] MainForm_Load: Inicializando DownloadManager...
+[2026-01-05 16:02:28.004] ✅ QueuePositionTracker iniciado (refresh cada 2 min)
+
+[2026-01-05 16:02:28.011] download_flow_log_init: dataDir='C:\Users\carlo\AppData\Roaming\SlskDown' path='C:\Users\carlo\AppData\Roaming\SlskDown\download_flow_log.csv'
+
+[2026-01-05 16:02:28.012] download_flow_log_exists: path='C:\Users\carlo\AppData\Roaming\SlskDown\download_flow_log.csv'
+
+[2026-01-05 16:02:28.012] MainForm_Load: Reinicializando Soulseek...
+[2026-01-05 16:02:28.012] Inicializando cliente Soulseek...
+
+[2026-01-05 16:02:28.012] [16:02:28][N] ✅ Cliente Soulseek preparado
+
+[2026-01-05 16:02:28.014] 🔍 Auto-connect startup: autoConnect=True, username_len=6, password_len=9
+
+[2026-01-05 16:02:28.019] MainForm_Load: FINALIZADO OK
+[2026-01-05 16:02:29.842] 🚀 Auto-connect: iniciando ConnectToSoulseek()
+
+[2026-01-05 16:02:29.866] [16:02:29][N] 🔄 ConnectToSoulseek llamado desde: Start
+[2026-01-05 16:02:29.868] [16:02:29][N] 🧹 Limpiando estado antes de conectar...
+[2026-01-05 16:02:29.870] [16:02:29][N] ✅ Estado limpiado - listo para conectar
+[2026-01-05 16:02:29.886] [16:02:29][N] 🔐 Intentando conectar como: carbar
+[2026-01-05 16:02:29.887] [16:02:29][N] Intento 1/5 - Puerto: 58934
+[2026-01-05 16:02:29.915] [16:02:29][N] 🔐 Iniciando ConnectAsync con usuario: carbar (longitud: 6)
+[2026-01-05 16:02:29.919] [16:02:29][N] 🔐 Password longitud: 9 caracteres
+[2026-01-05 16:02:29.920] [16:02:29][N] ⏱️  Timeout configurado: 180 segundos
+[2026-01-05 16:02:29.984] [16:02:29][N] 🔌 Estado cambió: Disconnected → Connecting
+[2026-01-05 16:02:30.163] [16:02:30][S] 🔌 Estado cambió: Connecting → Connected
+[2026-01-05 16:02:30.164] [16:02:30][S] 🔌 Estado cambió: Connected → Connected, LoggingIn
+[2026-01-05 16:02:30.436] [16:02:30][S] 🔌 Estado cambió: Connected, LoggingIn → Connected, LoggedIn
+[2026-01-05 16:02:30.454] [16:02:30][S] ✅ ConnectAsync completado exitosamente
+[2026-01-05 16:02:30.457] [16:02:30][S] ✅ Conexión exitosa en puerto 58934
+[2026-01-05 16:02:30.465] [16:02:30][S] ✅ Bloom Filter inicializado: 702 archivos cargados
+[2026-01-05 16:02:30.467] [16:02:30][S] 🦀 Bloom Filters activados (200x más rápido que HashSet)
+[2026-01-05 16:02:30.496] [16:02:30][S] 📊 Nueva sesión iniciada: 16:02:30
+[2026-01-05 16:02:30.499] [16:02:30][S] 💔 Heartbeat detenido
+[2026-01-05 16:02:30.504] [16:02:30][S] 💓 Heartbeat iniciado (cada 30s)
+[2026-01-05 16:02:30.523] [16:02:30][S] 🏥 Monitor de salud iniciado

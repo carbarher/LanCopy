@@ -1,0 +1,9 @@
+{
+  "DownloadDirectory": "c:\p2p\downloads",
+  "SearchTimeout": 450,
+  "ResponseLimit": 50,
+  "FileLimit": 1000,
+  "AutoConnect": true,
+  "EncryptedUsername": null,
+  "EncryptedPassword": null
+}

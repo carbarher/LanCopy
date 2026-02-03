@@ -1,0 +1,120 @@
+═══════════════════════════════════════════════════════════════
+🐛 FIX: ERROR AL BUSCAR METADATA DE ARCHIVO
+═══════════════════════════════════════════════════════════════
+
+FECHA: 15 Nov 2025 - 12:17 PM
+
+PROBLEMA:
+─────────────────────────────────────────────────────────────
+
+Al hacer clic derecho en un archivo de la grilla de descargas
+y seleccionar "📖 Ver Metadata", aparecía el error:
+
+  ⚠️ Archivo no encontrado
+  No se pudo encontrar el archivo:
+  Wotan
+  
+  Verifica que la descarga se haya completado correctamente.
+
+El sistema estaba buscando el archivo con el nombre del USUARIO
+("Wotan") en lugar del nombre del ARCHIVO.
+
+
+CAUSA:
+─────────────────────────────────────────────────────────────
+
+El método ShowMetadataForSelectedFile() estaba usando el índice
+INCORRECTO de columna:
+
+  ❌ var fileName = selectedItem.SubItems[1].Text;
+  
+SubItems[1] corresponde a la columna "Usuario", no "Archivo".
+
+
+ESTRUCTURA DE COLUMNAS:
+─────────────────────────────────────────────────────────────
+
+La grilla lvDownloads tiene estas columnas:
+
+  [0] Archivo   - Nombre del archivo
+  [1] Usuario   - Nombre del usuario
+  [2] Progreso  - Porcentaje de descarga
+  [3] Estado    - Estado de la descarga
+  [4] Tamaño    - Tamaño del archivo
+
+
+SOLUCIÓN:
+─────────────────────────────────────────────────────────────
+
+Cambiar el índice de SubItems[1] a SubItems[0] o usar .Text
+directamente (que es equivalente a SubItems[0].Text):
+
+  ✅ var fileName = selectedItem.Text;
+
+
+CÓDIGO MODIFICADO:
+─────────────────────────────────────────────────────────────
+
+ANTES (Línea 16678-16679):
+  var selectedItem = lvDownloads.SelectedItems[0];
+  var fileName = selectedItem.SubItems[1].Text; // ❌ Usuario
+
+AHORA (Línea 16678-16679):
+  var selectedItem = lvDownloads.SelectedItems[0];
+  var fileName = selectedItem.Text; // ✅ Archivo
+
+
+EJEMPLO DE ERROR:
+─────────────────────────────────────────────────────────────
+
+Archivo seleccionado:
+  [0] "Ray Bradbury - Fahrenheit 451.epub"
+  [1] "Wotan"
+  [2] "100%"
+  [3] "✅ Completado"
+  [4] "264.75 KB"
+
+ANTES:
+  fileName = "Wotan" ❌
+  Busca: "C:\Downloads\Wotan"
+  Resultado: Archivo no encontrado
+
+AHORA:
+  fileName = "Ray Bradbury - Fahrenheit 451.epub" ✅
+  Busca: "C:\Downloads\Ray Bradbury - Fahrenheit 451.epub"
+  Resultado: Metadata mostrada correctamente
+
+
+TESTING:
+─────────────────────────────────────────────────────────────
+
+1. Descargar un archivo completamente
+2. Hacer clic derecho en el archivo
+3. Seleccionar "📖 Ver Metadata"
+4. Verificar que se abre la ventana de metadata
+5. Verificar que NO aparece error de "Archivo no encontrado"
+
+
+ARCHIVOS MODIFICADOS:
+─────────────────────────────────────────────────────────────
+
+- MainForm.cs (Línea 16679)
+
+
+IMPACTO:
+─────────────────────────────────────────────────────────────
+
+✅ Ahora la metadata se muestra correctamente
+✅ No más errores de "Archivo no encontrado"
+✅ Funciona para todos los archivos descargados
+
+
+═══════════════════════════════════════════════════════════════
+✅ FIX APLICADO: METADATA FUNCIONA CORRECTAMENTE
+═══════════════════════════════════════════════════════════════
+
+Compila y prueba:
+> lanza.bat
+
+¡Ahora puedes ver la metadata de tus archivos descargados! 📖✅
+

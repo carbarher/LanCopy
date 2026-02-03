@@ -1,0 +1,3 @@
+Este archivo se creó para forzar la sincronización del sistema de archivos.
+Si ves este archivo, significa que Cascade puede escribir en disco correctamente.
+Fecha: 2026-01-07 17:41

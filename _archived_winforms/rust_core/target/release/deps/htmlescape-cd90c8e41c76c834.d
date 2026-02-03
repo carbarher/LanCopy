@@ -1,0 +1,11 @@
+c:\p2p\SlskDown\rust_core\target\release\deps\htmlescape-cd90c8e41c76c834.d: C:\Users\carlo\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\htmlescape-0.3.1\src\lib.rs C:\Users\carlo\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\htmlescape-0.3.1\src\encode.rs C:\Users\carlo\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\htmlescape-0.3.1\src\decode.rs C:\Users\carlo\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\htmlescape-0.3.1\src\entities.rs C:\Users\carlo\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\htmlescape-0.3.1\src\io_support.rs
+
+c:\p2p\SlskDown\rust_core\target\release\deps\libhtmlescape-cd90c8e41c76c834.rlib: C:\Users\carlo\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\htmlescape-0.3.1\src\lib.rs C:\Users\carlo\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\htmlescape-0.3.1\src\encode.rs C:\Users\carlo\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\htmlescape-0.3.1\src\decode.rs C:\Users\carlo\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\htmlescape-0.3.1\src\entities.rs C:\Users\carlo\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\htmlescape-0.3.1\src\io_support.rs
+
+c:\p2p\SlskDown\rust_core\target\release\deps\libhtmlescape-cd90c8e41c76c834.rmeta: C:\Users\carlo\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\htmlescape-0.3.1\src\lib.rs C:\Users\carlo\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\htmlescape-0.3.1\src\encode.rs C:\Users\carlo\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\htmlescape-0.3.1\src\decode.rs C:\Users\carlo\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\htmlescape-0.3.1\src\entities.rs C:\Users\carlo\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\htmlescape-0.3.1\src\io_support.rs
+
+C:\Users\carlo\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\htmlescape-0.3.1\src\lib.rs:
+C:\Users\carlo\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\htmlescape-0.3.1\src\encode.rs:
+C:\Users\carlo\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\htmlescape-0.3.1\src\decode.rs:
+C:\Users\carlo\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\htmlescape-0.3.1\src\entities.rs:
+C:\Users\carlo\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\htmlescape-0.3.1\src\io_support.rs:

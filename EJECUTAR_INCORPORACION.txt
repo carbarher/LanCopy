@@ -1,0 +1,81 @@
+================================================================================
+INCORPORACION DE LIBROS PRE-1900 A c:\p2p\downloads
+================================================================================
+
+PROBLEMA: El entorno automatico no permite ejecutar scripts con efectos visibles.
+
+SOLUCION: Ejecuta este comando manualmente en tu terminal (cmd o PowerShell):
+
+--------------------------------------------------------------------------------
+COMANDO A EJECUTAR:
+--------------------------------------------------------------------------------
+
+python c:\p2p\scripts\incorporar_a_downloads.py
+
+--------------------------------------------------------------------------------
+QUE HACE EL SCRIPT:
+--------------------------------------------------------------------------------
+
+1. CARPETA 1 (849 Libros Clasicos):
+   - Copia TODOS los libros a c:\p2p\downloads
+   - Organiza por AUTOR (carpeta por autor)
+   - ~952 archivos (95%+ pre-1900 verificados)
+   - Autores: Dumas, Dickens, Cervantes, Shakespeare, Poe, Verne, etc.
+
+2. CARPETA 2 (2600 Libros Literatura Universal):
+   - FILTRA solo autores pre-1900
+   - Copia solo ~1000-1200 libros (45% del total)
+   - Organiza por AUTOR (carpeta por autor)
+   - Omite autores post-1900 (Adams, Alberti, Delibes, etc.)
+
+3. RESULTADO:
+   - Total incorporado: ~2100-2200 libros pre-1900
+   - Organizados en carpetas por autor
+   - Log detallado en: c:\p2p\downloads\incorporacion_YYYYMMDD_HHMMSS.log
+
+--------------------------------------------------------------------------------
+VERIFICACION:
+--------------------------------------------------------------------------------
+
+Despues de ejecutar, verifica:
+
+1. Revisa el log generado en c:\p2p\downloads\
+2. Verifica que se crearon carpetas de autores nuevos
+3. Comprueba que los archivos estan en sus carpetas de autor
+
+Ejemplo de estructura esperada:
+  c:\p2p\downloads\
+    ├── Alejandro Dumas\
+    │   ├── El conde de Montecristo.pdf
+    │   ├── Los tres mosqueteros.pdf
+    │   └── ...
+    ├── Charles Dickens\
+    │   ├── Oliver Twist.pdf
+    │   └── ...
+    └── ...
+
+--------------------------------------------------------------------------------
+ARCHIVOS CREADOS:
+--------------------------------------------------------------------------------
+
+✅ c:\p2p\scripts\incorporar_a_downloads.py
+   - Script principal de incorporacion
+
+✅ c:\p2p\analisis_audio_libros_pre1900.md
+   - Analisis detallado de las carpetas
+
+✅ c:\p2p\scripts\analyze_audio_libros_pre1900.py
+   - Script de analisis (opcional, para generar CSV)
+
+--------------------------------------------------------------------------------
+NOTAS IMPORTANTES:
+--------------------------------------------------------------------------------
+
+- El script NO sobrescribe archivos existentes
+- Si un archivo ya existe en destino, lo omite
+- Genera log detallado de todas las operaciones
+- Filtra automaticamente autores post-1900 de Carpeta 2
+
+================================================================================
+EJECUTA AHORA: python c:\p2p\scripts\incorporar_a_downloads.py
+================================================================================

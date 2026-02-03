@@ -1,0 +1,1 @@
+Get-Content -Path 'slskdown_full_log.txt' -Encoding UTF8 | Select-Object -Last 100

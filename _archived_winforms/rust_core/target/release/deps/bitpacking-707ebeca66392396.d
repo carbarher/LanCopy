@@ -1,0 +1,11 @@
+c:\p2p\SlskDown\rust_core\target\release\deps\bitpacking-707ebeca66392396.d: C:\Users\carlo\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\bitpacking-0.9.2\src\lib.rs C:\Users\carlo\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\bitpacking-0.9.2\src\macros.rs C:\Users\carlo\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\bitpacking-0.9.2\src\macros_simple.rs C:\Users\carlo\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\bitpacking-0.9.2\src\bitpacker1x.rs C:\Users\carlo\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\bitpacking-0.9.2\src\bitpacker4x.rs
+
+c:\p2p\SlskDown\rust_core\target\release\deps\libbitpacking-707ebeca66392396.rlib: C:\Users\carlo\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\bitpacking-0.9.2\src\lib.rs C:\Users\carlo\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\bitpacking-0.9.2\src\macros.rs C:\Users\carlo\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\bitpacking-0.9.2\src\macros_simple.rs C:\Users\carlo\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\bitpacking-0.9.2\src\bitpacker1x.rs C:\Users\carlo\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\bitpacking-0.9.2\src\bitpacker4x.rs
+
+c:\p2p\SlskDown\rust_core\target\release\deps\libbitpacking-707ebeca66392396.rmeta: C:\Users\carlo\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\bitpacking-0.9.2\src\lib.rs C:\Users\carlo\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\bitpacking-0.9.2\src\macros.rs C:\Users\carlo\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\bitpacking-0.9.2\src\macros_simple.rs C:\Users\carlo\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\bitpacking-0.9.2\src\bitpacker1x.rs C:\Users\carlo\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\bitpacking-0.9.2\src\bitpacker4x.rs
+
+C:\Users\carlo\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\bitpacking-0.9.2\src\lib.rs:
+C:\Users\carlo\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\bitpacking-0.9.2\src\macros.rs:
+C:\Users\carlo\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\bitpacking-0.9.2\src\macros_simple.rs:
+C:\Users\carlo\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\bitpacking-0.9.2\src\bitpacker1x.rs:
+C:\Users\carlo\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\bitpacking-0.9.2\src\bitpacker4x.rs:

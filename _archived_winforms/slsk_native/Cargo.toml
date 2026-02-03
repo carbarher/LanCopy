@@ -1,0 +1,21 @@
+[package]
+name = "slsk_native"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+regex = "1.10"
+once_cell = "1.19"
+rayon = "1.8"
+zstd = "0.13"           # MEJORA #44: Compresión ultra-rápida
+memchr = "2.7"          # MEJORA #44: Búsqueda de bytes SIMD
+hashbrown = "0.14"
+ahash = "0.8"
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1

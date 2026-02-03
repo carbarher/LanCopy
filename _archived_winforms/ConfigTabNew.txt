@@ -1,0 +1,444 @@
+// NUEVO LAYOUT MODERNO PARA CreateConfigTab
+// Este código reemplazará el método actual
+
+private void CreateConfigTab(TabPage parent)
+{
+    parent.BackColor = Color.FromArgb(18, 18, 18);
+    
+    // Panel principal con scroll
+    var scrollPanel = new Panel 
+    { 
+        Dock = DockStyle.Fill, 
+        AutoScroll = true,
+        BackColor = Color.FromArgb(18, 18, 18),
+        Padding = new Padding(24)
+    };
+    
+    // Layout principal de 2 columnas
+    var mainLayout = new TableLayoutPanel
+    {
+        Dock = DockStyle.Top,
+        AutoSize = true,
+        ColumnCount = 2,
+        BackColor = Color.FromArgb(18, 18, 18),
+        Padding = new Padding(0),
+        ColumnStyles = 
+        {
+            new ColumnStyle(SizeType.Percent, 50f),
+            new ColumnStyle(SizeType.Percent, 50f)
+        }
+    };
+    mainLayout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+    
+    // ========== COLUMNA IZQUIERDA ==========
+    var leftColumn = new FlowLayoutPanel
+    {
+        Dock = DockStyle.Fill,
+        FlowDirection = FlowDirection.TopDown,
+        WrapContents = false,
+        AutoSize = true,
+        BackColor = Color.FromArgb(18, 18, 18),
+        Padding = new Padding(0, 0, 20, 0)
+    };
+    
+    // Título
+    var lblTitle = new Label 
+    { 
+        Text = "⚙️ Configuración", 
+        AutoSize = true,
+        ForeColor = Color.White, 
+        Font = new Font("Segoe UI", 18, FontStyle.Bold),
+        Margin = new Padding(0, 0, 0, 30)
+    };
+    leftColumn.Controls.Add(lblTitle);
+    
+    // === SECCIÓN: CUENTA ===
+    leftColumn.Controls.Add(CreateSectionLabel("CUENTA"));
+    leftColumn.Controls.Add(CreateConfigRow("Usuario Soulseek:", txtUsername = CreateTextBox(username, (t) => { username = t.Text; SaveConfig(); })));
+    leftColumn.Controls.Add(CreateConfigRow("Contraseña:", txtPassword = CreateTextBox(password, (t) => { password = t.Text; SaveConfig(); })));
+    
+    var dirRow = new FlowLayoutPanel { AutoSize = true, FlowDirection = FlowDirection.LeftToRight, WrapContents = false, Margin = new Padding(0, 0, 0, 20) };
+    dirRow.Controls.Add(CreateLabel("Carpeta descargas:"));
+    txtDownloadDir = CreateTextBox(downloadDir, (t) => { downloadDir = t.Text; SaveConfig(); });
+    txtDownloadDir.Width = 300;
+    dirRow.Controls.Add(txtDownloadDir);
+    dirRow.Controls.Add(CreateIconButton("📁", (s, e) => BrowseFolder()));
+    dirRow.Controls.Add(CreateIconButton("🗂️", (s, e) => OpenDownloadFolder()));
+    leftColumn.Controls.Add(dirRow);
+    
+    // === SECCIÓN: OPCIONES ===
+    leftColumn.Controls.Add(CreateSectionLabel("OPCIONES"));
+    chkAutoConnect = CreateCheckBox("Conectar automáticamente al iniciar", autoConnect, (c) => { autoConnect = c.Checked; SaveConfig(); });
+    leftColumn.Controls.Add(chkAutoConnect);
+    
+    chkOrganizeByAuthor = CreateCheckBox("📁 Organizar descargas en carpetas por autor", organizeByAuthor, (c) => { organizeByAuthor = c.Checked; SaveConfig(); });
+    leftColumn.Controls.Add(chkOrganizeByAuthor);
+    
+    chkAutoBackup = CreateCheckBox("💾 Backup automático de configuración", autoBackup, (c) => { autoBackup = c.Checked; SaveConfig(); });
+    leftColumn.Controls.Add(chkAutoBackup);
+    
+    chkAutoMode = CreateCheckBox("🤖 Modo Automático (limpieza y optimización)", autoMode, OnAutoModeChanged);
+    chkAutoMode.ForeColor = Color.LightGreen;
+    chkAutoMode.Font = new Font("Segoe UI", 9, FontStyle.Bold);
+    leftColumn.Controls.Add(chkAutoMode);
+    
+    chkTurboMode = CreateCheckBox("⚡ Modo Turbo (búsquedas y descargas aceleradas)", maxParallelDownloads > 3, OnTurboModeChanged);
+    leftColumn.Controls.Add(chkTurboMode);
+    
+    // Descargas simultáneas
+    var parallelRow = new FlowLayoutPanel { AutoSize = true, FlowDirection = FlowDirection.LeftToRight, Margin = new Padding(20, 0, 0, 10) };
+    parallelRow.Controls.Add(CreateLabel("Descargas simultáneas:"));
+    numParallelDownloads = CreateNumeric(maxParallelDownloads, 1, 10, (n) => { maxParallelDownloads = (int)n.Value; maxSimultaneousDownloads = (int)n.Value; SaveConfig(); });
+    numParallelDownloads.Enabled = chkTurboMode.Checked;
+    parallelRow.Controls.Add(numParallelDownloads);
+    leftColumn.Controls.Add(parallelRow);
+    
+    // Reintentos
+    leftColumn.Controls.Add(CreateNumericRow("🔄 Reintentos automáticos:", ref numMaxRetries, maxRetries, 0, 10, (n) => { maxRetries = (int)n.Value; SaveConfig(); }));
+    
+    // Proveedores alternativos
+    var altRow = CreateNumericRow("🔍 Proveedores alternativos:", out var numAlt, maxAlternativeRetries, 0, 10, (n) => { maxAlternativeRetries = (int)n.Value; SaveConfig(); });
+    altRow.Controls.Add(CreateSmallLabel($"(máx {MAX_TOTAL_ATTEMPTS} intentos)"));
+    leftColumn.Controls.Add(altRow);
+    
+    // Tamaño mínimo
+    var sizeRow = CreateNumericRow("📏 Tamaño mínimo (KB):", out var numSize, minFileSizeKB, 0, 1048576, (n) => { minFileSizeKB = (int)n.Value; SaveConfig(); });
+    sizeRow.Controls.Add(CreateSmallLabel("(0 = sin límite)"));
+    leftColumn.Controls.Add(sizeRow);
+    
+    // Modo Agresivo
+    var btnAggressive = CreateButton("🔥 Modo Agresivo (30 min)", Color.FromArgb(220, 38, 38), OnAggressiveModeClick);
+    btnAggressive.Width = 220;
+    leftColumn.Controls.Add(btnAggressive);
+    
+    chkPriorityBySize = CreateCheckBox("📊 Prioridad automática por tamaño", priorityBySize, OnPrioritySizeChanged);
+    leftColumn.Controls.Add(chkPriorityBySize);
+    
+    mainLayout.Controls.Add(leftColumn, 0, 0);
+    
+    // ========== COLUMNA DERECHA ==========
+    var rightColumn = new FlowLayoutPanel
+    {
+        Dock = DockStyle.Fill,
+        FlowDirection = FlowDirection.TopDown,
+        WrapContents = false,
+        AutoSize = true,
+        BackColor = Color.FromArgb(18, 18, 18),
+        Padding = new Padding(20, 0, 0, 0)
+    };
+    
+    // Espaciador para alinear con título
+    rightColumn.Controls.Add(new Label { Height = 60, AutoSize = false });
+    
+    // === SECCIÓN: RED Y BÚSQUEDA ===
+    rightColumn.Controls.Add(CreateSectionLabel("RED Y BÚSQUEDA"));
+    rightColumn.Controls.Add(CreateNumericRow("Timeout (seg, 0=sin límite):", out var numTimeout, searchTimeout, 0, 999999, (n) => { searchTimeout = (int)n.Value; SaveConfig(); }));
+    rightColumn.Controls.Add(CreateNumericRow("Respuestas (0=sin límite):", out var numResp, responseLimit, 0, 999999, (n) => { responseLimit = (int)n.Value; SaveConfig(); }));
+    rightColumn.Controls.Add(CreateNumericRow("Archivos (0=sin límite):", out var numFiles, fileLimit, 0, 999999, (n) => { fileLimit = (int)n.Value; SaveConfig(); }));
+    rightColumn.Controls.Add(CreateNumericRow("Búsquedas simultáneas:", out var numSearch, maxParallelSearches, 1, 15, (n) => { maxParallelSearches = (int)n.Value; SaveConfig(); }));
+    
+    var chkDist = CreateCheckBox("Habilitar red distribuida", enableDistributedNetwork, (c) => { enableDistributedNetwork = c.Checked; SaveConfig(); });
+    rightColumn.Controls.Add(chkDist);
+    
+    // === SECCIÓN: HERRAMIENTAS ===
+    rightColumn.Controls.Add(CreateSectionLabel("HERRAMIENTAS"));
+    
+    var btnBlacklist = CreateButton("🚫 Editar Blacklist", Color.FromArgb(150, 60, 60), OnEditBlacklistClick);
+    btnBlacklist.Width = 200;
+    rightColumn.Controls.Add(btnBlacklist);
+    
+    var btnConsolidate = CreateButton("🔀 Consolidar Carpetas", Color.FromArgb(0, 122, 204), async (s, e) => await ConsolidateDuplicateFolders());
+    btnConsolidate.Width = 220;
+    rightColumn.Controls.Add(btnConsolidate);
+    
+    // === SECCIÓN: COLA DE DESCARGAS ===
+    rightColumn.Controls.Add(CreateSectionLabel("COLA DE DESCARGAS"));
+    
+    var queueButtons = new FlowLayoutPanel { AutoSize = true, FlowDirection = FlowDirection.LeftToRight, Margin = new Padding(0, 0, 0, 10) };
+    var btnStart = CreateButton("▶️ Iniciar", Color.FromArgb(16, 185, 129), OnStartQueueClick);
+    btnStart.Width = 140;
+    queueButtons.Controls.Add(btnStart);
+    var btnClear = CreateButton("🗑️ Eliminar", Color.FromArgb(220, 38, 38), OnClearQueueClick);
+    btnClear.Width = 140;
+    queueButtons.Controls.Add(btnClear);
+    rightColumn.Controls.Add(queueButtons);
+    
+    var btnReset = CreateButton("🔥 RESET COMPLETO", Color.FromArgb(180, 40, 40), OnResetAllClick);
+    btnReset.Width = 200;
+    rightColumn.Controls.Add(btnReset);
+    
+    mainLayout.Controls.Add(rightColumn, 1, 0);
+    
+    scrollPanel.Controls.Add(mainLayout);
+    parent.Controls.Add(scrollPanel);
+}
+
+// Métodos helper para crear controles
+private Label CreateSectionLabel(string text)
+{
+    return new Label 
+    { 
+        Text = text, 
+        AutoSize = true,
+        ForeColor = Color.FromArgb(0, 122, 204), 
+        Font = new Font("Segoe UI", 11, FontStyle.Bold),
+        Margin = new Padding(0, 20, 0, 15)
+    };
+}
+
+private Label CreateLabel(string text)
+{
+    return new Label 
+    { 
+        Text = text, 
+        AutoSize = true,
+        ForeColor = Color.FromArgb(180, 180, 185),
+        Font = new Font("Segoe UI", 10),
+        Margin = new Padding(0, 5, 10, 0)
+    };
+}
+
+private Label CreateSmallLabel(string text)
+{
+    return new Label 
+    { 
+        Text = text, 
+        AutoSize = true,
+        ForeColor = Color.Gray,
+        Font = new Font("Segoe UI", 8),
+        Margin = new Padding(10, 7, 0, 0)
+    };
+}
+
+private TextBox CreateTextBox(string value, EventHandler textChanged)
+{
+    var txt = new TextBox 
+    { 
+        Text = value,
+        Width = 250,
+        BackColor = Color.FromArgb(50, 50, 55), 
+        ForeColor = Color.White,
+        Font = new Font("Segoe UI", 10),
+        BorderStyle = BorderStyle.FixedSingle
+    };
+    txt.TextChanged += textChanged;
+    return txt;
+}
+
+private CheckBox CreateCheckBox(string text, bool isChecked, EventHandler checkedChanged)
+{
+    var chk = new CheckBox 
+    { 
+        Text = text, 
+        AutoSize = true,
+        Checked = isChecked,
+        ForeColor = Color.White,
+        Font = new Font("Segoe UI", 9),
+        Margin = new Padding(0, 5, 0, 5)
+    };
+    chk.CheckedChanged += checkedChanged;
+    return chk;
+}
+
+private NumericUpDown CreateNumeric(decimal value, decimal min, decimal max, EventHandler valueChanged)
+{
+    var num = new NumericUpDown 
+    { 
+        Value = value,
+        Minimum = min,
+        Maximum = max,
+        Width = 80,
+        BackColor = Color.FromArgb(50, 50, 55), 
+        ForeColor = Color.White,
+        Font = new Font("Segoe UI", 10)
+    };
+    num.ValueChanged += valueChanged;
+    return num;
+}
+
+private Button CreateButton(string text, Color backColor, EventHandler click)
+{
+    var btn = new Button 
+    { 
+        Text = text, 
+        AutoSize = true,
+        BackColor = backColor, 
+        ForeColor = Color.White, 
+        FlatStyle = FlatStyle.Flat,
+        Font = new Font("Segoe UI", 10, FontStyle.Bold),
+        Padding = new Padding(16, 8, 16, 8),
+        Cursor = Cursors.Hand,
+        Margin = new Padding(0, 5, 0, 10)
+    };
+    btn.FlatAppearance.BorderSize = 0;
+    btn.Click += click;
+    return btn;
+}
+
+private Button CreateIconButton(string icon, EventHandler click)
+{
+    var btn = new Button 
+    { 
+        Text = icon, 
+        Width = 40,
+        Height = 30,
+        BackColor = Color.FromArgb(75, 75, 82), 
+        ForeColor = Color.White, 
+        FlatStyle = FlatStyle.Flat,
+        Font = new Font("Segoe UI", 10),
+        Cursor = Cursors.Hand,
+        Margin = new Padding(5, 0, 0, 0)
+    };
+    btn.FlatAppearance.BorderSize = 0;
+    btn.Click += click;
+    return btn;
+}
+
+private FlowLayoutPanel CreateConfigRow(string label, Control control)
+{
+    var row = new FlowLayoutPanel 
+    { 
+        AutoSize = true, 
+        FlowDirection = FlowDirection.LeftToRight, 
+        WrapContents = false,
+        Margin = new Padding(0, 0, 0, 15)
+    };
+    var lbl = CreateLabel(label);
+    lbl.Width = 150;
+    row.Controls.Add(lbl);
+    row.Controls.Add(control);
+    return row;
+}
+
+private FlowLayoutPanel CreateNumericRow(string label, out NumericUpDown numeric, decimal value, decimal min, decimal max, EventHandler valueChanged)
+{
+    var row = new FlowLayoutPanel 
+    { 
+        AutoSize = true, 
+        FlowDirection = FlowDirection.LeftToRight, 
+        WrapContents = false,
+        Margin = new Padding(0, 0, 0, 10)
+    };
+    var lbl = CreateLabel(label);
+    lbl.Width = 200;
+    row.Controls.Add(lbl);
+    numeric = CreateNumeric(value, min, max, valueChanged);
+    row.Controls.Add(numeric);
+    return row;
+}
+
+private FlowLayoutPanel CreateNumericRow(string label, ref NumericUpDown numericField, decimal value, decimal min, decimal max, EventHandler valueChanged)
+{
+    var row = CreateNumericRow(label, out var numeric, value, min, max, valueChanged);
+    numericField = numeric;
+    return row;
+}
+
+// Event handlers (mantener la lógica existente)
+private void OnAutoModeChanged(object sender, EventArgs e)
+{
+    autoMode = chkAutoMode.Checked;
+    SaveConfig();
+    if (autoMode)
+    {
+        InitializeAutoMode();
+        Log("🤖 Modo Automático ACTIVADO");
+    }
+    else
+    {
+        StopAutoMode();
+        Log("🤖 Modo Automático DESACTIVADO");
+    }
+}
+
+private void OnTurboModeChanged(object sender, EventArgs e)
+{
+    if (chkTurboMode.Checked)
+    {
+        maxParallelDownloads = 8;
+        maxSimultaneousDownloads = 8;
+        maxParallelSearches = 12;
+        searchTimeout = 20;
+        numParallelDownloads.Value = 8;
+        Log("⚡ Modo Turbo ACTIVADO");
+    }
+    else
+    {
+        maxParallelDownloads = 3;
+        maxSimultaneousDownloads = 3;
+        maxParallelSearches = 3;
+        searchTimeout = 30;
+        numParallelDownloads.Value = 3;
+        Log("🐢 Modo Normal");
+    }
+    numParallelDownloads.Enabled = chkTurboMode.Checked;
+    SaveConfig();
+}
+
+private void OnPrioritySizeChanged(object sender, EventArgs e)
+{
+    priorityBySize = chkPriorityBySize.Checked;
+    SaveConfig();
+    if (priorityBySize)
+    {
+        lock (downloadQueueLock)
+        {
+            var pending = downloadQueue.Where(t => t.Status == DownloadStatus.Pending).OrderBy(t => t.File.SizeBytes).ToList();
+            var others = downloadQueue.Where(t => t.Status != DownloadStatus.Pending).ToList();
+            downloadQueue.Clear();
+            downloadQueue.AddRange(others);
+            downloadQueue.AddRange(pending);
+        }
+        Log("📊 Cola reordenada: archivos pequeños primero");
+    }
+}
+
+private void BrowseFolder()
+{
+    using (var dialog = new FolderBrowserDialog())
+    {
+        dialog.SelectedPath = downloadDir;
+        if (dialog.ShowDialog() == DialogResult.OK)
+        {
+            txtDownloadDir.Text = dialog.SelectedPath;
+        }
+    }
+}
+
+private void OnEditBlacklistClick(object sender, EventArgs e)
+{
+    try
+    {
+        if (!System.IO.File.Exists(blacklistAuthorsFile))
+        {
+            SaveBlacklistedAuthors();
+        }
+        Process.Start("notepad.exe", blacklistAuthorsFile);
+        MessageBox.Show("Edita la blacklist en el Notepad.\n\n• Un autor por línea\n• Las líneas con # son comentarios", "Editar Blacklist", MessageBoxButtons.OK, MessageBoxIcon.Information);
+        Task.Delay(1000).ContinueWith(_ => SafeBeginInvoke(() => LoadBlacklistedAuthors()));
+    }
+    catch (Exception ex)
+    {
+        MessageBox.Show($"Error: {ex.Message}", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+    }
+}
+
+private void OnAggressiveModeClick(object sender, EventArgs e)
+{
+    // Mantener lógica existente del modo agresivo
+}
+
+private void OnStartQueueClick(object sender, EventArgs e)
+{
+    // Mantener lógica existente
+}
+
+private void OnClearQueueClick(object sender, EventArgs e)
+{
+    // Mantener lógica existente
+}
+
+private void OnResetAllClick(object sender, EventArgs e)
+{
+    // Mantener lógica existente
+}

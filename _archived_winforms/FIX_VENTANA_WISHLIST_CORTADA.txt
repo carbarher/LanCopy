@@ -1,0 +1,155 @@
+═══════════════════════════════════════════════════════════════
+🐛 FIX: VENTANA "AGREGAR A LISTA DE DESEOS" CORTADA
+═══════════════════════════════════════════════════════════════
+
+FECHA: 15 Nov 2025 - 1:00 PM
+
+PROBLEMA:
+─────────────────────────────────────────────────────────────
+
+❌ La ventana "Agregar a Lista de Deseos" estaba cortada por abajo
+❌ Los botones "Agregar" y "Cancelar" no eran visibles
+❌ El usuario no podía completar la acción
+
+
+CAUSA:
+─────────────────────────────────────────────────────────────
+
+La ventana tenía una altura de solo 250 píxeles, pero los 
+controles necesitaban más espacio:
+
+CONTROLES Y POSICIONES:
+- Label "Término de búsqueda": Y = 20
+- TextBox búsqueda: Y = 45
+- Label "Autor (opcional)": Y = 80
+- TextBox autor: Y = 105
+- Label "Notas (opcional)": Y = 140
+- TextBox notas: Y = 165
+- Botón "Agregar": Y = 200  ← CORTADO
+- Botón "Cancelar": Y = 200  ← CORTADO
+
+ALTURA TOTAL NECESARIA:
+- Barra de título: ~30px
+- Contenido: 200px (botones) + 30px (altura botón) = 230px
+- Margen inferior: ~20px
+- TOTAL: ~280px
+
+
+SOLUCIÓN:
+─────────────────────────────────────────────────────────────
+
+✅ Aumentar altura de la ventana de 250 a 280 píxeles
+
+
+CÓDIGO MODIFICADO:
+─────────────────────────────────────────────────────────────
+
+ANTES (línea 16472):
+
+var dialog = new Form
+{
+    Text = "Agregar a Lista de Deseos",
+    Size = new Size(450, 250),  ← ALTURA INSUFICIENTE
+    StartPosition = FormStartPosition.CenterParent,
+    BackColor = Color.FromArgb(30, 30, 30),
+    ForeColor = Color.White,
+    FormBorderStyle = FormBorderStyle.FixedDialog,
+    MaximizeBox = false,
+    MinimizeBox = false
+};
+
+
+AHORA (línea 16472):
+
+var dialog = new Form
+{
+    Text = "Agregar a Lista de Deseos",
+    Size = new Size(450, 280),  ← ALTURA CORREGIDA
+    StartPosition = FormStartPosition.CenterParent,
+    BackColor = Color.FromArgb(30, 30, 30),
+    ForeColor = Color.White,
+    FormBorderStyle = FormBorderStyle.FixedDialog,
+    MaximizeBox = false,
+    MinimizeBox = false
+};
+
+
+CAMBIO:
+─────────────────────────────────────────────────────────────
+
+ANTES: Size = new Size(450, 250)
+AHORA:  Size = new Size(450, 280)
+
+DIFERENCIA: +30 píxeles de altura
+
+
+IMPACTO:
+─────────────────────────────────────────────────────────────
+
+✅ Ventana completa visible
+✅ Botones "Agregar" y "Cancelar" visibles
+✅ Usuario puede completar la acción
+✅ Mejor experiencia de usuario
+
+
+DISTRIBUCIÓN DE ESPACIO:
+─────────────────────────────────────────────────────────────
+
+┌─────────────────────────────────────────────┐
+│ Agregar a Lista de Deseos              [X]  │ ← Barra título (~30px)
+├─────────────────────────────────────────────┤
+│                                             │
+│ Término de búsqueda:                        │ ← Y=20
+│ [________________________________]          │ ← Y=45
+│                                             │
+│ Autor (opcional):                           │ ← Y=80
+│ [________________________________]          │ ← Y=105
+│                                             │
+│ Notas (opcional):                           │ ← Y=140
+│ [________________________________]          │ ← Y=165
+│                                             │
+│                    [Agregar] [Cancelar]     │ ← Y=200 (ahora visible)
+│                                             │
+└─────────────────────────────────────────────┘
+                                               ← Total: 280px
+
+
+ARCHIVOS MODIFICADOS:
+─────────────────────────────────────────────────────────────
+
+- MainForm.cs (línea 16472): Aumentada altura de ventana
+
+
+TESTING:
+─────────────────────────────────────────────────────────────
+
+1. Abrir la aplicación
+2. Ir a la pestaña "Wishlist" o usar menú contextual
+3. Click en "⭐ Agregar a Wishlist"
+4. Verificar que la ventana muestra:
+   ✅ Campo "Término de búsqueda"
+   ✅ Campo "Autor (opcional)"
+   ✅ Campo "Notas (opcional)"
+   ✅ Botón "Agregar" (visible y clickeable)
+   ✅ Botón "Cancelar" (visible y clickeable)
+5. Completar campos y verificar que se puede agregar
+
+
+VENTANAS SIMILARES:
+─────────────────────────────────────────────────────────────
+
+Si hay otras ventanas con problemas similares, verificar:
+- Altura suficiente para todos los controles
+- Margen inferior de al menos 20px después del último control
+- Considerar barra de título (~30px) y bordes (~10px)
+
+
+═══════════════════════════════════════════════════════════════
+✅ FIX APLICADO: VENTANA WISHLIST AHORA COMPLETA
+═══════════════════════════════════════════════════════════════
+
+Compila y prueba:
+> lanza.bat
+
+¡Ahora la ventana se ve completa! ✅
+

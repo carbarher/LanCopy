@@ -1,0 +1,123 @@
+═══════════════════════════════════════════════════════════════
+✅ ERRORES DE COMPILACIÓN CORREGIDOS
+═══════════════════════════════════════════════════════════════
+
+SESIÓN: 15 Nov 2025 - 10:14 AM
+
+ERRORES CORREGIDOS:
+─────────────────────────────────────────────────────────────
+
+1. ✅ BookMetadataViewer.cs (línea 327)
+   ERROR: CS4008 - No se puede usar await con 'void'
+   
+   CAUSA:
+   - RefreshMetadata() era async Task
+   - LoadMetadataAsync() es async void
+   - No se puede await un método void
+   
+   SOLUCIÓN:
+   - Cambiar RefreshMetadata() de async Task a void
+   - Llamar LoadMetadataAsync() sin await
+   
+   CÓDIGO:
+   // ANTES:
+   private async Task RefreshMetadata()
+   {
+       await LoadMetadataAsync();
+   }
+   
+   // AHORA:
+   private void RefreshMetadata()
+   {
+       LoadMetadataAsync();
+   }
+
+
+2. ✅ MainForm.cs (líneas 15845, 15854)
+   ERROR: CS0103 - El nombre 'downloadPath' no existe
+   
+   CAUSA:
+   - Usaba variable 'downloadPath' que no existe
+   - La variable correcta es 'downloadDir'
+   
+   SOLUCIÓN:
+   - Reemplazar downloadPath por downloadDir
+   
+   CÓDIGO:
+   // ANTES:
+   var files = System.IO.Directory.GetFiles(downloadPath, ...);
+   
+   // AHORA:
+   var files = System.IO.Directory.GetFiles(downloadDir, ...);
+
+
+3. ✅ MainForm.cs (línea 15779)
+   ERROR: CS0106 - Modificador 'private' no válido
+   ERROR: CS1513 - Se esperaba }
+   
+   CAUSA:
+   - Indentación incorrecta de SafeInvoke
+   - Faltaba cerrar llave del if
+   
+   SOLUCIÓN:
+   - Corregir indentación
+   - Cerrar correctamente las llaves
+   
+   CÓDIGO:
+   // ANTES:
+   if (newMaxParallel != maxParallelDownloads)
+   {
+       maxParallelDownloads = newMaxParallel;
+   SafeInvoke(() =>  // ← Mal indentado
+   {
+       ...
+   });
+   }  // ← Faltaba
+   
+   // AHORA:
+   if (newMaxParallel != maxParallelDownloads)
+   {
+       maxParallelDownloads = newMaxParallel;
+       SafeInvoke(() =>  // ← Bien indentado
+       {
+           ...
+       });
+   }  // ← Cerrado correctamente
+
+
+RESUMEN:
+─────────────────────────────────────────────────────────────
+
+Total de errores: 3
+Errores corregidos: 3
+Advertencias: 593 (no críticas)
+
+Estado: ✅ LISTO PARA COMPILAR
+
+
+ARCHIVOS MODIFICADOS:
+─────────────────────────────────────────────────────────────
+
+1. BookMetadataViewer.cs
+   - Línea 325-328: RefreshMetadata()
+
+2. MainForm.cs
+   - Línea 15779-15786: AdjustParallelDownloads()
+   - Línea 15845: FindDownloadedFile() - primera búsqueda
+   - Línea 15854: FindDownloadedFile() - segunda búsqueda
+
+
+COMPILAR AHORA:
+─────────────────────────────────────────────────────────────
+
+cd c:\p2p\SlskDown
+lanza.bat
+
+
+═══════════════════════════════════════════════════════════════
+✅ TODOS LOS ERRORES CRÍTICOS CORREGIDOS
+═══════════════════════════════════════════════════════════════
+
+Las 593 advertencias son normales y no impiden la compilación.
+La aplicación debería compilar y ejecutar correctamente ahora.
+

@@ -1,0 +1,365 @@
+═══════════════════════════════════════════════════════════════
+✅ ACTUALIZADO: BOTÓN RESET COMPLETO
+═══════════════════════════════════════════════════════════════
+
+FECHA: 15 Nov 2025 - 11:03 AM
+
+OBJETIVO:
+─────────────────────────────────────────────────────────────
+
+Actualizar el botón "🔥 RESET COMPLETO" para que elimine TODOS
+los archivos y estructuras de datos nuevas que se han agregado
+en las últimas actualizaciones.
+
+
+ARCHIVOS NUEVOS AGREGADOS A LA LISTA:
+─────────────────────────────────────────────────────────────
+
+1. ✅ progressPath (batch_progress.json)
+   - Progreso de procesamiento por lotes
+
+2. ✅ blacklistPath (blacklist.json)
+   - Blacklist de usuarios en formato JSON
+
+3. ✅ wishlistPath (wishlist.json)
+   - Lista de deseos para búsquedas automáticas
+
+4. ✅ authorsPath (authors_list.txt)
+   - Lista de autores para búsqueda automática
+
+5. ✅ Uso de propiedades en vez de strings hardcodeados
+   - downloadHistoryPath en vez de Path.Combine(...)
+   - statsPath en vez de Path.Combine(...)
+
+
+DESCARGAS ACTIVAS:
+─────────────────────────────────────────────────────────────
+
+1. ✅ Detener gestor de descargas
+   - downloadManagerRunning = false
+   - Espera 1 segundo para que termine el loop
+
+2. ✅ Cancelar todas las descargas activas
+   - Itera sobre downloadQueue
+   - Cancela cada CancellationToken
+   - Detiene transferencias en progreso
+
+
+ESTRUCTURAS DE MEMORIA AGREGADAS A LA LIMPIEZA:
+─────────────────────────────────────────────────────────────
+
+1. ✅ downloadQueue (con lock)
+   - Cola de descargas activas y pendientes
+
+2. ✅ downloadHistory (con lock)
+   - Historial de descargas completadas
+
+3. ✅ providerStats (con lock)
+   - Estadísticas de proveedores/usuarios
+
+4. ✅ filesByAuthorIndex (con lock)
+   - Índice de archivos por autor
+
+5. ✅ wishlist
+   - Lista de deseos en memoria
+
+6. ✅ fileExistsCache
+   - Caché de existencia de archivos
+
+7. ✅ hashToFilePath
+   - Mapa de hashes para deduplicación
+
+8. ✅ allAuthorsData
+   - Lista completa de autores
+
+9. ✅ filteredAuthorsData
+   - Lista filtrada de autores
+
+10. ✅ itemCache
+    - Caché de items virtuales
+
+11. ✅ lvDownloads.Items.Clear()
+    - Grilla visual de descargas
+
+12. ✅ lvAutoAuthors.VirtualListSize = 0
+    - Grilla virtual de autores (resetear tamaño)
+
+
+CÓDIGO MODIFICADO:
+─────────────────────────────────────────────────────────────
+
+0. EVENT HANDLER ASYNC (línea 1990):
+
+```csharp
+btnResetAll.Click += async (s, e) =>  // ← async para await
+{
+    // ...
+}
+```
+
+1. LISTA DE ARCHIVOS (líneas 2016-2054):
+
+```csharp
+var filesToDelete = new[]
+{
+    // Cachés
+    Path.Combine(dataDir, "search_cache.json"),
+    calibreCacheFile,
+    countryCachePath,
+    progressPath, // ← NUEVO: batch_progress.json
+    
+    // Base de datos SQLite
+    dbPath,
+    
+    // Resultados de búsqueda
+    autoResultsCsvPath,
+    autoSearchResultsJsonPath,
+    
+    // Historial y estadísticas
+    downloadHistoryPath,  // ← ACTUALIZADO: usar propiedad
+    statsPath,            // ← ACTUALIZADO: usar propiedad
+    
+    // Progreso de purga
+    Path.Combine(dataDir, "purge_progress.json"),
+    
+    // Favoritos y búsquedas
+    favoritesPath,
+    historyPath,
+    
+    // Blacklist y watchlist
+    blacklistAuthorsFile,
+    blacklistPath,   // ← NUEVO: blacklist.json
+    watchlistPath,
+    wishlistPath,    // ← NUEVO: wishlist.json
+    
+    // Cola de descargas
+    downloadQueuePath,
+    
+    // Autores
+    authorsPath,     // ← NUEVO: authors_list.txt
+    Path.Combine(dataDir, "last_authors_file.txt")
+};
+```
+
+2. DETENCIÓN DE DESCARGAS (líneas 2081-2096):
+
+```csharp
+// Detener gestor de descargas
+downloadManagerRunning = false;
+await Task.Delay(1000); // Esperar a que termine el loop
+
+// Cancelar todas las descargas activas
+lock (downloadQueueLock)
+{
+    foreach (var task in downloadQueue)
+    {
+        try
+        {
+            task.CancellationToken?.Cancel();
+        }
+        catch { }
+    }
+}
+
+// Cerrar conexión a BD antes de eliminarla
+try
+{
+    dbConnection?.Close();
+    dbConnection?.Dispose();
+    dbConnection = null;
+}
+catch { }
+```
+
+3. LIMPIEZA DE MEMORIA (líneas 2107-2149):
+
+```csharp
+// Limpiar datos en memoria
+lock (autoSearchResultsLock)
+{
+    autoSearchResults.Clear();
+}
+lock (downloadQueueLock)          // ← NUEVO
+{
+    downloadQueue.Clear();
+}
+lock (downloadHistoryLock)        // ← NUEVO
+{
+    downloadHistory.Clear();
+}
+lock (providerStatsLock)          // ← NUEVO
+{
+    providerStats.Clear();
+}
+lock (authorIndexLock)            // ← NUEVO
+{
+    filesByAuthorIndex.Clear();
+}
+
+searchCache.Clear();
+blacklistedAuthors.Clear();
+carbarherFilesCache.Clear();
+carbarherCacheLoaded = false;
+wishlist.Clear();                 // ← NUEVO
+fileExistsCache.Clear();          // ← NUEVO
+hashToFilePath.Clear();           // ← NUEVO
+allAuthorsData.Clear();           // ← NUEVO
+filteredAuthorsData.Clear();      // ← NUEVO
+itemCache.Clear();                // ← NUEVO
+
+// Limpiar caché de metadata (MemoryCache no tiene Flush)
+// Se limpiará automáticamente por tiempo de expiración
+
+// Limpiar grilla de descargas      ← NUEVO
+SafeInvoke(() =>
+{
+    if (lvDownloads != null)
+    {
+        lvDownloads.Items.Clear();
+    }
+    if (lvAutoAuthors != null)
+    {
+        // lvAutoAuthors es virtual, solo resetear el tamaño
+        lvAutoAuthors.VirtualListSize = 0;
+    }
+});
+```
+
+4. MENSAJE DE ADVERTENCIA (líneas 1992-2011):
+
+```csharp
+var result = MessageBox.Show(
+    "⚠️ ADVERTENCIA: Esta acción:\n\n" +
+    "🛑 DETENDRÁ todas las descargas activas\n" +          // ← NUEVO
+    "🗑️ ELIMINARÁ todos los datos:\n\n" +
+    "• Base de datos SQLite completa\n" +
+    "• Cachés (búsqueda, Calibre, países, batch)\n" +
+    "• Resultados de búsqueda automática (CSV y JSON)\n" +
+    "• Historial de descargas y cola de descargas\n" +
+    "• Estadísticas y progreso de purga\n" +
+    "• Favoritos y búsquedas recientes\n" +
+    "• Blacklist de usuarios y autores\n" +
+    "• Watchlist y Wishlist\n" +
+    "• Lista de autores\n" +
+    "• Memoria caché (metadata, deduplicación, etc.)\n\n" +
+    "NO se eliminará la configuración de usuario/contraseña.\n\n" +
+    "¿Estás seguro de que quieres continuar?",
+    "Reset Completo",
+    MessageBoxButtons.YesNo,
+    MessageBoxIcon.Warning,
+    MessageBoxDefaultButton.Button2);
+```
+
+
+ARCHIVOS ELIMINADOS (COMPLETO):
+─────────────────────────────────────────────────────────────
+
+📁 Cachés:
+  - search_cache.json
+  - calibre_cache.txt.gz
+  - country_cache.json
+  - batch_progress.json
+
+📊 Base de datos:
+  - slskdown.db
+
+🔍 Resultados:
+  - auto_search_results.csv
+  - auto_search_results.json
+
+📜 Historial:
+  - download_history.json
+  - stats.json
+  - purge_progress.json
+
+⭐ Favoritos:
+  - favorites.json
+  - search_history.json
+
+🚫 Blacklists:
+  - blacklist_authors.txt
+  - blacklist.json
+  - watchlist.txt
+  - wishlist.json
+
+📥 Descargas:
+  - download_queue.json
+
+👥 Autores:
+  - authors_list.txt
+  - last_authors_file.txt
+
+
+MEMORIA LIMPIADA (COMPLETO):
+─────────────────────────────────────────────────────────────
+
+🗂️ Colecciones:
+  - autoSearchResults
+  - downloadQueue
+  - downloadHistory
+  - providerStats
+  - filesByAuthorIndex
+  - searchCache
+  - blacklistedAuthors
+  - carbarherFilesCache
+  - wishlist
+  - fileExistsCache
+  - hashToFilePath
+
+💾 Cachés:
+  - metadataCache (MemoryCache)
+
+🎨 UI:
+  - lvDownloads (grilla de descargas)
+  - lvAutoAuthors (grilla virtual de autores)
+
+🔌 Conexiones:
+  - dbConnection (cerrada y disposed)
+
+
+BENEFICIOS:
+─────────────────────────────────────────────────────────────
+
+✅ Reset verdaderamente completo
+✅ Detiene todas las descargas activas
+✅ Cancela transferencias en progreso
+✅ Elimina TODOS los archivos de datos
+✅ Limpia TODAS las estructuras en memoria
+✅ Limpia grillas visuales
+✅ Cierra conexión de base de datos
+✅ Libera memoria caché
+✅ Mensaje de advertencia actualizado
+✅ Usuario informado de todo lo que se eliminará
+
+
+RESULTADO:
+─────────────────────────────────────────────────────────────
+
+Después del reset, la aplicación vuelve a un estado completamente
+limpio, como si fuera la primera vez que se ejecuta (excepto la
+configuración de usuario/contraseña que se preserva).
+
+
+ARCHIVOS MODIFICADOS:
+─────────────────────────────────────────────────────────────
+
+1. MainForm.cs
+   - Línea 1990: Event handler async
+   - Líneas 1992-2011: Mensaje de advertencia actualizado
+   - Líneas 2016-2054: Lista de archivos ampliada
+   - Líneas 2081-2096: Detención de descargas y cancelación
+   - Líneas 2107-2149: Limpieza de memoria ampliada
+
+2. FIX_RESET_COMPLETO_ACTUALIZADO.txt
+   - Documentación completa del reset
+
+
+═══════════════════════════════════════════════════════════════
+✅ BOTÓN RESET COMPLETO AHORA ELIMINA TODO
+═══════════════════════════════════════════════════════════════
+
+Compila y prueba:
+> lanza.bat
+
+El reset ahora es verdaderamente completo y limpia todo.
+
