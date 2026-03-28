@@ -1,4 +1,4 @@
-﻿# Build output
+# Build output
 **/bin/
 **/obj/
 # VS/IDE
@@ -17,6 +17,12 @@
 # Downloads y Backups
 downloads/
 Backups/
+# rust-analyzer / cargo flycheck scratch (no versionar)
+**/target/flycheck*/
+
+# Bundles locales en la raíz del repo
+downloads_txt_bundle.zip
+
 # Archivos grandes
 startup_log.txt
 gutenberg_metadata.csv
