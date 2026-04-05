@@ -166,6 +166,10 @@ public static class BibliotecaImportFilesystem
                 ? new HashSet<string>(list, StringComparer.OrdinalIgnoreCase)
                 : new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         }
+        catch (JsonException)
+        {
+            return new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        }
         catch { return new HashSet<string>(StringComparer.OrdinalIgnoreCase); }
     }
 
@@ -396,6 +400,10 @@ public static class BibliotecaImportFilesystem
                 ZipCorrupted = data.ZipCorrupted,
                 BelowMinSize = data.BelowMinSize,
             };
+        }
+        catch (JsonException)
+        {
+            return null;
         }
         catch { return null; }
     }
