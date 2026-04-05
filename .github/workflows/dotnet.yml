@@ -1,3 +1,5 @@
+# CI principal del monorepo p2p (submódulo SlskDownAvalonia + SlskDownBibliotecaImport en la raíz).
+# No usar ci.yml legado con SlskDown.sln si ese archivo no está en el repo.
 name: .NET
 
 on:
