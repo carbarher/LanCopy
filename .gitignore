@@ -17,6 +17,8 @@
 # Downloads y Backups
 downloads/
 Backups/
+# Carpeta local de ebooks fuera del catálogo (no versionar)
+SlskDownAvalonia/_NoEspañol/
 # rust-analyzer / cargo flycheck scratch (no versionar)
 **/target/flycheck*/
 
@@ -25,7 +27,13 @@ downloads_txt_bundle.zip
 
 # Archivos grandes
 startup_log.txt
+# Catálogo PG local (~90MB); *.csv abajo también lo ignora — mantener copia fuera de git o usar LFS si se versiona
 gutenberg_metadata.csv
 scripts/goodreads_bbe_books.csv
 *.csv
 *.log
+
+# Comprobaciones de build locales (no versionar)
+_verify_*/
+_buildcheck/
+_build_out_import_tool/
