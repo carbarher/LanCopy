@@ -7,18 +7,18 @@ on:
     branches: [main, master]
     paths:
       - "SlskDownAvalonia/**"
+      - "SlskDownBibliotecaImport/**"
       - ".github/workflows/dotnet.yml"
   workflow_dispatch:
 
-# Monorepo: el .slnx y los proyectos viven bajo SlskDownAvalonia/
-# Si el repo es solo la carpeta del proyecto, usar working-directory: . y rutas sin prefijo SlskDownAvalonia/
+# SlskDownAvalonia referencia ../SlskDownBibliotecaImport (hermano en la raíz del repo).
 defaults:
   run:
     working-directory: SlskDownAvalonia
 
 jobs:
   build-test:
-    runs-on: ubuntu-latest
+    runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
         with:
