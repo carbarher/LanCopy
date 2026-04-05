@@ -6,11 +6,14 @@
   No forma parte del build de la app. Uso:
     pwsh -NoProfile -File scripts/probe-pd-sources.ps1
     pwsh -NoProfile -File scripts/probe-pd-sources.ps1 -OpenBrowser
+    pwsh -NoProfile -File scripts/probe-pd-sources.ps1 -TryDownload
   Muchas webs usan Cloudflare: desde PowerShell puede devolver 403 aunque el navegador funcione.
   BDH: la búsqueda nueva es una SPA; la respuesta HTML suele ser el caparazón; el legado Search.do a veces responde 503.
+  -TryDownload: baja un PDF estático de BDH y prueba descargas típicas en Feedbooks/Manybooks (403 esperable sin navegador real).
 #>
 param(
     [switch] $OpenBrowser,
+    [switch] $TryDownload,
     [int] $TimeoutSec = 30
 )
 
@@ -119,6 +122,48 @@ Write-Host ""
 Write-Host "Notas:" -ForegroundColor DarkGray
 Write-Host "  - BDH: resultados reales suelen cargarse por JS/API en el cliente; 200 con HTML corto es normal en la SPA." -ForegroundColor DarkGray
 Write-Host "  - Manybooks/Feedbooks: 403 desde scripts es frecuente; validar en Chrome/Firefox." -ForegroundColor DarkGray
+
+if ($TryDownload) {
+    Write-Host ""
+    Write-Host "=== Prueba de descarga de archivos (mismo User-Agent) ===" -ForegroundColor Cyan
+    $tmp = [System.IO.Path]::GetTempPath()
+
+    # BDH: recurso estático servido por la propia BNE (no depende de la SPA de resultados).
+    $bdhPdf = 'https://bdh.bne.es/fs/static/pdf/guia-de-uso-bne-digital.pdf'
+    $bdhOut = Join-Path $tmp 'probe-bdh-guia-de-uso.pdf'
+    try {
+        Invoke-WebRequest -Uri $bdhPdf -OutFile $bdhOut -TimeoutSec $TimeoutSec -Headers @{ 'User-Agent' = $ChromeUa }
+        $len = (Get-Item -LiteralPath $bdhOut).Length
+        Write-Host ("BDH  OK  guardado {0} bytes -> {1}" -f $len, $bdhOut) -ForegroundColor Green
+    }
+    catch {
+        Write-Host ("BDH  FAIL {0}" -f $_.Exception.Message) -ForegroundColor Red
+    }
+
+    $manyTry = @{ Name = 'Manybooks TXT (path historico)'; Uri = 'https://manybooks.net/files/1/1/1/8/1118/1118.txt' }
+    $feedTry = @{ Name = 'Feedbooks libro (pagina)'; Uri = 'https://www.feedbooks.com/book/168' }
+    foreach ($t in @($manyTry, $feedTry)) {
+        $name = [System.IO.Path]::GetFileName($t.Uri)
+        $out = Join-Path $tmp ('probe-' + $name)
+        try {
+            Invoke-WebRequest -Uri $t.Uri -OutFile $out -TimeoutSec $TimeoutSec -Headers @{ 'User-Agent' = $ChromeUa } -MaximumRedirection 5
+            $len = (Get-Item -LiteralPath $out).Length
+            Write-Host ("{0}  OK  {1} bytes -> {2}" -f $t.Name, $len, $out) -ForegroundColor Green
+        }
+        catch {
+            $code = $null
+            try {
+                $ex = $_.Exception
+                if ($ex -is [System.Net.WebException] -and $null -ne $ex.Response) { $code = [int]$ex.Response.StatusCode }
+                elseif ($null -ne $ex.StatusCode) { $code = [int]$ex.StatusCode }
+            }
+            catch { }
+            Write-Host ("{0}  FAIL  HTTP={1} {2}" -f $t.Name, $code, $_.Exception.Message) -ForegroundColor Yellow
+        }
+    }
+    Write-Host ""
+    Write-Host "Si Manybooks/Feedbooks dan 403: Cloudflare suele exigir cookies/navegador; la descarga manual en el sitio suele funcionar." -ForegroundColor DarkGray
+}
 
 if ($OpenBrowser) {
     $urls = @(
