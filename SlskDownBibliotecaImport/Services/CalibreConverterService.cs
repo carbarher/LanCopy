@@ -402,6 +402,10 @@ namespace SlskDownBibliotecaImport.Services
         /// Convierte todos los libros de una carpeta a TXT.
         /// Optimizado para 5000+ libros: paralelo, con persistencia de progreso y circuit breaker.
         /// </summary>
+        /// <param name="txtOutputDir">
+        /// Carpeta del archivo <c>.txt-progress</c> (y creación del directorio). Los .txt generados
+        /// se escriben siempre junto a cada archivo fuente, no en esta ruta.
+        /// </param>
         public async Task<BatchConversionResult> ConvertAllToTxtAsync(
             string downloadsDir,
             string? txtOutputDir = null,
@@ -431,10 +435,13 @@ namespace SlskDownBibliotecaImport.Services
                 if (alreadyConverted.Count > 500 && restrictToFiles != null)
                 {
                     var before = alreadyConverted.Count;
+                    // Mismo criterio que LoadProgressValidated: el .txt sale junto al archivo fuente,
+                    // no en txtOutputDir (que solo aloja .txt-progress).
                     alreadyConverted.RemoveWhere(f =>
                     {
-                        var txtPath = Path.Combine(txtOutputDir,
-                            Path.GetFileNameWithoutExtension(f) + ".txt");
+                        var dir = Path.GetDirectoryName(f);
+                        if (string.IsNullOrEmpty(dir)) return true;
+                        var txtPath = Path.Combine(dir, Path.GetFileNameWithoutExtension(f) + ".txt");
                         return !File.Exists(txtPath);
                     });
                     var pruned = before - alreadyConverted.Count;

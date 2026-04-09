@@ -1,0 +1,104 @@
+# XL Semanal — «La biblioteca perfecta» (votación popular, 100 entradas en 13 diapositivas).
+# Duplicados del artículo original: Asesinato en el Orient Express (2×); La metamorfosis / Metamorfosis Kafka (2×).
+# Tres entradas «Cuentos» distinguidas por autor.
+# Dominio público (UE, 70 años): ver scripts/data/biblioteca-perfecta-100-meta.tsv y check-biblioteca-perfecta-txt.ps1 -PublicDomainOnly.
+Cien años de soledad
+La Odisea
+La Ilíada
+Episodios nacionales
+La Regenta
+1984
+El principito
+El conde de Montecristo
+El señor de los anillos
+Orgullo y prejuicio
+La Biblia
+Guerra y paz
+Crimen y castigo
+La Divina Comedia
+La metamorfosis
+Hamlet
+Diálogos
+Cuentos (Edgar Allan Poe)
+El capitán Alatriste
+Asesinato en el Orient Express
+Asesinato en el Orient Express
+Drácula
+El mundo de ayer
+Madame Bovary
+Anna Karenina
+Sherlock Holmes
+A sangre fría
+Alicia en el país de las maravillas
+El origen de las especies
+La isla del tesoro
+Cuento de Navidad
+El amor en los tiempos del cólera
+Mafalda
+Cumbres borrascosas
+Lazarillo de Tormes
+Los santos inocentes
+Ensayo sobre la ceguera
+La vida es sueño
+La Eneida
+Fortunata y Jacinta
+El guardián entre el centeno
+Los miserables
+Las mil y una noches
+El extranjero
+La conjura de los necios
+Los tres mosqueteros
+El club Dumas
+El retrato de Dorian Grey
+Rebelión en la granja
+Moby Dick
+Ensayos
+Diario (Ana Frank)
+Metamorfosis
+Vida de los doce Césares
+El Aleph
+El corazón de las tinieblas
+Diez negritos
+Meditaciones
+Poemas
+Napoleón
+Macbeth
+Una habitación propia
+Rimas
+Nada
+En busca del tiempo perdido
+Historia de la guerra del Peloponeso
+Frankenstein
+La fiesta del Chivo
+Anábasis
+Edipo Rey
+El segundo sexo
+Antígona
+Romancero gitano
+El gatopardo
+La ciudad de los prodigios
+Decamerón
+Matar a un ruiseñor
+El gran Gatsby
+Ética a Nicómaco
+Pedro Páramo
+Dune
+Jane Eyre
+La montaña mágica
+Las moradas
+La familia de Pascual Duarte
+Rojo y negro
+Cuentos (Julio Cortázar)
+Cuentos (hermanos Grimm)
+El proceso
+Vidas paralelas
+La Celestina
+Corazón tan blanco
+Memorias de Adriano
+Conversación en La Catedral
+Poeta en Nueva York
+Memorias de ultratumba
+La interpretación de los sueños
+Romeo y Julieta
+Ficciones
+Libro del desasosiego
