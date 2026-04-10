@@ -1,0 +1,6 @@
+# Blacklist de autores (uno por línea, ejemplo: autores modernos, editoriales, etc.)
+# Añade aquí los nombres exactos que NO deben considerarse dominio público
+# Ejemplo:
+# Gabriel García Márquez
+# J.K. Rowling
+# Paulo Coelho

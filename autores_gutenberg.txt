@@ -69,8 +69,6 @@ A. A. (Aleksandra Andreevna)
 A. A. (Angelo Antonio)
 A. A. (Arthur Alger)
 A. A. (Arthur Aston)
-A. A. Milne
-A. A. Milne, Winnie
 A. A. O.
 A. A. Soares de (Antonio Augusto Soares)
 A. A. St. M. (Arthur Albert St. M.)
@@ -133,7 +131,6 @@ A. E. (Arthur Everett)
 A. E. H. (Alfred Edwin Howard)
 A. E. J. (Alfred Edward John)
 A. E. W. (Alfred Edward Woodley)
-A. E. W. Mason
 A. Edward (Alfred Edward)
 A. Eric
 A. Ethelwyn
@@ -292,9 +289,6 @@ A.-J. (Alphonse-Jules)
 A.-J.-B. (Auguste-Jean-Baptiste)
 A.L.O.C.
 A.-V. (Antoine-Vincent)
-Ã‰mile Gaboriau
-Ã‰mile Zola
-Ãngeles Mastretta
 Aaberg
 Aakjær
 Aaltio
@@ -368,7 +362,6 @@ Abrojal
 Absalom
 Abtei Heiligenkreuz
 Abu al-Ala al-Maarri
-Abu Nuwas
 Academy of Political Science in the City of New York
 Achard
 Achenwall
@@ -504,7 +497,6 @@ Adam ; Garnier
 Adam Charles Gustave
 Adam Lindsay
 Adam S. (Adam Samuel)
-Adam Smith
 Adam Storey
 Adama van Scheltema
 Adams
@@ -534,7 +526,6 @@ Adélaïde-Marie-Emilie Filleul
 Adelbert
 Adelbert Farrington
 Adelbert von
-Adelbert von Chamisso
 Adele
 Adèle ; Hommaire de Hell
 Adele E.
@@ -693,7 +684,6 @@ Alan
 Alan Edward
 Alan J.
 Alan L.
-Alan Pauls
 Alan St. H. (Alan St. Hill)
 Alanic
 Alarcón
@@ -766,12 +756,10 @@ Albertazzi
 Alberti
 Alberto
 Alberto B.
-Alberto Blest Gana
 Alberto da Silva
 Alberto Dias
 Alberto Feliciano Marques
 Alberto Leal Barradas Monteiro
-Alberto Lista
 Alberto P.
 Alberts
 Albertson
@@ -803,7 +791,6 @@ Alec
 Alec-Tweedie
 Aleister
 Alejandro
-Alejandro Zambra
 Aleksander
 Aleksandr
 Aleksandr Borisovich
@@ -862,8 +849,6 @@ Alexander Meyrick
 Alexander Miller
 Alexander Morrison
 Alexander Philip Wilson
-Alexander Pope
-Alexander Pushkin
 Alexander Scott
 Alexander Sutherland
 Alexander von
@@ -871,13 +856,11 @@ Alexander von ; Bonpland
 Alexander Wheelock
 Alexander William
 Alexandr
-Alexandr Ostrovski
 Alexandra
 Alexandra Agusta Guttman
 Alexandre
 Alexandre Alberto da Rocha de Serpa
 Alexandre da
-Alexandre Dumas
 Alexandre François Augustin
 Alexandros
 Alexandros Rizos
@@ -887,9 +870,7 @@ Alexis ; Lachambre
 Alexis ; Miles
 Alexis de
 Alexis de ; Senior
-Alexis de Tocqueville
 Alfieri
-Alfonsina Storni
 Alfonso Maria de'
 Alford
 Alfred
@@ -914,9 +895,6 @@ Alfred Charles
 Alfred Clark
 Alfred D. (Alfred Duclos)
 Alfred de
-Alfred de Musset
-Alfred de Vigny
-Alfred de Vigny, Cinq
 Alfred E.
 Alfred E. (Alfred Edward)
 Alfred Edmund
@@ -967,14 +945,11 @@ Algernon ; Wilson
 Algernon Bertram Freeman-Mitford
 Algernon Charles
 Algernon Charles ; Rossetti
-Algernon Charles Swinburne
-Al-Ghazali
 Algie
 Algis
 AlHydar
 Ali
 Ali Bey
-Ali Chumacero
 Ali Haydar Mithat
 ʻAli Muhammad Shirazi
 ʻAli Muhammad Shirazi ; ʻAbdu'l-Bahá ; Bahá'u'lláh
@@ -1075,13 +1050,11 @@ Almira Louisa Corey
 Almirall
 Almqvist
 Almroth
-Al-Mutanabbi
 Alois
 Alois Leopold
 Alomar
 Alonso
 Alonso de
-Alonso de Ercilla
 Alonso de la Avecilla
 Alonzo
 Alonzo A.
@@ -1092,7 +1065,6 @@ Alphen
 Alpheus Henry
 Alphonse
 Alphonse ; Nion
-Alphonse Daudet
 Alphonse de
 Alphonse Leon
 Alpo
@@ -1125,7 +1097,6 @@ Alvin T.
 Alys Eyre
 Amabel
 Amado
-Amado Nervo
 Amalia
 Amalie
 Amanda Alcenia Strickland
@@ -1141,7 +1112,6 @@ Ambrogio
 Ambroise
 Ambrose
 Ambrose ; Voss
-Ambrose Bierce
 Ambrose Elliott
 Ambrosio
 Ambrus
@@ -1208,8 +1178,6 @@ Amy Wentworth ; Nesbit
 An
 An M. D.
 Ana de Castro
-Ana MarÃ­a Shua
-AnÃ³nimo
 Anacreon
 Anastasi
 Anatole
@@ -1228,7 +1196,6 @@ Andersson
 Anderton
 Andor
 Andor ; Horváth
-AndrÃ© Laurie
 András
 Andre
 André
@@ -1269,7 +1236,6 @@ Andrew J.
 Andrew Jackson
 Andrew James
 Andrew Kennedy Hutchison
-Andrew Lang
 Andrew McFarland
 Andrew P. (Andrew Preston)
 Andrew P. (Andrew Preston) ; Hedge
@@ -1320,7 +1286,6 @@ Ann ; Taylor
 Ann Fraser
 Ann Gladys
 Ann Nolan
-Ann Radcliffe
 Ann S. (Ann Sophia)
 Ann Ward
 Ann Warren
@@ -1374,7 +1339,6 @@ Anna Milo
 Anna Phillips
 Anna R.
 Anna Robertson Brown
-Anna Sewell
 Anna Steese
 Anna Strunsky
 Anna T. (Anna Theresa)
@@ -1389,7 +1353,6 @@ Anne ; Brontë
 Anne ; Cooke
 Anne ; Parrish
 Anne ; Schoenhofer
-Anne BrontÃ«
 Anne C.
 Anne C. E. (Anne Crosby Emery)
 Anne C. Lynch (Anne Charlotte Lynch)
@@ -1441,7 +1404,6 @@ Annie Roe
 Annie Russell
 Annie S.
 Annie S. (Annie Smith)
-Annie S. Swan
 Annie T.
 Annie Trumbull
 Annikki
@@ -1455,7 +1417,6 @@ Anselmo de
 Anson
 Anstey
 Anstie
-AntÃ³n ChÃ©jov
 Antal
 Antero
 Antero de
@@ -1464,11 +1425,9 @@ Anthon L. (Anthon Lornsen)
 Anthony
 Anthony ; Green
 Anthony Crommelin
-Anthony Hope
 Anthony M. (Anthony Mario)
 Anthony Norris
 Anthony R. (Anthony Reubens)
-Anthony Trollope
 Antil
 Antin
 Antipope
@@ -1476,7 +1435,6 @@ Anti-slavery Convention of American Women
 Antoine
 Antoine ; Fouquart
 Antoine de
-Antoine Galland
 Antoine Henri
 Antoine Simon
 Antoinette Abernethy ; Brumbaugh
@@ -1503,12 +1461,10 @@ Antonio da Costa de Souza de
 Antônio da Silva
 Antonio de
 António de
-Antonio de Trueba
 António Duarte Gomes
 Antonio Feliciano de
 António Florêncio
 António Francisco
-Antonio GarcÃ­a GutiÃ©rrez
 Antônio Gonçalves
 António José da Costa Couto Sá de
 António Maria José de Melo César e Meneses
@@ -1534,7 +1490,6 @@ Apáthy
 Apcar
 Apeles
 Aphra
-Aphra Behn
 Apicius
 Apjohn
 Apolinario
@@ -1550,7 +1505,6 @@ approximately 5th century
 April
 Apsley
 Apuleius
-Apuleyo
 Aquinas
 Arabella
 Arabella B. (Arabella Burton)
@@ -1604,14 +1558,11 @@ Argyll
 Argyris
 Ari
 Aria
-Ariana Harwicz
 Arias
 Ariel
 Arima
 Ariosto
 Arishima
-AristÃ³fanes
-AristÃ³teles
 Aristide
 Aristophanes
 Aristoteles
@@ -1676,7 +1627,6 @@ Arroyo de la Cuesta
 Arsciwals
 Arsène
 Arsène ; Saint-Victor
-Arsenio DÃ­az
 Arseven
 Arsinoe
 Art
@@ -1711,7 +1661,6 @@ Arthur Christopher
 Arthur Cleveland
 Arthur Clinton
 Arthur Conan
-Arthur Conan Doyle
 Arthur Corbin
 Arthur Cosslett
 Arthur D. (Arthur Davis)
@@ -1770,7 +1719,6 @@ Arthur M. (Arthur Merton)
 Arthur M. (Arthur Morrow)
 Arthur May ; Mowry
 Arthur Mayger
-Arthur Murphy
 Arthur O.
 Arthur O. (Arthur Olney)
 Arthur O. (Arthur Owens)
@@ -1781,10 +1729,8 @@ Arthur Penrhyn ; Lord
 Arthur Percival
 Arthur Ponsonby
 Arthur Preston
-Arthur Rimbaud
 Arthur Russell ; Sherwood
 Arthur S. (Arthur Stafford)
-Arthur Schopenhauer
 Arthur Scott
 Arthur Seymour
 Arthur Shearly
@@ -1803,7 +1749,6 @@ Arthur Wellesley
 Arthur William
 Arthur William Edgar
 Arthur Wing
-Arthur Wing Pinero
 Artie L.
 Artie L. ; Deacon
 Artsybashev
@@ -1881,7 +1826,6 @@ Atkinson
 Atlanta Chamber of Commerce
 Atlas Portland Cement Company
 Atra
-Attar
 Atteridge
 Atticus G. (Atticus Greene)
 Attila
@@ -1910,7 +1854,6 @@ August ; Tegtmeyer
 August Bernhard
 August P. van
 August Ritter von
-August Strindberg
 August von
 August von ; Williams
 August Wilhelm
@@ -1938,7 +1881,6 @@ Augusto de
 Augusto de Oliveira Cardoso
 Augusto Filipe
 Augusto Joaquim
-Augusto Monterroso
 Augustus
 Augustus C.
 Augustus C. (Augustus Choate)
@@ -1976,12 +1918,10 @@ Auzias-Turenne
 Avancini
 Avancinio
 Avelino
-Averroes
 Averroës
 Avery
 Avery ; Rinehart
 Avesnes
-Avicena
 Avicenna
 Avilés
 Avis A. Burnham
@@ -2102,7 +2042,6 @@ Bahá'u'lláh
 Bahlmann
 Bahr
 Bai
-Bai Juyi
 Baikie
 Bailey
 Bailhache
@@ -2147,7 +2086,6 @@ Balluff
 Balmer
 Balmes
 Baltasar
-Baltasar GraciÃ¡n
 Balyuzi
 Balzac
 Balzani
@@ -2156,7 +2094,6 @@ Bampes
 Bampfylde
 Bampton
 Ban
-Ban Gu
 Bāṇa‏ ; Bhūṣaṇabhaṭṭa
 Bancks
 Bancroft
@@ -2249,7 +2186,6 @@ baron d'
 baron de
 Baron von
 Baroness
-Baroness Orczy
 Barr
 Barrère
 Barrès
@@ -2297,7 +2233,6 @@ Barton
 Barton Wood
 Bartrum
 Bartsch
-Baruch Spinoza
 Barué
 Barwell
 Bary
@@ -2401,7 +2336,6 @@ Beatrice E. (Beatrice Elizabeth)
 Beatrice Forbes-Robertson
 Beatrice Larned
 Beatrix
-Beatrix Potter
 Beatson
 Beattie
 Beatty
@@ -2518,7 +2452,6 @@ Ben Ames
 Ben F.
 Ben Ibrahim
 Ben J. (Ben Johannis)
-Ben Jonson
 Ben S. ; Zeigler
 Ben. E. (Benjamin Erastus)
 Benamozegh
@@ -2548,11 +2481,9 @@ Beniczkyné Bajza
 Benitez
 Benito
 Benito Jerónimo
-Benito PÃ©rez GaldÃ³s
 Benj. F. (Benjamin Franklin)
 Benjamin
 Benjamín
-Benjamin Disraeli
 Benjamin Ellis
 Benjamin Ellis ; Martin
 Benjamin F.
@@ -2599,7 +2530,6 @@ Bentzon
 Benvenuto
 Benwell
 Beöthy
-Beowulf
 Berard
 Berchet
 Bercovici
@@ -2847,7 +2777,6 @@ Bixler
 Bizet
 Bizzarri
 Bizzoni
-BjÃ¸rnstjerne BjÃ¸rnson
 Bjarne
 Bjarne P. (Bjarne Peter)
 Björklund
@@ -2878,7 +2807,6 @@ Blair
 Blaisdell
 Blaise
 Blaise ; Voltaire
-Blaise Pascal
 Blake
 Blakely
 Blakeney
@@ -2987,7 +2915,6 @@ Bodin
 Bodley
 Bodley Head (Firm)
 Bodnár
-Boecio
 Boecker
 Boer
 Boerhaave
@@ -3074,7 +3001,6 @@ Boone and Crockett Club
 Booth
 Booth ; Kahler
 Booth ; Wilson
-Booth Tarkington
 Boothby
 Boothe
 Borchardt
@@ -3221,7 +3147,6 @@ Brainerd
 Brainerd ; Reed
 Brakel
 Bram
-Bram Stoker
 Bramah
 Bramble
 Brame
@@ -3286,7 +3211,6 @@ Brentwood
 Brereton
 Breslin
 Bret
-Bret Harte
 Bretnor
 Breton
 Brett
@@ -3742,7 +3666,6 @@ C. W. (Charles Willard)
 C. W. (Charles William)
 C. W. H. (Christiaan Willem Hendrik)
 C.-F. (Constantin-François)
-CÃ©sar Aira
 Caballero
 Cabell
 Cable
@@ -3863,15 +3786,12 @@ Cankar
 Cannan
 Cannon
 Cánovas del Castillo
-Cantar de los Nibelungos
-Cantar de RoldÃ¡n
 Canter
 Canth
 Cantillon
 Canton
 Cantù
 Cao
-Cao Xueqin
 Caouette
 Capablanca
 Capart
@@ -3957,19 +3877,13 @@ Carling
 Carlisle
 Carlo
 Carlo Alberto
-Carlo Collodi
 Carlo de
 Carlos
 Carlos Alberto
-Carlos Arniches
-Carlos Busqued
-Carlos CortÃ©s
-Carlos Fuentes
 Carlos María
 Carlos María de
 Carlos O. (Carlos Octavio)
 Carlos O. (Carlos Octavio) ; Drago
-Carlos Pellicer
 Carlotta C. (Carlotta Cherryholmes)
 Carlson
 Carlton
@@ -3979,9 +3893,6 @@ Carman
 Carmel
 Carmen
 Carmen ; Strettell
-Carmen Boullosa
-Carmen de Burgos
-Carmen Lyra
 Carmichael
 Carmichael-Smyth
 Carnegie
@@ -4120,7 +4031,6 @@ Catherina ; Lek
 Catherine
 Catherine Ann Turner
 Catherine Cooper
-Catherine Crowe
 Catherine Fredonnoit
 Catherine H.
 Catherine Helen
@@ -4137,7 +4047,6 @@ Cattopadhyaya
 Catulle
 Catulle ; Lesclide
 Catullus
-Catulo
 Caturbhujamisra
 Caulfeild
 Caunter
@@ -4306,7 +4215,6 @@ Charles B. Knox Gelatine Co.
 Charles Barnes
 Charles Baron
 Charles Battell
-Charles Baudelaire
 Charles Bean ; Armstrong
 Charles Benedict
 Charles Boardman
@@ -4332,13 +4240,11 @@ Charles D. (Charles David)
 Charles D. (Charles Debrille)
 Charles Dalrymple
 Charles Dana
-Charles Darwin
 Charles David
 Charles de
 Charles De Lano
 Charles de Secondat
 Charles Dexter
-Charles Dickens
 Charles Donagh
 Charles Dudley
 Charles Duke
@@ -4437,7 +4343,6 @@ Charles K. (Charles Kellogg) ; Irwin
 Charles K. (Charles Keyser)
 Charles Kendall
 Charles Kendall ; Trent
-Charles Kingsley
 Charles Kingston
 Charles L.
 Charles L. (Charles Larcom)
@@ -4445,7 +4350,6 @@ Charles L. (Charles Lawrence)
 Charles L. (Charles Lewis) ; Rathborne
 Charles L. ; McIlhenny
 Charles L. ; Thomas
-Charles Lamb
 Charles Lathrop
 Charles Lawrence
 Charles Lee
@@ -4474,7 +4378,6 @@ Charles N. (Charles Newman)
 Charles Neil
 Charles Nevers
 Charles Neville
-Charles Nodier
 Charles Norris
 Charles O. (Charles Orrin)
 Charles Octavius
@@ -4483,7 +4386,6 @@ Charles Otis ; Pinchot
 Charles P. (Charles Palfray)
 Charles P. (Charles Pickering)
 Charles Paschal Telesphore
-Charles Perrault
 Charles Phelps
 Charles Poindexter
 Charles Prestwood
@@ -4495,7 +4397,6 @@ Charles R. (Charles Russell)
 Charles Ramsdell
 Charles Rann
 Charles Raymond
-Charles Reade
 Charles Reginald
 Charles Reynolds
 Charles Rivière
@@ -4558,7 +4459,6 @@ Charlotte (Charlotte Endymion) ; Clarke
 Charlotte A. (Charlotte Albina)
 Charlotte A. (Charlotte Anne)
 Charlotte B. (Charlotte Bronte)
-Charlotte BrontÃ«
 Charlotte Campbell
 Charlotte E. (Charlotte Elizabeth)
 Charlotte Elizabeth
@@ -4569,12 +4469,9 @@ Charlotte M. (Charlotte Maria)
 Charlotte M. (Charlotte Marion)
 Charlotte M. (Charlotte Mary)
 Charlotte M. (Charlotte Mary) ; Oliphant
-Charlotte M. Yonge
 Charlotte Mary
 Charlotte O'Conor
 Charlotte Perkins
-Charlotte Perkins Gilman
-Charlotte Riddell
 Charlotte Rosalys
 Charlotte Selina
 Charlotte von
@@ -4655,8 +4552,6 @@ Chiavacci
 Chicago
 Chicago Commission on Race Relations
 Chidley
-Chikamatsu Monzaemon
-Chilam Balam
 Child
 Childers
 Childs
@@ -4684,7 +4579,6 @@ Chouinard
 Chow-Leung ; Davis
 Chownitz
 Chr. K. F. (Christian Knud Frederik)
-ChrÃ©tien de Troyes
 Chrestomanos
 Chrétien
 Chris
@@ -4712,7 +4606,6 @@ Christina
 Christina ; Mirrielees
 Christina Georgina
 Christina Gowans
-Christina Rossetti
 Christine
 Christine M. ; Elson
 Christine Terhune
@@ -4725,7 +4618,6 @@ Christophe
 Christopher
 Christopher ; Chapman
 Christopher ; Vespucci
-Christopher Marlowe
 Christopher Parkinson
 Christopher Pearse
 Christopherson
@@ -4750,7 +4642,6 @@ Cibber
 Cicco
 Ciccotti
 Cicely
-CicerÃ³n
 Cicero
 Cieza de León
 Cim
@@ -4787,7 +4678,6 @@ Clara Ingram
 Clara Kern
 Clara Kern ; Benedict
 Clara Louise
-Clara Reeve
 Clara Vostrovsky
 Clara Wood
 Clare
@@ -4842,8 +4732,6 @@ Claudel
 Claude-Louis
 Claudi
 Claudia Brush
-Claudia Lars
-Claudia PiÃ±eiro
 Claudius
 Clauren
 Claus
@@ -4875,7 +4763,6 @@ Clement A. (Clement Antrobus)
 Clement Clarke
 Clement Clarke ; Field
 Clement King
-Clemente Palma
 Clementi
 Clementina
 Clementine
@@ -4991,7 +4878,6 @@ Collan
 Collard
 Collet
 Colley
-Colley Cibber
 Collie
 Collier
 Collin
@@ -5045,7 +4931,6 @@ comte ; Condorcet
 comte ; Villat
 comte d'
 comte de
-Comte de LautrÃ©amont
 comtesse
 comtesse de
 Con
@@ -5056,13 +4941,11 @@ Conaway
 Concannon
 Concepción
 Concha
-Concha Espina
 conde de
 Conder
 condesa de
 Condorcet
 Cone
-Confucio
 Confucius
 Confucius ; Faxian ; Mencius
 Confucius ; Mencius
@@ -5330,8 +5213,6 @@ Cripps
 Crisp
 Crispi
 Cristina
-Cristina Peri Rossi
-Cristina Rivera Garza
 Critchfield
 Crittenden
 Croal
@@ -5390,15 +5271,6 @@ Cruttwell
 Csáth
 Csiky
 Cudahy
-Cuentos de Andersen
-Cuentos de Bierce
-Cuentos de ChÃ©jov
-Cuentos de Hawthorne
-Cuentos de Hoffmann
-Cuentos de Maupassant
-Cuentos de Perrault
-Cuentos de Poe
-Cuentos de Saki
 Cuffe
 Cui
 Culbertson
@@ -5487,7 +5359,6 @@ Cyril F. (Cyril Frederic)
 Cyril G. (Cyril George)
 Cyril J.
 Cyril Lyttleton
-Cyril Tourneur
 Cyrus
 Cyrus ; Ramsay
 Cyrus Leroy
@@ -5637,7 +5508,6 @@ Daniel B. ; Shepp
 Daniel C. (Daniel Clarke)
 Daniel Cady
 Daniel Carter
-Daniel Defoe
 Daniel Doane
 Daniel Dulany
 Daniel E.
@@ -5667,7 +5537,6 @@ Danske
 Dante Alighieri
 Dante Alighieri ; Church
 Dante Gabriel
-Dante Gabriel Rossetti
 Danton
 D'Anvers
 Danzig
@@ -5749,7 +5618,6 @@ David H.
 David H. (David Henry)
 David H. ; Yachnin
 David Hay
-David Hume
 David Hunter
 David I. (David Ives)
 David J.
@@ -5938,7 +5806,6 @@ Della R.
 Delluc
 Delly
 Delmer Eugene
-Delmira Agustini
 Delorme
 Delorme Colaço
 Deloume
@@ -5966,7 +5833,6 @@ Deniker
 Denikin
 Denis
 Denis de
-Denis Diderot
 Denis Florence
 Denison
 Denman Waldo
@@ -6060,7 +5926,6 @@ Dhan Gopal
 Di
 Di Giacomo
 Di Giorgi
-Diamela Eltit
 Diana
 Diana Agabeg
 Diana C. ; Gleasner
@@ -6126,7 +5991,6 @@ Diogenes [pseudonym]
 Diogenes Laertius
 Dion
 Dion ; Reade
-Dion Boucicault
 Dion Clayton
 Dionne
 Dionysios
@@ -6198,14 +6062,12 @@ Domenichi
 Domenico
 Domingo Faustino
 Domingo Faustino ; López
-Domingo Faustino Sarmiento
 Domingos
 Dominian
 Dominik
 Domville-Fife
 Don
 Don G.
-Don Juan Manuel
 Donahey
 Donald
 Donald A.
@@ -6303,7 +6165,6 @@ Douglas
 Douglas ; Finn
 Douglas Argyll
 Douglas Brooke Wheelton
-Douglas Jerrold
 Douglas Morey
 Douglas William
 Douglas Wilson
@@ -6379,7 +6240,6 @@ Du Boisgobey
 Du Cane
 Du Chaillu
 Du Châtelet
-Du Fu
 Du Genestoux
 Du Hausset
 Du Hays
@@ -6616,7 +6476,6 @@ E. F. (Elizabeth Fries)
 E. F. (Elsie Finnimore)
 E. F. (Emile Félix)
 E. F. (Enoch Fitch)
-E. F. Benson
 E. Frances (Eleanor Frances)
 E. Franklin
 E. G.
@@ -6637,7 +6496,6 @@ E. H. (Edward Henry)
 E. H. (Edward Hungerford) ; Dartnell
 E. H. (Edwin Hubbell)
 E. H. (Emily Hilda)
-E. H. Knatchbull
 E. Hamilton (Edward Hamilton)
 E. Heinrich (Enoch Heinrich)
 E. Hoffmann
@@ -6683,7 +6541,6 @@ E. M. (Edward Morgan)
 E. M. (Eleanor Mary‏)
 E. M. (Ethel Mary)
 E. N. (Elisha Noel)
-E. Nesbit
 E. Newton (Edmund Newton)
 E. Norman (Edward Norman)
 E. Oe. (Edith Oenone) ; Ross
@@ -6725,7 +6582,6 @@ E. T.
 E. T. (Ernest Thomas)
 E. T. A. (Ernst Theodor Amadeus)
 E. T. A. (Ernst Theodor Amadeus) ; Brentano
-E. T. A. Hoffmann
 E. T. C. (Edward Theodore Chalmers)
 E. Tegla (Edward Tegla)
 E. Temple (Ernest Temple)
@@ -6735,7 +6591,6 @@ E. V. (Edward Verrall) ; Montague
 E. V. (Edwin Vincent)
 E. V. (Ernst Viktor)
 E. V. B. (Eleanor Vere Boyle)
-E. V. Lucas
 E. van (Emile)
 E. von (Eginhard)
 E. W. (Edgar Watson)
@@ -6821,7 +6676,6 @@ Eddy
 Ede
 Edelsheim
 Eden
-Eden Phillpotts
 Edfrid A.
 Edgar
 Edgar ; Michelet
@@ -6829,7 +6683,6 @@ Edgar ; Thompson
 Edgar A. (Edgar Albert)
 Edgar Allan
 Edgar Allan ; Hawthorne
-Edgar Allan Poe
 Edgar B. P.
 Edgar Beecher
 Edgar Charles
@@ -6839,7 +6692,6 @@ Edgar Lee
 Edgar M.
 Edgar M. (Edgar Meck)
 Edgar Rice
-Edgar Rice Burroughs
 Edgar Thomas Ainger
 Edgar Thomas Ainger ; Wigram
 Edgcumbe
@@ -6884,7 +6736,6 @@ Edith May Bertels
 Edith Ogden
 Edith Ronald ; Pratt
 Edith Summers
-Edith Wharton
 Edith Wilhelmina
 Edkins
 Edler Herr von und zu
@@ -6893,7 +6744,6 @@ Edmands
 Edmond
 Edmond de
 Edmond de ; Goncourt
-Edmond Rostand
 Edmondo
 Edmonds
 Edmondson
@@ -6922,7 +6772,6 @@ Edmund K.
 Edmund Lester
 Edmund P. (Edmund Pearson)
 Edmund S. (Edmund Simon)
-Edmund Spenser
 Edmund Vance
 Edmund Verney
 Edmund W. ; Burrage
@@ -6959,12 +6808,10 @@ Eduard
 Eduard ; Schenck
 Eduard von
 Eduardo
-Eduardo Acevedo DÃ­az
 Eduardo Augusto
 Eduardo C. N. (Eduardo Clemente Nunes)
 Eduardo de
 Eduardo Henrique Vieira Coelho de
-Eduardo Marquina
 Eduardo Shwalbach
 Edv. (Edvard)
 Edv. A. (Edvard August)
@@ -7004,10 +6851,8 @@ Edward B. (Edward Brooks)
 Edward B. (Edward Burcham)
 Edward B. (Edward Burnett)
 Edward Bagnall
-Edward Bellamy
 Edward Bindon
 Edward Bradford
-Edward Bulwer
 Edward Bulwer Lytton
 Edward Burrough
 Edward C.
@@ -7034,7 +6879,6 @@ Edward G.
 Edward G. (Edward George) ; Neilson
 Edward G. (Edward Gheen)
 Edward G. D. (Edward George Downing)
-Edward Gibbon
 Edward Grey
 Edward H.
 Edward H. (Edward Hammond)
@@ -7066,7 +6910,6 @@ Edward L. (Edward Lowell) ; Collier
 Edward L. (Edward Lytton)
 Edward L. ; Kingsley
 Edward Law
-Edward Lear
 Edward Ledwich
 Edward Lewes
 Edward Lucas
@@ -7078,7 +6921,6 @@ Edward M. (Edward McKendree)
 Edward Mandell
 Edward Mead
 Edward Meyrick
-Edward Moore
 Edward Morse
 Edward Morton
 Edward N.
@@ -7124,7 +6966,6 @@ Edward W. (Edward Wright)
 Edward W. ; Kemp
 Edward Wilkin
 Edward William
-Edward William Lane
 Edward Williams
 Edward Wilson
 Edward Woodley
@@ -7234,12 +7075,6 @@ Eivind
 Eje
 Ekai
 Ekblaw
-El CorÃ¡n
-El DecamerÃ³n
-El Dhammapada
-El I Ching
-El Libro de los Muertos
-El Tao Te Ching
 Elaine
 Elaine Goodale
 Elam
@@ -7262,7 +7097,6 @@ Eleanor C. (Eleanor Cecilia)
 Eleanor C. Hill
 Eleanor E.
 Eleanor F. (Eleanor Frances)
-Eleanor Farjeon
 Eleanor Glendower
 Eleanor H. (Eleanor Hodgman)
 Eleanor Hallowell
@@ -7283,8 +7117,6 @@ Electronic Frontier Foundation
 Elek
 Elek ; Kriza
 Elémir
-Elena Garro
-Elena Poniatowska
 Elenius
 Eleonora
 Eléonore
@@ -7362,7 +7194,6 @@ Elizabeth B. (Elizabeth Barker)
 Elizabeth Bacon
 Elizabeth Barrett
 Elizabeth Barrett ; Eliot
-Elizabeth Barrett Browning
 Elizabeth Bekker ; Deken
 Elizabeth Boyle
 Elizabeth Bridges
@@ -7381,7 +7212,6 @@ Elizabeth G.
 Elizabeth Garver
 Elizabeth Garver ; Shaw
 Elizabeth Garver ; Vorse
-Elizabeth Gaskell
 Elizabeth Gilbert
 Elizabeth Gray ; Gray
 Elizabeth H.
@@ -7392,7 +7222,6 @@ Elizabeth Hazelton
 Elizabeth Helen
 Elizabeth Hyde
 Elizabeth Ida
-Elizabeth Inchbald
 Elizabeth Leavitt
 Elizabeth M.
 Elizabeth Madox
@@ -7469,7 +7298,6 @@ Ellen N. (Ellen Newbold)
 Ellen Robena
 Ellen Thorneycroft
 Ellen Tracy
-Ellen Wood
 Ellenbecker
 Ellenborough
 Ellerbe
@@ -7566,7 +7394,6 @@ Emile Joseph
 Emile Marco de
 Emili
 Emilia
-Emilia Pardo BazÃ¡n
 Emilie
 Emilie ; Canth
 Emilie Baker
@@ -7577,12 +7404,10 @@ Emilio ; Marinetti
 Emilius
 Emily
 Emily ; Brontë
-Emily BrontÃ«
 Emily C. (Emily Clemens)
 Emily Calvin
 Emily Churchill Thompson
 Emily Constance Baird
-Emily Dickinson
 Emily F. (Emily Ferguson)
 Emily Grant
 Emily Henrietta
@@ -7661,7 +7486,6 @@ Enguerrand de
 Enid
 Enid Leigh
 Ennis
-Enno Littmann
 Enoch
 Enochs
 Enock
@@ -7674,12 +7498,7 @@ Enrico Annibale
 Enright
 Enrique
 Enrique de
-Enrique Gaspar
-Enrique Gil y Carrasco
-Enrique Larreta
 Enrique Martín ; Bodenbender
-Enrique PÃ©rez Escrich
-Enuma Elish
 Enys
 Eoin
 Eon de Beaumont
@@ -7689,7 +7508,6 @@ Epes
 Ephraim
 Ephraim Douglass
 Ephrem
-Epicteto
 Epictetus
 Epiphanius ; McSpadden
 Episcopal Church. Army and Navy Commission
@@ -7706,7 +7524,6 @@ Ercole
 Ercole Luigi
 Erdélyi
 Erdman
-Erec y Enide
 Erg
 Eric
 Eric A.
@@ -7746,7 +7563,6 @@ Ernest Alfred
 Ernest Arthur
 Ernest Augustus
 Ernest Belfort
-Ernest Bramah
 Ernest Christopher
 Ernest Cushing
 Ernest d'
@@ -7815,12 +7631,10 @@ Espina
 Espinel
 Espinosa
 Espronceda
-Esquilo
 Esquiros
 Essen
 Esslemont
 Estaunié
-Esteban EcheverrÃ­a
 Estébanez Calderón
 Estelle M. (Estelle May)
 Ester
@@ -7876,7 +7690,6 @@ Euangelides
 Eubank
 Eucken
 Eufemia von
-EugÃ¨ne Sue
 Eugeen Edward
 Eugen
 Eugen von
@@ -7914,7 +7727,6 @@ Eugénie
 Eugénie de
 Eugenio
 Eugenio María de
-Eugenio Noel
 Eugenius
 Eula
 Eulalia
@@ -7922,7 +7734,6 @@ Eulalie Osgood
 Eulogio Balan
 Eulogio Florentino
 Eunice
-EurÃ­pides
 Eurén
 Euripides
 Europaeus
@@ -7959,7 +7770,6 @@ Evarts
 Eve
 Eveleen Laura
 Eveleigh
-Evelio Rosero
 Evelyn
 Evelyn ; Weedon
 Evelyn Baring
@@ -8135,11 +7945,7 @@ F.R.H.S.
 F.S.A.
 F.S.A. Scot.
 F.-X. (François-Xavier)
-FÃ¡bulas de Esopo
-FÃ¡bulas de La Fontaine
-FÃ©lix MarÃ­a de Samaniego
 Faber
-FabiÃ¡n Casas
 Fabian
 Fabian ; Duckworth
 Fabiola hospital association
@@ -8256,7 +8062,6 @@ Fearing
 Fechner
 Federal Writers' Project of the Works Progress Administration for the State of North Dakota
 Federico
-Federico Falco
 Fedor
 Fedor ; Virchow
 Fedor Alexis
@@ -8281,7 +8086,6 @@ Felicitas
 Félicité
 Félicité Robert de
 Felipe
-Felisberto HernÃ¡ndez
 Felix
 Félix
 Felix (Leonard Felix)
@@ -8327,7 +8131,6 @@ Fergusson
 Ferlaine
 Ferland
 Fern
-FernÃ¡n Caballero
 Fernán
 Fernand
 Fernande
@@ -8341,11 +8144,8 @@ Fernández Juncos
 Fernández y González
 Fernández-Flórez
 Fernando
-Fernando Contreras
 Fernando de
-Fernando de Rojas
 Fernando del
-Fernando del Paso
 Fernão
 Fernay
 Fernie
@@ -8377,7 +8177,6 @@ Feydeau
 Fezensac
 Fflorens
 Ffoulkes
-FiÃ³dor Dostoievski
 Fiacchi
 Fialho de
 Fibiger
@@ -8629,7 +8428,6 @@ Forteguerri
 Fortescue
 Fortis
 Fortnum
-FortunÃ© du Boisgobey
 Fortune
 Fortuné
 Forwood
@@ -8662,7 +8460,6 @@ Fr.
 Fracchia
 Fracker
 Fran
-FranÃ§ois Rabelais
 Francatelli
 France
 Francé
@@ -8693,7 +8490,6 @@ Frances Fuller
 Frances Garnet
 Frances Henshaw
 Frances Hodgson
-Frances Hodgson Burnett
 Frances I. Sims
 Frances James
 Frances Jenkins
@@ -8722,7 +8518,6 @@ Francesca
 Francesco
 Francesco Domenico
 Francesco Giuseppe
-Francesco Petrarca
 Francesco Saverio
 Franchère
 Francia
@@ -8741,7 +8536,6 @@ Francis Amasa
 Francis Augustus
 Francis B. (Francis Bail)
 Francis Barton
-Francis Beaumont
 Francis Bernard
 Francis Bond
 Francis Brett
@@ -8785,7 +8579,6 @@ Francis M. (Francis Marion)
 Francis Newton
 Francis Noel Clarke
 Francis P. (Francis Patrick)
-Francis Parkman
 Francis Patrick
 Francis Perry
 Francis Pharcellus
@@ -8803,8 +8596,6 @@ Francisco ; Mendez
 Francisco ; Rivas
 Francisco de
 Francisco de Paula de
-Francisco de Quevedo
-Francisco de Rojas Zorrilla
 Francisco Gavino de
 Francisco Hernández
 Francisco Jorge de
@@ -8899,7 +8690,6 @@ Frank M. (Frank Morton)
 Frank Michael
 Frank N. (Frank Nash)
 Frank N. (Frank Nelson)
-Frank Norris
 Frank O. (Frank Orren)
 Frank Oliver
 Frank Osgood
@@ -8967,7 +8757,6 @@ Frapié
 Frari
 Frary
 Fraser
-Fray Luis de LeÃ³n
 Frazar
 Frazer
 Frazier
@@ -9156,17 +8945,13 @@ Friedrich ; Plate
 Friedrich ; Wildenbruch
 Friedrich August Theodor
 Friedrich Christoph Jonathan
-Friedrich Engels
 Friedrich Gottlieb
-Friedrich HÃ¶lderlin
 Friedrich Heinrich Karl
 Friedrich J. (Friedrich Johann)
 Friedrich Ludwig Truchsess
 Friedrich Maximilian
-Friedrich Nietzsche
 Friedrich Reinhold
 Friedrich S. (Friedrich Salomo)
-Friedrich Schiller
 Friedrich Theodor ; Reuter
 Friedrich von
 Friedrich Wilhelm
@@ -9293,7 +9078,6 @@ G. E. (Geraldine Edith)
 G. E. (Geraldine Edith) ; Besant
 G. E. (Geraldine Edith) ; Geikie
 G. E. (Gustaf Emanuel)
-G. E. Farrow
 G. Ellingwood (Grace Ellingwood)
 G. F.
 G. F. (George Farrer)
@@ -9324,7 +9108,6 @@ G. J. Göschen'sche Verlagshandlung
 G. K.
 G. K. (Gilbert Keith)
 G. K. (Gilbert Keith) ; Kitton
-G. K. Chesterton
 G. L.
 G. L. ; McFerran
 G. le M. (George Le Mesurier)
@@ -9386,7 +9169,6 @@ Gabriel Pierre
 Gabriel Pierre ; Marx
 Gabriel Tristan
 Gabriela
-Gabriela CabezÃ³n CÃ¡mara
 Gabriele
 Gabrielean
 Gabrielle
@@ -9416,7 +9198,6 @@ Galen
 Galilei
 Galileo
 Galileo ; Kepler
-Galileo Galilei
 Galipaux
 Gall
 Gallaher
@@ -9468,7 +9249,6 @@ García Gutiérrez
 García Lorca
 García Mérou
 Garcilaso de la
-Garcilaso de la Vega
 Gardener
 Gardiner
 Gardiner G. (Gardiner Greene)
@@ -9513,14 +9293,12 @@ Gaskell
 Gaspar
 Gáspár
 Gaspar de ; Fernández de Moratín
-Gaspar Melchor de Jovellanos
 Gasparo ; Montanari
 Gasquet
 Gasquoine
 Gastine
 Gaston
 Gaston Bruno Paulin
-Gaston Leroux
 Gastyne
 Gates
 Gatien
@@ -9574,7 +9352,6 @@ Gemma
 Gene
 Gene Allen
 Gene L.
-Gene Stratton
 Gener
 General Foods Corporation
 General Mills
@@ -9598,7 +9375,6 @@ Geo. W. (George Woodward)
 Geoffrey
 Geoffrey ; Woods
 Geoffrey Bache
-Geoffrey Chaucer
 Geoffrey Keith
 Geoffrey Winthrop
 Geoffroi de
@@ -9612,7 +9388,6 @@ Georg Friedrich
 Georg Gottfried
 Georg Karl Cornelius
 Georg Wilhelm Friedrich
-Georg Wilhelm Friedrich Hegel
 George
 George (Optician)
 George ; Blind
@@ -9658,14 +9433,12 @@ George B. (George Blagden)
 George B. (George Brinton)
 George B. (George Burton)
 George B. Louis (George Byron Louis)
-George Bancroft
 George Barnett
 George Barr
 George Barry
 George Barton
 George Becher
 George Bell & Sons
-George Bernard Shaw
 George Bethune
 George Biddell
 George Binney
@@ -9683,7 +9456,6 @@ George C. (George Clifford)
 George C. (George Congdon)
 George Cary
 George Cary ; Marbourg
-George Chapman
 George Charles Vincent
 George Chetwynd
 George Cochrane
@@ -9692,7 +9464,6 @@ George D. (George Damon) ; Nuuttila
 George D. (George Drayton)
 George de Horne
 George Douglas
-George du Maurier
 George Dyre
 George E.
 George E. (George Earle)
@@ -9705,7 +9476,6 @@ George Edward
 George Edward ; Lewis
 George Edwin ; Porter
 George Eli
-George Eliot
 George Ellery
 George Elliott
 George Erhart
@@ -9714,7 +9484,6 @@ George Ethelbert
 George F. (George Frank)
 George F. (George Frederick)
 George F. ; Geuting
-George Farquhar
 George Fillmore
 George Foot
 George Fox
@@ -9733,7 +9502,6 @@ George G. (George Gillanders)
 George Gallie
 George Garr
 George Gilbert
-George Gissing
 George Gordon
 George Gordon Byron
 George Grafton ; Tucker
@@ -9781,7 +9549,6 @@ George Laurence
 George Laurence ; Riley
 George Leonard
 George Lewis
-George Lillo
 George Lincoln
 George Ludington
 George Luther
@@ -9797,7 +9564,6 @@ George M. (George Milbrey) ; Pyle
 George M. (George Milton)
 George M. (George Morley)
 George M. (George Morrison)
-George MacDonald
 George Madden
 George Manville
 George Manville ; Gask
@@ -9806,7 +9572,6 @@ George Matthews
 George McCall
 George McCready
 George McKinnon
-George Meredith
 George Miksch
 George Moses ; Martin
 George Murray
@@ -9822,7 +9587,6 @@ George Park
 George Parker
 George Parsons
 George Paul
-George Peele
 George Pierce
 George Pope
 George Q. (George Quayle)
@@ -9842,7 +9606,6 @@ George S. (George Searle)
 George S. (George Sewall)
 George S. (George Shepard)
 George S. (George Shepard) ; Parker
-George Sand
 George Seay
 George Sheldon
 George Somes
@@ -9878,7 +9641,6 @@ George W. (George William)
 George W. (George William) ; Meyerhoff
 George W. (George Williams)
 George W. M. (George William MacArthur)
-George W. M. Reynolds
 George W. T. (George William Thomson)
 George Waldo
 George Walter
@@ -9984,7 +9746,6 @@ Gertrude P.
 Gertrude W.
 Gertrude Weld
 Gertrudis
-Gertrudis GÃ³mez de Avellaneda
 Gertrudis Hendricus Ignaaz van
 Gervaise de Latouche
 Gervinus
@@ -10005,7 +9766,6 @@ Giacomo
 Giacosa
 Giambatista
 Giambattista
-Giambattista Basile
 Giambattista della
 Gian Battista
 Gian Pietro
@@ -10056,7 +9816,6 @@ Gilder
 Gildersleeve
 Giles
 Giles ; Lodge
-Gilgamesh
 Gilgannon
 Gill
 Gillam
@@ -10088,7 +9847,6 @@ Gino
 Ginsburg
 Ginther
 Ginzberg
-Gioconda Belli
 Giorgio
 Giosofat ; Contarini
 Giosuè
@@ -10114,7 +9872,6 @@ Giuseppe
 Giuseppe ; Illica
 Giuseppe ; Schiller
 Giuseppe Cesare
-Giuseppe PitrÃ¨
 Givanel Mas
 Given
 Givler
@@ -10268,15 +10025,12 @@ Gossip
 Goswin
 Gottfried
 Gottfried August
-Gottfried von Strassburg
-Gottfried Wilhelm Leibniz
 Gotthard
 Gottheil
 Gotthelf
 Gotthilf Heinrich von
 Gotthold Ephraim
 Gotthold Ephraim ; Sainte-Beuve
-Gotthold Ephraim Lessing
 Gottlieb F. ; Smith
 Gottlund
 Gottschall
@@ -10416,7 +10170,6 @@ Gregor ; Bateson
 Gregorio
 Gregorio de
 Gregório de
-Gregorio MartÃ­nez Sierra
 Gregorovius
 Gregory
 Gregory B.
@@ -10622,10 +10375,8 @@ Gustave ; Sand
 Gustave ; Scribe
 Gustave ; Shakespeare
 Gustave de
-Gustave Flaubert
 Gustavo
 Gustavo Adolfo
-Gustavo Adolfo BÃ©cquer
 Gustavus
 Gustavus Woodson
 Gusztáv
@@ -10645,7 +10396,6 @@ Guy Christian
 Guy de
 Guy de ; Daudet
 Guy de ; Ruskin
-Guy de Maupassant
 Guy Noel
 Guy Wetmore
 Guyau
@@ -10768,7 +10518,6 @@ H. G. (Hugh George)
 H. G. (Hyman Gerson)
 H. G. B.
 H. G. F. (Herbert George Flaxman)
-H. G. Wells
 H. Gordon
 H. H.
 H. H. (Harry Hubbell)
@@ -10778,7 +10527,6 @@ H. H. (Henry Howarth)
 H. H. (Herbert Hall)
 H. H. (Hugh Henry)
 H. H. C. (Henry Harrison Chase)
-H. H. Munro
 H. Harold (Hardrada Harold)
 H. I. M.
 H. Irving (Harrie Irving)
@@ -10846,7 +10594,6 @@ H. R. Fox (Henry Richard Fox)
 H. R. Wilton
 H. Rea (Hannah Rea)
 H. Rider (Henry Rider)
-H. Rider Haggard
 H. Russell ; Kotula
 H. S.
 H. S. (Hannah S.)
@@ -10883,7 +10630,6 @@ H. W. S. (Henry Wardel Snarey)
 H. Warington (Herbert Warington)
 H. Wilfrid
 H. William (Hector William)
-HÃ©ctor Abad Faciolince
 Haahti
 Haan
 Haanpää
@@ -10911,7 +10657,6 @@ Hadfield
 Hadji (Gazanfar Ali) ; Sparroy
 Hadow
 Haeckel
-Hafez
 Haffner-Ginger
 Hafiz
 Hagar
@@ -10959,7 +10704,6 @@ Halidom
 Halka
 Halkerston
 Hall
-Hall Caine
 Hallam
 Hallam Tennyson
 Hallays
@@ -11008,7 +10752,6 @@ Hampton
 Hampton Sidney
 Hamsun
 Han
-Han Fei
 Hancock
 Handerson
 Hands
@@ -11045,7 +10788,6 @@ Hanqing
 Hans
 Hans ; Böhlau
 Hans Arthur
-Hans Christian Andersen
 Hans Jakob Christoph von
 Hans von
 Hansard
@@ -11115,7 +10857,6 @@ Harold E. ; Brown
 Harold Edgeworth
 Harold Edward
 Harold F.
-Harold Frederic
 Harold J.
 Harold J. (Harold Joseph)
 Harold L. (Harold Leland)
@@ -11147,7 +10888,6 @@ Harriet Beecher
 Harriet Beecher ; Rice
 Harriet Beecher ; Spencer
 Harriet Beecher ; Unknown
-Harriet Beecher Stowe
 Harriet Camp
 Harriet E. (Harriet Eliza)
 Harriet Earhart
@@ -11405,7 +11145,6 @@ Heinrich Eduard
 Heinrich Hubert
 Heinrich Joseph von
 Heinrich von
-Heinrich von Kleist
 Heintze
 Heisalo
 Heitland
@@ -11444,7 +11183,6 @@ Helen Hay
 Helen Hayes ; Gleason
 Helen Herron
 Helen Hunt
-Helen Hunt Jackson
 Helen Leah
 Helen M.
 Helen M. (Helen Mar)
@@ -11545,7 +11283,6 @@ Henrik
 Henrik af
 Henrik Arnold
 Henrik August
-Henrik Ibsen
 Henrique
 Henrique ; Dolores
 Henrique de
@@ -11576,7 +11313,6 @@ Henry A. ; Kent
 Henry Albert
 Henry Andrew
 Henry Arthur
-Henry Arthur Jones
 Henry Augustus
 Henry B.
 Henry B. (Henry Benjamin)
@@ -11606,7 +11342,6 @@ Henry Cruse
 Henry D. (Henry David)
 Henry Davenport
 Henry David
-Henry David Thoreau
 Henry de ; Daudet
 Henry de Beltgens
 Henry de Rosenbach
@@ -11627,13 +11362,11 @@ Henry F. (Henry Frederick) ; Bloodgood
 Henry F. (Henry Frey)
 Henry Fairfield
 Henry Festing
-Henry Fielding
 Henry Fisk
 Henry Ford Museum and Greenfield Village
 Henry Francis
 Henry Frederick
 Henry G. (Henry George)
-Henry George
 Henry George Stebbins
 Henry Glassford
 Henry H.
@@ -11727,7 +11460,6 @@ Henry Seidel
 Henry Seidel ; Stone
 Henry Sessions
 Henry Seton
-Henry Seton Merriman
 Henry Seward
 Henry Smith ; Williams
 Henry St. John
@@ -11784,8 +11516,6 @@ Henson
 Henty
 Hentz
 Hepner
-HerÃ¡clito
-HerÃ³doto
 Hérault de Séchelles
 Herb
 Herbart
@@ -11852,7 +11582,6 @@ Herman Gastrell
 Herman George
 Herman Johan
 Herman Knickerbocker
-Herman Melville
 Herman Théodore
 Herman van
 Herman van der
@@ -11861,7 +11590,6 @@ Hermann ; Grohmann
 Hermann B. (Hermann Bacher)
 Hermanna
 Hermannus
-Hermanos Grimm
 Hermant
 Hermine
 Hermine Oudinot
@@ -11952,7 +11680,6 @@ Highe
 Hight
 Hiidenheimo
 Hilaire
-Hilaire Belloc
 Hilaire Bernard de Requeleyne
 Hilarides
 Hilary
@@ -12134,8 +11861,6 @@ Homer F. ; Schroeder
 Homer Heath
 Homer J. (Homer Jackson)
 Homer King
-Homero
-Homero Aridjis
 Hommaire de Hell
 Hone
 Honea
@@ -12146,7 +11871,6 @@ Hongmo
 Hongzu
 Honig
 Honor C.
-HonorÃ© de Balzac
 Honoré
 Honoré ; Christine
 Honore ; Pena
@@ -12192,12 +11916,9 @@ Horace Meyer
 Horace Meyer ; Tufts
 Horace N.
 Horace W. C. (Horace Wykeham Can)
-Horace Walpole
 Horace Woollaston
 Horacio
 Horacio Carlos
-Horacio Castellanos Moya
-Horacio Quiroga
 Horatia K. F.
 Horatio
 Horatio Edward
@@ -23538,9 +23259,7 @@ Hugh Dalton
 Hugh E. (Hugh Exton)
 Hugh Frazier
 Hugh Garner
-Hugh Kelly
 Hugh Leigh
-Hugh Lofting
 Hugh M. (Hugh McCormick)
 Hugh MacNair ; Roberts
 Hugh Mulleneux
@@ -23606,7 +23325,6 @@ Hurst & Blackett
 Hurston
 Hurtado de Mendoza
 Hurwitz
-Husain Haddawy
 Husband
 Husik
 Husmann
@@ -23664,8 +23382,6 @@ Iamblichus
 Ian
 Ian C.
 Ianthe M.
-Ibn Arabi
-Ibn Tufail
 Ibn Tufayl
 Ibsen
 Ida
@@ -23693,17 +23409,13 @@ Iglesias
 Ignác
 Ignác Fülöp
 Ignacio
-Ignacio de Loyola
 Ignacio Manuel
-Ignacio Manuel Altamirano
-Ignacio Zuloaga
 Ignácz
 Ignasi
 Ignatius
 Ignaz
 Ignazio
 Ignotus
-Ihara Saikaku
 II
 Iida
 III (Charles Wesley)
@@ -23726,7 +23438,6 @@ Imbert de Saint-Amand
 Imbriani
 Immanuel
 Immanuel ; Renan
-Immanuel Kant
 Immi
 Imogen
 Impola
@@ -23792,7 +23503,6 @@ Ioannes
 Ioannis
 Iola
 Ion
-Iosi Havilio
 Ioulia D.
 Iowa Press and Authors' Club
 Iowa)
@@ -23859,7 +23569,6 @@ Isabel
 Isabel ; American National Red Cross
 Isabel ; Burns
 Isabel A. ; Solomon
-Isabel Allende
 Isabel C. (Isabel Coston)
 Isabel Cecilia
 Isabel Ecclestone
@@ -23895,7 +23604,6 @@ István
 Isya
 Ithamar M. (Ithamar Martindale)
 IUliian
-IvÃ¡n Goncharov
 Ivalo
 Ivan
 Ivan Aleksandrovich
@@ -24018,7 +23726,6 @@ J. C. (John Coulson) ; Fielding
 J. C. (John Cuthbert)
 J. C. ; Gheel-Gildemeester
 J. C. F. (Joseph Colin Francis)
-J. C. Mardrus
 J. Cameron (James Cameron)
 J. Cecil (John Cecil)
 J. Charles (John Charles)
@@ -24182,7 +23889,6 @@ J. M. (John Minton)
 J. M. (Joseph Maria)
 J. M. (Joseph Mazzini)
 J. M. (Joseph Mazzini) ; Foote
-J. M. Barrie
 J. M. D. (John Miller Dow)
 J. M. J.
 J. M. Latino (José Maria Latino)
@@ -24320,7 +24026,6 @@ J.-H.
 J.-J. (Jean-Jacques)
 J.-K. (Joris-Karl)
 J.-P. (Jean-Philippe)
-JÃ¸rgen Moe
 Jaak
 Jaakko
 Jaakkola
@@ -24337,7 +24042,6 @@ Jack ; Walling
 Jack A.
 Jack B. (Jack Butler)
 Jack G.
-Jack London
 Jack Owen
 Jack R.
 Jack Randall
@@ -24353,7 +24057,6 @@ Jacob B. (Jacob Breda)
 Jacob D. (Jacob Dolson)
 Jacob Elon
 Jacob Fredrik
-Jacob Grimm
 Jacob Israël de
 Jacob Joshua
 Jacob K.
@@ -24377,7 +24080,6 @@ Jacqueline
 Jacquelyn ; Cheney
 Jacques
 Jacques ; Laut
-Jacques Cazotte
 Jacques de
 Jacques Fabrice Herman
 Jacques-Émile
@@ -24394,15 +24096,12 @@ Jahn
 Jahnsson
 Jaime de Magalhães
 Jaime Luciano
-Jaime Sabines
-Jaime Torres Bodet
 Jakes
 Jakku
 Jakob
 Jakob Esaiaksenpoika
 Jakob Michael Reinhold
 Jakub
-Jalal ad
 Jalal al-Din Rumi
 Jalkanen
 Jalmari
@@ -24486,7 +24185,6 @@ James F.
 James F. (James Fullarton)
 James F. J. (James Francis Jewell)
 James Fenimore
-James Fenimore Cooper
 James Ford
 James Fowler
 James Francis
@@ -24530,7 +24228,6 @@ James Jeffrey
 James John
 James Justinian
 James K. (James Knox)
-James Kenney
 James Kirke
 James L. (James Laughlin)
 James L. (James Lauren)
@@ -24549,10 +24246,8 @@ James M. ; Walpole
 James M. ; White
 James Malcolm
 James Malcolm ; Prest
-James Malcolm Rymer
 James Marion
 James Mark
-James Matthew Barrie
 James McCrone
 James McFadden
 James McNeill
@@ -24598,7 +24293,6 @@ James S. Virtue (Firm)
 James Selwin
 James Seton
 James Sheridan
-James Shirley
 James Sinclair
 James Slough
 James Strange
@@ -24655,7 +24349,6 @@ Jane ; MacKaye
 Jane ; Morrison
 Jane ; Oulton
 Jane A. ; Strong
-Jane Austen
 Jane Cholmeley
 Jane Eayre
 Jane Ellen
@@ -24724,8 +24417,6 @@ Jassy
 Jastrow
 Jatta
 Javier de
-Javier de Viana
-Javier Moscoso
 Jay
 Jay (Jay Allan) ; Deetz
 Jay Henry
@@ -24747,7 +24438,6 @@ Jean Christie
 Jean Claude
 Jean de
 Jean de ; Corrozet
-Jean de La Hire
 Jean du ; Normand
 Jean F. (Jean Finlay)
 Jean François Paul de Gondi de
@@ -24762,9 +24452,7 @@ Jean N. (Jean Newton)
 Jean Nicolas
 Jean Paul
 Jean Pierre de
-Jean Racine
 Jean S.
-Jean Webster
 Jean-Antoine-Nicolas de Caritat
 Jean-B.-A. (Jean-Baptiste-Antoine)
 Jean-Baptiste
@@ -24786,7 +24474,6 @@ Jean-Henri ; Teixeira de Mattos
 Jean-Henri ; Zimm
 Jeanie Oliver Davidson
 Jean-Jacques
-Jean-Jacques Rousseau
 Jean-Leo
 Jean-Louis
 Jean-Louis-Ebenézer
@@ -24815,7 +24502,6 @@ Jefferies
 Jefferson
 Jeffery
 Jeffery E. (Jeffery Eardley)
-Jeffery Farnol
 Jeffries
 Jeffs
 Jehan d'
@@ -24838,7 +24524,6 @@ Jennie L. (Jennie Lansley)
 Jennings
 Jenny
 Jenő
-Jenofonte
 Jens Jacob Asmussen
 Jensen
 Jephson
@@ -24852,7 +24537,6 @@ Jeremiah Whipple ; Kent
 Jeremiah Whipple ; More
 Jeremias
 Jeremy
-Jeremy Bentham
 Jerningham
 Jerome
 Jerome A.
@@ -24933,7 +24617,6 @@ Joachim Heinrich
 Joachim John
 Joad
 Joan
-Joanna Baillie
 Joanna C. (Joanna Carver)
 Joanna E. (Joanna Ellen)
 Joanna H. (Joanna Hooe)
@@ -24951,7 +24634,6 @@ João José
 João Maria
 João Marques de
 João Pandiá
-JoaquÃ­n Dicenta
 Joaquim
 Joaquim Carlos
 Joaquim de
@@ -24994,7 +24676,6 @@ Johann Christoph ; Hertel
 Johann Daniel von
 Johann David
 Johann David ; Aikin
-Johann David Wyss
 Johann Friedrich
 Johann Georg
 Johann Gottfried
@@ -25011,14 +24692,12 @@ Johann Karl August
 Johann Ludwig
 Johann Nikolaus
 Johann Rudolf
-Johann Rudolf Wyss
 Johann Sebastian
 Johann Ulrich
 Johann Wolfgang von
 Johann Wolfgang von ; Carlyle
 Johann Wolfgang von ; Stolberg-Stolberg
 Johann Wolfgang von ; Storm
-Johann Wolfgang von Goethe
 Johanna
 Johanna Maria
 Johanna Sara
@@ -25030,7 +24709,6 @@ Johannes ; Holz
 Johannes ; Lennep
 Johannes Hendrik
 Johannes Henricus
-Johannes Kepler
 Johannes Robert
 Johannes V. (Johannes Vilhelm)
 Johannes van ; Chorier
@@ -25110,7 +24788,6 @@ John B. (John Berry)
 John B. (John Bound) ; Townsend
 John Bach
 John Baldwin
-John Baldwin Buckstone
 John Bates
 John Bell
 John Benson ; Gay
@@ -25121,8 +24798,6 @@ John Birdseye
 John Bovee
 John Boyle ; Grant
 John Bruce
-John Buchan
-John Bunyan
 John Butler
 John C.
 John C. (John Caldwell)
@@ -25176,7 +24851,6 @@ John David
 John Davis
 John Dean
 John Denton Pinkstone
-John Donne
 John Douglas Sutherland Campbell
 John Dover
 John Doyle ; Lewis
@@ -25202,8 +24876,6 @@ John F. (John Frederick)
 John F. W. (John Frederick William)
 John Fielder
 John Fleming
-John Fletcher
-John Ford
 John Foster
 John Foster ; Eisenhower
 John Francis
@@ -25221,7 +24893,6 @@ John G. (John Gilbert) ; Bigwood
 John G. (John Gottlieb)
 John G. B. (John Gregory Bishop)
 John Gabriel
-John Gay
 John George
 John George Flett Moodie ; Mainland
 John Gerardus
@@ -25233,7 +24904,6 @@ John Goldworth
 John Gottlieb Ernestus
 John Gould
 John Gould ; Lowell
-John Gower
 John Graham
 John Green
 John Greenleaf
@@ -25285,7 +24955,6 @@ John Jay
 John K. (John Kerr)
 John K. (John Kirkwood)
 John Keast
-John Keats
 John Kendrick
 John Kendrick ; Jordan
 John Kennedy
@@ -25303,16 +24972,13 @@ John Lawrence
 John Lee
 John Leslie
 John Lewis
-John Locke
 John Loraine
 John Lorimer
 John Lothrop
-John Lothrop Motley
 John Louis
 John Ludlum
 John Ludwig
 John Luther
-John Lyly
 John M.
 John M. (John Mackenzie)
 John M. (John Mason)
@@ -25323,9 +24989,7 @@ John M. (John Moseley)
 John M. (John Mullin)
 John Maddison
 John Marshall
-John Marston
 John Martin
-John Masefield
 John Mason
 John Massie
 John Matthias
@@ -25351,9 +25015,7 @@ John Neville
 John Nevins
 John Niles
 John of Damascus
-John O'Keeffe
 John Oliver
-John Oliver Hobbes
 John Ormsby
 John P.
 John P. (John Percival)
@@ -25363,13 +25025,11 @@ John P. (John Punnett)
 John Palmer
 John Parker
 John Patrick
-John Payne
 John Pendleton
 John Petch
 John Peter Holloway
 John Philip
 John Philip ; Smith
-John Poole
 John Porter
 John Price ; Hollister
 John Prosper
@@ -25391,7 +25051,6 @@ John Robert
 John Robertson
 John Roy
 John Rushworth
-John Ruskin
 John Russell
 John S.
 John S. (John Sanford)
@@ -25408,7 +25067,6 @@ John Sell
 John Seymour ; Perry
 John Sherburne
 John Singleton
-John Skelton
 John Smith
 John Spencer
 John St. Loe
@@ -25419,7 +25077,6 @@ John Stewart
 John Strange
 John Strange ; Crompton
 John Stuart
-John Stuart Mill
 John T.
 John T. (John Tackett)
 John T. (John Thomas)
@@ -25452,7 +25109,6 @@ John W. ; Karns
 John W. Masury & Son
 John Walker
 John Watson
-John Webster
 John Wesley
 John Wesley ; Gilbert
 John Wesley ; Steward
@@ -25460,7 +25116,6 @@ John Wetmore
 John William
 John William ; Willis
 John William Edward
-John William Polidori
 John Williams
 John Willis
 John Wilson
@@ -25500,8 +25155,6 @@ Jonathan ; Schmidt
 Jonathan B. (Jonathan Billings)
 Jonathan Ceredig
 Jonathan Mayhew
-Jonathan Scott
-Jonathan Swift
 Jonathan Thayer
 Jones
 Jong
@@ -25515,29 +25168,11 @@ Jordanes
 Jordanus
 Jorden
 Jorge
-Jorge Consiglio
-Jorge Franco
-Jorge Isaacs
 Jørgen Engebretsen ; Asbjørnsen
 Jørgen Engebretsen ; Topelius
 Jorgensen
-Joris-Karl Huysmans
 Jos.
 Jos. E. (Joseph Edward)
-JosÃ© Cadalso
-JosÃ© de Diego
-JosÃ© de Espronceda
-JosÃ© Echegaray
-JosÃ© Emilio Pacheco
-JosÃ© Enrique RodÃ³
-JosÃ© Eustasio Rivera
-JosÃ© Gorostiza
-JosÃ© HernÃ¡ndez
-JosÃ© JoaquÃ­n FernÃ¡ndez de Lizardi
-JosÃ© MÃ¡rmol
-JosÃ© MarÃ­a de Pereda
-JosÃ© MartÃ­
-JosÃ© Zorrilla
 José
 José ; Martínez de la Rosa
 José Agostinho de
@@ -25597,7 +25232,6 @@ Joseph C. (Joseph Charles)
 Joseph C. (Joseph Columbus)
 Joseph C. (Joseph Comly)
 Joseph Clarence
-Joseph Conrad
 Joseph Crosby
 Joseph Cullen
 Joseph Dalton ; Ball
@@ -25620,7 +25254,6 @@ Joseph H. (Joseph Henry)
 Joseph Hamblen
 Joseph Horatio
 Joseph J.
-Joseph Jacobs
 Joseph Jocelyn
 Joseph K. (Joseph Kossuth)
 Joseph Laing
@@ -25640,12 +25273,10 @@ Joseph S. (Joseph Seamon)
 Joseph S. (Joseph Shuter)
 Joseph S. ; Youngken
 Joseph Sheridan
-Joseph Sheridan Le Fanu
 Joseph Sparkes
 Joseph Theodore
 Joseph Turney
 Joseph Victor von
-Joseph von Eichendorff
 Joseph W.
 Joseph W. (Joseph Williams)
 Joseph Warren
@@ -25727,14 +25358,9 @@ Juan A. (Juan Antonio) ; Riva Palacio
 Juan Antonio
 Juan B.
 Juan Bautista ; Heredia
-Juan CÃ¡rdenas
-Juan Calvino
 Juan Carlos
-Juan Carlos Onetti
 Juan de
 Juan F. (Juan Facundo)
-Juan Gabriel VÃ¡squez
-Juan JosÃ© Arreola
 Juan Lauro
 Juan Luis
 Juan Manuel
@@ -25743,9 +25369,6 @@ Juan María ; Bunge
 Juan Patricio
 Juan R.
 Juan Ramón
-Juan Ruiz
-Juan Ruiz de AlarcÃ³n
-Juan Rulfo
 Juan Villagonzalo
 Juana Inés de la Cruz
 Juana Manuela
@@ -25781,7 +25404,6 @@ Jules François ; Cerfberr
 Jules Gabriel
 Jules M.
 Jules Paul
-Jules Verne
 Julia
 Julia ; McDonald
 Julia A.
@@ -25810,7 +25432,6 @@ Julian Stafford
 Julian Wisner
 Juliana
 Juliana Horatia
-Juliana Horatia Ewing
 Juliane
 Julie
 Julie M.
@@ -25823,8 +25444,6 @@ Julio
 Júlio
 Júlio César
 Júlio de
-Julio FlÃ³rez
-Julio Paredes
 Julius
 Julius ; Ludwig
 Julius ; Tauros
@@ -25862,7 +25481,6 @@ Justin H. (Justin Huntly)
 Justin Harvey
 Justin R. (Justin Rudolph)
 Justo Claudio
-Justo Sierra
 Justus
 Justus Hiddes
 Justus Miles
@@ -25929,7 +25547,6 @@ Kaiser
 Kajander
 Käkikoski
 Kakuzo
-KalÃ­dasa
 Kalakaua
 Kalamatiano ; Xenophontovna
 Kales
@@ -25995,7 +25612,6 @@ Karl Friedrich ; Schmidt
 Karl Heinrich
 Karl Henrik
 Karl Joseph
-Karl Marx
 Karl Max
 Karl Otfried
 Karl Otto Johan ; Reinholm
@@ -26027,12 +25643,10 @@ Katarina
 Kate
 Käte
 Kate Boyles ; Boyles
-Kate Chopin
 Kate Dickinson
 Kate Douglas Smith
 Kate Douglas Smith ; Findlater
 Kate Douglas Smith ; Smith
-Kate Douglas Wiggin
 Kate Gannett
 Kate Heintz
 Kate John
@@ -26194,7 +25808,6 @@ Kenneth A. ; Sheehy
 Kenneth Darlaston
 Kenneth E.
 Kenneth E. ; Tackley
-Kenneth Grahame
 Kenneth Hotham
 Kenneth J. (Kenneth James)
 Kenneth James
@@ -26390,7 +26003,6 @@ Knoxville
 Knud
 Knut
 Knut ; Heidenstam
-Knut Hamsun
 Knut Leonard
 Knyvett
 Kobbé
@@ -26584,7 +26196,6 @@ L. F. (Liubov Fedorovna)
 L. F. (Louis Francis)
 L. Frank (Lewis Frank)
 L. Frank (Lyman Frank)
-L. Frank Baum
 L. G. (Lev Grigor'evich)
 L. G. (Louis Georges)
 L. G. (Lucy Gertrude)
@@ -26627,7 +26238,6 @@ L. T.
 L. T. (Leonard Trelawny)
 L. T. ; Browne
 L. T. ; Halifax
-L. T. Meade
 L. Taylor (Lucile Taylor)
 L. V. (Lucy Violet)
 L. W. (Lauron William)
@@ -26638,7 +26248,6 @@ L. W. (Louis William)
 L.-B. (Louis-Benoît) ; Schiller
 L.-O. (Laurent-Olivier)
 La Bédollière
-La Biblia
 La Blanchère
 La Boétie
 La Brète
@@ -26647,7 +26256,6 @@ La Chalotais
 La Chapelle-Roobol
 La Chaume
 La Coudraye
-La divina comedia
 La Farge
 La Fayette
 La Flesche
@@ -26666,7 +26274,6 @@ La Monte
 La Mothe Le Vayer
 La Motte
 La Motte-Fouqué
-La muerte de Arturo
 La Peyrère
 La Reine Helen McKenzie
 La Rochefoucauld
@@ -26753,7 +26360,6 @@ Lamplugh
 Lampman
 Lamprey
 Lamszus
-Lancelot
 Lancelot Law
 Lanciani
 Landa
@@ -26801,7 +26407,6 @@ Lansdown
 Lansing
 Lantier
 Lantz
-Lao Tse
 Laozi
 LaPaz
 Laplace
@@ -26825,7 +26430,6 @@ Larson
 Larsson
 Larymore
 Las Cases
-Las mil y una noches
 Lascelles
 Lasker
 Lasker-Schüler
@@ -26860,13 +26464,11 @@ Laura A. (Laura Anna)
 Laura Dayton
 Laura Dent
 Laura Elizabeth Howe
-Laura Esquivel
 Laura Estelle Watson ; Maxfield
 Laura Fry
 Laura G. Case
 Laura Jean
 Laura Lee
-Laura Restrepo
 Laura Rountree
 Laura S. (Laura Smith)
 Laura Spencer
@@ -26877,13 +26479,11 @@ Laurence (Laurence Ayscough)
 Laurence ; Phillips
 Laurence ; Pratt
 Laurence Frederick
-Laurence Housman
 Laurence J.
 Laurence M.
 Laurence M. ; Cole
 Laurence M. ; Garrett
 Laurence Marcellus
-Laurence Sterne
 Laurence Yard
 Laurent
 Laurentios S.
@@ -26959,7 +26559,6 @@ Le Sage
 Le Sueur
 Le Vaillant
 Lea
-LeÃ³n TolstÃ³i
 Leach
 Leache
 Leacock
@@ -26976,7 +26575,6 @@ Leander
 Leander S. (Leander Sylvester)
 Leandro
 Leandro ; Zorrilla
-Leandro FernÃ¡ndez de MoratÃ­n
 Lear
 Leary
 Leask
@@ -27042,7 +26640,6 @@ Leigh H. (Leigh Hadley)
 Leigh Perrot
 Leighton
 Leila
-Leila Guerriero
 Leiman
 Leino
 Leinster
@@ -27124,7 +26721,6 @@ Leonard Wheeler
 Leonard Wheeler ; Crooks
 Leonard Woolsey
 Leonardo
-Leonardo da Vinci
 Léonce de
 Leone
 Leonhard
@@ -27140,8 +26736,6 @@ Leopold
 Leopold von
 Leopoldo
 Leopoldo ; Verri
-Leopoldo Alas "ClarÃ­n"
-Leopoldo Lugones
 Lepelletier
 Leppin
 Leprince de Beaumont
@@ -27235,7 +26829,6 @@ Lewis ; Wright
 Lewis B.
 Lewis Boyd
 Lewis C. (Lewis Conger)
-Lewis Carroll
 Lewis Clinton
 Lewis D. (Lewis Davis)
 Lewis E. (Lewis Edwards)
@@ -27264,9 +26857,6 @@ Leys
 L'Homond
 Lhotzky
 Li
-Li Bai
-Li Po
-Li Qingzhao
 Liang
 Liao
 Liautard
@@ -27505,7 +27095,6 @@ Loopuit
 Loos
 Looy
 Lope de
-Lope de Vega
 Lopes
 Lopes Neto
 Lopez
@@ -27516,7 +27105,6 @@ Loraine ; Reumert
 Loraine E.
 Lorayne
 Lord
-Lord Byron
 Lorenc
 Lorentz
 Lorenz
@@ -27533,9 +27121,6 @@ Lorne W. (Lorne Webster)
 Lorrain
 Lorwin
 Lory
-Los cuentos de Canterbury
-Los Upanishads
-Los viajes de Gulliver
 Losey's Orchestra
 Lossing
 Lot D.
@@ -27569,7 +27154,6 @@ Louis Ange
 Louis Antoine Fauvelet de
 Louis Aubrey
 Louis Bathe
-Louis Boussenard
 Louis C.
 Louis Charles
 Louis Constant
@@ -27601,7 +27185,6 @@ Louisa ; Lyall
 Louisa Annette Edla Drummond-Hay ; Drummond-Hay
 Louisa Jebb
 Louisa May
-Louisa May Alcott
 Louisa Stuart
 Louis-Alexandre ; Reynier
 Louis-Antoine de
@@ -27677,7 +27260,6 @@ Lucan
 Lucanus
 Lucas
 Lucas ; Sastri
-Lucas Malet
 Lucci
 Luce
 Lucia
@@ -27688,7 +27270,6 @@ Lucia True Ames
 Lucian
 Lucian Bottow
 Lucian Swift
-Luciana De Mello
 Luciano
 Lucie
 Lucie ; Scheepstra
@@ -27705,7 +27286,6 @@ Lucine
 Lucini
 Lucio
 Lucio V.
-Lucio V. Mansilla
 Lucio Vicente
 Lucio Vicente ; Blasco Ibáñez
 Lucio y Bustamante
@@ -27718,7 +27298,6 @@ Lucka
 Luckhoff
 Luckiesh
 Luckner
-Lucrecio
 Lucretia P. (Lucretia Peabody)
 Lucretius Carus
 Lucullus Virgil
@@ -27745,7 +27324,6 @@ Ludlow
 Ludmilla
 Ludovic
 Ludovici
-Ludovico Ariosto
 Ludovico Maria
 Ludvig
 Ludwig
@@ -27755,7 +27333,6 @@ Ludwig ; Jean Paul ; Musäus
 Ludwig ; Migula
 Ludwig ; Schussen
 Ludwig Achim
-Ludwig Bechstein
 Ludwig Salvator
 Ludwig van
 Ludwig von
@@ -27771,14 +27348,9 @@ Luigi Federico
 Luis
 Luís
 Luís António
-Luis Bello
-Luis Chaves
-Luis Coloma
 Luís da Silva
 Luis de
 Luís de
-Luis de CamÃµes
-Luis de GÃ³ngora
 Luis G. (Luis Gonzaga)
 Luis María ; López
 Luis Mariano de
@@ -27811,7 +27383,6 @@ Lungwitz
 Lunn
 Lunt
 Luo
-Luo Guanzhong
 Lurana
 Luria
 Lusk
@@ -28199,7 +27770,6 @@ Maila
 Mailand
 Mailáth
 Maillard
-MaimÃ³nides
 Maimon
 Maimonides
 Maindron
@@ -28269,7 +27839,6 @@ Maning
 Manion
 Maniri
 Manjiro
-Manlio Argueta
 Manly
 Manly P. (Manly Palmer)
 Manly Wade
@@ -28301,21 +27870,15 @@ Manuel Antonio
 Manuel B.
 Manuel Cipriano da
 Manuel de
-Manuel del Palacio
 Manuel do
 Manuel Eduardo  de
 Manuel Emílio Gomes de
-Manuel FernÃ¡ndez y GonzÃ¡lez
-Manuel GonzÃ¡lez Prada
 Manuel Joaquim
-Manuel JosÃ© Quintana
 Manuel José
 Manuel Juan
 Manuel Luiz ; Vasconcelos
 Manuel Maria Barbosa du
-Manuel Payno
 Manuel Pinheiro
-Manuel Tamayo y Baus
 Manwell
 Manzoni
 Mapes
@@ -28332,8 +27895,6 @@ Marc
 Marcantonio
 Marcel
 Marcel ; Souvestre
-Marcel Allain
-Marcela Serrano
 Marceline
 Marcelino
 Marcelle
@@ -28348,7 +27909,6 @@ Marcia
 Marcin
 Marcius ; Wilson
 Marco
-Marco Aurelio
 Marcos
 Marcos ; Sarmiento
 Marcosson
@@ -28407,7 +27967,6 @@ Margaret L. (Margaret Louisa)
 Margaret Love
 Margaret M. (Margaret Murray)
 Margaret Moyes
-Margaret Oliphant
 Margaret Piper
 Margaret Pollock
 Margaret Pollock ; Lucas
@@ -28473,15 +28032,11 @@ Marian Hurd
 Marian Isabel
 Marian Kent ; Stokely
 Marian MacLean
-Mariana DimÃ³pulos
-Mariana Enriquez
 Mariani
 Marianne
 Marianne L. B.
 Marianne Margaret Compton Cust
 Mariano
-Mariano Azuela
-Mariano JosÃ© de Larra
 Mariano José de
 Marie
 Marie A.
@@ -28491,7 +28046,6 @@ Marie Belloc
 Marie Carmichael
 Marie Connor
 Marie Conway
-Marie Corelli
 Marie D. (Marie Daugherty)
 Marie de
 Marie E. (Marie Elizabeth)
@@ -28526,9 +28080,7 @@ Marilyn D.
 Marinetti
 Marino
 Mario
-Mario Benedetti
 Mário de
-Mario Mendoza
 Mário Pires Gomes
 Marion
 Marion ; Lamoreaux
@@ -28572,7 +28124,6 @@ Mark Edward
 Mark Guy
 Mark Herbert Joseph
 Mark Lee
-Mark Twain
 Markham
 Márki
 Markman
@@ -28591,7 +28142,6 @@ Marmontel
 Marmor
 Maro O. (Maro Orlando)
 Marot
-MarquÃ©s de Sade
 Marquand
 Marques
 marqués de San Francisco
@@ -28622,7 +28172,6 @@ Marson
 Marston
 Marsy
 Mart R. (Martin Robert)
-MartÃ­n Kohan
 Marten
 Martens
 Martet
@@ -28658,7 +28207,6 @@ Martin I. J. (Martin Ignatius Joseph)
 Martin J. (Martin Jerome)
 Martin J. (Martin Joseph) ; Russell
 Martin Louis Alan
-Martin Lutero
 Martin Robison
 Martin S. (Martin Shaw)
 Martin Samuel
@@ -28715,7 +28263,6 @@ Mary Caroline
 Mary Carolyn
 Mary Catherine
 Mary Chase Mills
-Mary Cholmondeley
 Mary Christiana
 Mary Christina
 Mary Cochrane
@@ -28740,7 +28287,6 @@ Mary Edward
 Mary Eleanor Wilkins
 Mary Eleanor Wilkins ; Van Dyke
 Mary Elizabeth
-Mary Elizabeth Braddon
 Mary Elizabeth Southwell Dudley
 Mary Ella
 Mary Ellen
@@ -28800,7 +28346,6 @@ Mary Larcom
 Mary Lee
 Mary Lois
 Mary Louisa
-Mary Louisa Molesworth
 Mary Lowell
 Mary Lydia
 Mary M. (Mary Martha)
@@ -28830,7 +28375,6 @@ Mary Russell
 Mary S. (Mary Sollace)
 Mary S. (Mary Stanbery)
 Mary Schenck
-Mary Shelley
 Mary Spring
 Mary Stewart
 Mary Stewart ; Wyatt
@@ -28850,7 +28394,6 @@ Mary White
 Mary White ; Harbison
 Mary Wilder
 Mary Wilhelmine
-Mary Wilkins Freeman
 Mary Wilson
 Mary Wollstonecraft
 Mary Wortley
@@ -28906,7 +28449,6 @@ Matilde
 Mativet
 Matos
 Matsuo
-Matsuo Basho
 Matt
 Matteo
 Matteo Maria
@@ -28916,10 +28458,8 @@ Matthew
 Matthew ; Hammon
 Matthew ; Newman
 Matthew Alexander
-Matthew Arnold
 Matthew Holbeche
 Matthew L.
-Matthew Lewis
 Matthew M.
 Matthew Nathanael
 Matthew Page
@@ -28982,7 +28522,6 @@ Maurice ; Paulton
 Maurice ; Stockton
 Maurice Andrew Brackenreed ; Yearsley
 Maurice Francis
-Maurice Leblanc
 Maurice W.
 Mauriceau
 Maurik
@@ -29203,7 +28742,6 @@ Melamed
 Melanchthon
 Melas
 Melati
-Melba Escobar
 Melby
 Melchior
 Meldola
@@ -29333,7 +28871,6 @@ Michael ; Homer
 Michael ; Sumanaru
 Michael Angelo
 Michael D.
-Michael Drayton
 Michael F. (Michael Frederic)
 Michael Frederic
 Michael Hendrick
@@ -29349,7 +28886,6 @@ Michel ; Verne
 Michel A. ; Nodvik
 Michel de
 Michel de ; Kant
-Michel de Montaigne
 Michelangelo Buonarroti
 Michele
 Michelet
@@ -29368,7 +28904,6 @@ Miguel
 Miguel Agustin
 Miguel de
 Miguel de ; Parry
-Miguel de Unamuno
 Miguel J. T.
 Mihai
 Mihály
@@ -29490,7 +29025,6 @@ Mittler
 Mitton
 Mitzi
 Mivart
-Miyamoto Musashi
 M'Levy
 Mme
 Mme ; Méry
@@ -29524,7 +29058,6 @@ Molbech
 Moldeven
 Moldován
 Molesworth
-MoliÃ¨re
 Molière
 Molière ; Fernández de Moratín
 Molina
@@ -29700,7 +29233,6 @@ Moyers S.
 Moyes
 Moyle
 Mozart
-Mozi
 Mozzoni
 M'Pherson
 Mr.
@@ -29767,7 +29299,6 @@ Muhammad ibn Abd al-Wahhab
 Muḥammad ibn ʻUmar
 Mühlbach
 Mühlenfels
-Muhsin Mahdi
 Muir
 Muirhead
 Mukerji
@@ -29964,10 +29495,8 @@ Nathaniel Bright
 Nathaniel C. (Nathaniel Claiborne)
 Nathaniel C. (Nathaniel Clark)
 Nathaniel H. (Nathaniel Holmes)
-Nathaniel Hawthorne
 Nathaniel Parker
 Nathaniel Parker ; Foote
-Nathaniel Parker Willis
 Nathaniel Southgate
 Nathaniel W. (Nathaniel Wright)
 Nathorst
@@ -30116,7 +29645,6 @@ Nickerson
 Nicklin
 Nico J.
 Nicola
-NicolÃ¡s Maquiavelo
 Nicolardot
 Nicolas
 Nicolas Louis
@@ -30163,8 +29691,6 @@ Niilo E.
 Niké
 Nikkinen
 Nikodemus
-NikolÃ¡i GÃ³gol
-NikolÃ¡i Leskov
 Nikolaĭ Aleksandrovich
 Nikolai Alekseevich
 Nikolai Vasilevich
@@ -30191,7 +29717,6 @@ Nitti
 Niven
 Nixon
 Nixon-Roulet
-NizamÃ­
 Nizamat
 Noah
 Noah ; Project Gutenberg
@@ -30216,7 +29741,6 @@ Nolan
 Nöldeke
 Noll
 Nolly
-Nona FernÃ¡ndez
 Nonnen
 Noponen
 Nora
@@ -30318,7 +29842,6 @@ O. B. (Otis Bardwell)
 O. E. (Ole Edvart)
 O. F.
 O. F. (Orator Fuller)
-O. Henry
 O. J. ; Nuiver
 O. J. R. (Osbert John Radcliffe) ; Keltie
 O. M. (Ormonde Maddock)
@@ -30349,7 +29872,6 @@ O'Connor
 Octave
 Octave ; Jousselin
 Octavia
-Octavio Paz
 Octavius
 Octavius Brooks
 Octavus Roy
@@ -30467,7 +29989,6 @@ Oliver C. (Oliver Cummings)
 Oliver E.
 Oliver E. (Oliver Edmunds)
 Oliver George
-Oliver Goldsmith
 Oliver J. (Oliver Joseph)
 Oliver Madox
 Oliver W. (Oliver Woodson)
@@ -30500,7 +30021,6 @@ O'Malley
 Oman
 Omar
 Omar ibn
-Omar Jayyam
 Omar Khayyam
 O'Meara
 Omega G.
@@ -30599,7 +30119,6 @@ Oscar de (Philippe François Joseph)
 Oscar Fay
 Oscar K. (Oscar King)
 Oscar N.
-Oscar Wilde
 Osgood
 Osgood E. (Osgood Eaton)
 O'Shaughnessy
@@ -30668,7 +30187,6 @@ Overduijn-Heyligers
 Overstreet
 Overton
 Ovid
-Ovidio
 Ovington
 Ovink-Soer
 Øvre Richter
@@ -30714,7 +30232,6 @@ P. G. (Pelham Grenville)
 P. G. (Pelham Grenville) ; Molnár
 P. G. (Pelham Grenville) ; Westbrook
 P. G. (Peter George)
-P. G. Wodehouse
 P. Gerald (Percy Gerald)
 P. H. (Peter Hampson)
 P. H. (Peter Harden)
@@ -30806,8 +30323,6 @@ Pamphile
 Pan. (Panagiotes)
 Panache
 Panait
-Panchatantra
-PÃ­ndaro
 Pandit Natesa
 Pang ; Yi
 Pangborn
@@ -30831,7 +30346,6 @@ Papantoniou
 Papin
 Papini
 Pappity
-Paracelso
 Paramahansa
 Paravey
 Pardee
@@ -30936,7 +30450,6 @@ Paul Cameron
 Paul d'
 Paul de
 Paul de ; Gautier
-Paul d'Ivoi
 Paul E.
 Paul Elmer
 Paul Elmer ; Kent
@@ -30963,7 +30476,6 @@ Paul Q. (Paul Quick)
 Paul S. (Paul Samuel)
 Paul T. (Paul Thomas)
 Paul van
-Paul Verlaine
 Paul von
 Paul W.
 Paula
@@ -31025,15 +30537,11 @@ Pedro ; García Cubas
 Pedro ; López y Planes
 Pedro Andrés
 Pedro Antonio de
-Pedro Antonio de AlarcÃ³n
-Pedro CalderÃ³n de la Barca
 Pedro D.
 Pedro de
 Pedro Fernandes de
 Pedro J. (Pedro Joseph)
 Pedro José
-Pedro Mairal
-Pedro Mata
 Peek
 Peel
 Peer
@@ -31099,7 +30607,6 @@ Percy
 Percy ; Dickens
 Percy B.
 Percy Bysshe
-Percy Bysshe Shelley
 Percy C.
 Percy C. (Percy Clough)
 Percy Cross
@@ -31177,7 +30684,6 @@ Peter B. (Peter Bernard)
 Peter B. (Peter Bernard) ; Ferber
 Peter C.
 Peter Christen
-Peter Christen AsbjÃ¸rnsen
 Peter Clark
 Peter E.
 Peter Guthrie
@@ -31245,7 +30751,6 @@ Philip K.
 Philip Lutley
 Philip Lybbe Powys
 Philip M.
-Philip Massinger
 Philip Morin
 Philip P. (Philip Patterson)
 Philip Parker
@@ -31297,7 +30802,6 @@ Picton
 Pictorial Photographers of America
 Pidgin
 Pie Filling Institute
-Piedad Bonnett
 Pienaar
 Pier
 Pier Ambrogio
@@ -31310,13 +30814,10 @@ Pierre ; Hugo
 Pierre Alexandre Édouard
 Pierre Augustin Caron de
 Pierre Carlet de Chamblain de
-Pierre Choderlos de Laclos
-Pierre Corneille
 Pierre de
 Pierre de Bourdeille
 Pierre Jean
 Pierre Joseph
-Pierre Loti
 Pierre Louis
 Pierre Marie
 Pierre Marie Louis de ; Vertot
@@ -31324,7 +30825,6 @@ Pierre Napoléon
 Pierre Paul Ernest
 Pierre Paul Raoul
 Pierre Simon
-Pierre Souvestre
 Pierre-Alexandre
 Pierre-Antoine-Noël-Bruno
 Pierre-Jean de ; Flagg
@@ -31343,7 +30843,6 @@ Pietro
 Pigafetta
 Pigault-Lebrun
 Pike
-Pilar Quintana
 Pilastre
 Pilling
 Pilniak
@@ -31403,7 +30902,6 @@ Placentius
 Planas i Font
 Planck
 Plaskett
-PlatÃ³n
 Plato
 Plato (spurious and doubtful works)
 Platon
@@ -31432,7 +30930,6 @@ Plunkett
 Plunkitt
 Plüschow
 Plutarch
-Plutarco
 Plymouth Cordage Company
 Plympton
 Pneu Michelin (Firm)
@@ -31443,8 +30940,6 @@ Podmaniczky
 Podmore
 Poe
 Poel
-Poema de Gilgamesh
-Poema de Mio Cid
 Poffenberger
 Poggi
 Pohjanpää
@@ -31454,7 +30949,6 @@ Poincaré
 Poinsatte
 Pokagon
 Pol (Pol Louis)
-Pola Oloixarac
 Polak
 Poldermans
 Pole Evans
@@ -31493,7 +30987,6 @@ Poor
 Poore
 Pope
 Popenoe
-Popol Vuh
 Porchat
 Porfirio
 Porges
@@ -31529,7 +31022,6 @@ Powelson
 Power
 Powers
 Powys
-Powys Mathers
 Poynter
 Poyser
 Pozzi-Escot
@@ -31605,7 +31097,6 @@ Prokesch von Osten
 Propertius
 Prophet
 Prosper
-Prosper MÃ©rimÃ©e
 Protheroe
 Proudfit
 Proudhon
@@ -31683,7 +31174,6 @@ Qingxidaoren
 Qingxincairen
 Qingyuan
 Qingzhao
-Qu Yuan
 Quackenbos
 Quartier
 Quatrefages
@@ -31863,7 +31353,6 @@ Rabb
 Rabe
 Rabelais
 Rabindranath
-Rabindranath Tagore
 Rabot
 Raby
 Race
@@ -31889,7 +31378,6 @@ Rafael
 Rafaël
 Rafael ; Payno
 Rafael M. de (Rafael María)
-Rafael Sabatini
 Raffaello
 Raffles
 Rafinesque
@@ -31936,19 +31424,16 @@ Ralph Van Deman
 Ralph W. (Ralph William)
 Ralph Waldo
 Ralph Waldo ; Carlyle
-Ralph Waldo Emerson
 Ralph Willett
 Ralphson
 Ralston B.
 Rama
-RamÃ³n Ortega y FrÃ­as
 Ramakrishna Pillai
 Ramalho
 Ramalho ; Queirós
 Ramamohan Rao
 Rambousek
 Rameau
-Ramiro de Maeztu
 Ramm
 Ramón
 Ramón A. (Ramón Arminio)
@@ -32153,7 +31638,6 @@ Remy
 Remy de
 Rena I.
 Rena Sarah ; Hill
-RenÃ© Descartes
 Renan
 Renard
 Renato
@@ -32218,7 +31702,6 @@ Rheta Childe
 Rhoades
 Rhoads
 Rhoda
-Rhoda Broughton
 Rhoda N. ; Roberts
 Rhode
 Rhoden
@@ -32233,8 +31716,6 @@ Riber
 Ribot
 Ricarda
 Ricardo
-Ricardo GÃ¼iraldes
-Ricardo Palma
 Rice
 Rice S.
 Rich
@@ -32261,7 +31742,6 @@ Richard B. (Richard Biddle)
 Richard B. (Richard Brodhead)
 Richard Boyle
 Richard Brinsley
-Richard Brinsley Sheridan
 Richard C.
 Richard C. (Richard Chace)
 Richard C. (Richard Clarke)
@@ -32269,11 +31749,9 @@ Richard C. (Richard Crittenden)
 Richard C. ; Kuck
 Richard Carnac
 Richard Chenevix
-Richard Cumberland
 Richard D. (Richard Donald)
 Richard D. (Richard Dudley)
 Richard de
-Richard Doddridge Blackmore
 Richard E.
 Richard Edward
 Richard Ernest Nowell
@@ -32281,7 +31759,6 @@ Richard F.
 Richard F. ; Schad
 Richard F. ; Selander
 Richard Francis
-Richard Francis Burton
 Richard G. (Richard Green) ; Sophocles ; Euripides
 Richard Girard de
 Richard H. D. (Richard Hans Douai)
@@ -32293,7 +31770,6 @@ Richard Howells
 Richard J.
 Richard J. (Richard Joseph)
 Richard J. (Richard Josiah)
-Richard Jefferies
 Richard L.
 Richard L. (Richard Lancelot)
 Richard La Rue
@@ -32309,8 +31785,6 @@ Richard O.
 Richard Rein
 Richard Roswell
 Richard S.
-Richard Sheridan
-Richard Steele
 Richard T. (Richard Theodore)
 Richard Valpy
 Richard Vine
@@ -32358,7 +31832,6 @@ Riesenberg
 Rietrik
 Rigby
 Riggs
-Rigoberta MenchÃº
 Rihani
 Rihbany
 Riis
@@ -32449,11 +31922,9 @@ Robert B.
 Robert B. (Robert Barclay) ; Fuller
 Robert B. (Robert Barnabas)
 Robert Baldwin
-Robert Barr
 Robert Benton
 Robert Blachford
 Robert Bloomer Hare
-Robert Browning
 Robert Bruce
 Robert C.
 Robert C. (Robert Chamblet)
@@ -32499,7 +31970,6 @@ Robert Gordon
 Robert Grant
 Robert Granville
 Robert Green
-Robert Greene
 Robert H.
 Robert H. (Robert Heberton)
 Robert H. (Robert Higginson)
@@ -32536,7 +32006,6 @@ Robert Louis ; Henley
 Robert Louis ; Lytton
 Robert Louis ; Osbourne
 Robert Louis ; Stevenson
-Robert Louis Stevenson
 Robert M.
 Robert McNutt
 Robert Means
@@ -32607,7 +32076,6 @@ Robina F.
 Robins
 Robinson
 Robinson ; Catullus
-Robinson Crusoe
 Robiou de La Tréhonnais
 Robles
 Robson
@@ -32639,7 +32107,6 @@ Rodin
 Rodó
 Rodokanakes
 Rodolfo Amedeo
-Rodolfo Fogwill
 Rodolph
 Rodolphe
 Rodrigo
@@ -32703,7 +32170,6 @@ Romayne
 Romero
 Romero de Terreros
 Romeyn Henry
-Romina Paula
 Romolo
 Romuáldez
 Romualdo
@@ -32726,7 +32192,6 @@ Root
 Roper
 Ropes
 Roque
-Roque Dalton
 Roquette
 Rorer
 Rorie
@@ -32736,8 +32201,6 @@ Rosa
 Rosa Belinda
 Rosa M. (Rosa Mulholland)
 Rosa Nouchette
-Rosa Nouchette Carey
-RosalÃ­a de Castro
 Rosalía de
 Rosalie
 Rosalie G.
@@ -32746,8 +32209,6 @@ Rosalind Amelia
 Rosamond
 Rosamund ; Forrest
 Rosamund E. Nesbit (Rosamund Edith Nesbit)
-Rosario Castellanos
-Rosario FerrÃ©
 Rosauro
 Roscher
 Roscoe
@@ -32848,7 +32309,6 @@ Roys
 Rozelle V.
 Rozwadowski
 Ruan
-RubÃ©n DarÃ­o
 Rubin
 Rubiner
 Rubió y Ors
@@ -32874,12 +32334,10 @@ Rudolf von
 Rūdolfs
 Rudolph
 Rudyard
-Rudyard Kipling
 Ruel Perley
 Ruffner
 Rufin
 Rufino
-Rufino Blanco Fombona
 Rufus
 Rufus B. (Rufus Byam)
 Rufus H.
@@ -32898,7 +32356,6 @@ Ruiz de Alarcón
 Ruland
 Rule
 Rumford
-Rumi
 Runar
 Runciman
 Rundell
@@ -33062,10 +32519,6 @@ S. W.
 S. W. Partridge & Co. (London
 S. Weir (Silas Weir)
 S.D.)
-SÃ¸ren Kierkegaard
-SÃ©neca
-SÃ³focles
-Saadi
 Saar
 Saarela
 Sabatier
@@ -33093,9 +32546,7 @@ Sadleir
 Sadler
 Sadlier
 Sæmundur fróði ; Snorri Sturluson
-Safo
 Safroni-Middleton
-Saga de los Volsungos
 Sagard
 Sagarra
 Sage
@@ -33162,7 +32613,6 @@ Sam
 Sam K. (Sam Kinkade)
 Samachson
 Samaniego
-Samanta Schweblin
 Samarow
 Sambrot
 Sami Khalaf
@@ -33189,13 +32639,11 @@ Samuel B. (Samuel Buell)
 Samuel B. (Samuel Bulfinch)
 Samuel Bannister
 Samuel Benjamin
-Samuel Butler
 Samuel C.
 Samuel Christian
 Samuel Cranston
 Samuel D. (Samuel Dennis)
 Samuel Dana ; Ramsay
-Samuel Daniel
 Samuel de
 Samuel E. (Samuel Edward)
 Samuel E. (Samuel Ellsworth)
@@ -33231,16 +32679,13 @@ Samuel McChord
 Samuel Murray
 Samuel N. (Samuel Northrup) ; Petrunkevitch
 Samuel Paynter
-Samuel Pepys
 Samuel Peter
 Samuel Phillips
 Samuel R.
 Samuel Rawson
-Samuel Richardson
 Samuel S.
 Samuel Stehman
 Samuel Taylor
-Samuel Taylor Coleridge
 Samuel V.
 Samuel W.
 Samuel W. (Samuel William)
@@ -33251,9 +32696,7 @@ Samuelson
 Samuli
 Samwell
 Samz
-San AgustÃ­n
 San Francisco Museum of Art ; Ackerman
-San Juan de la Cruz
 Sanborn
 Sanches
 Sanchez
@@ -33288,16 +32731,12 @@ Sangiorgio
 Sangster
 Sankaran Nair
 Sanni
-Santa Teresa de JesÃºs
 Santayana
 Santeri
 Santeri ; Wilkuna
 Santiago
 Santiago ; Sánchez de Aguilar
-Santiago Gamboa
-Santiago RusiÃ±ol
 Santiago Vela
-Santo TomÃ¡s de Aquino
 Santos
 Santos-Dumont
 Santucci Perugino
@@ -33348,7 +32787,6 @@ Sarah N. (Sarah Nicholas)
 Sarah Noble
 Sarah Orne
 Sarah Orne ; Lee
-Sarah Orne Jewett
 Sarah P. (Sarah Parsons)
 Sarah Pratt
 Sarah Pratt McLean
@@ -33609,7 +33047,6 @@ Seelye
 Seemann
 Segalen
 Ségur
-Sei Shonagon
 Seibert
 Seibold
 Seidel
@@ -33635,7 +33072,6 @@ Selma
 Selma ; Fredgren
 Selma ; Meijboom
 Selma ; Palmer
-Selma LagerlÃ¶f
 Selmer
 Selmer-Geeth
 Selous
@@ -33669,8 +33105,6 @@ Serge
 Sergeant
 Sergei Aleksandrovich
 Sergiei
-Sergio Chejfec
-Sergio Pitol
 Serjeant
 Serkoff
 Serra
@@ -33799,7 +33233,6 @@ Shetter
 Shew
 Shewell
 Shi
-Shi Nai'an
 Shiel
 Shifu
 Shiga
@@ -33916,7 +33349,6 @@ Silvestre
 Silvio
 Silvio A.
 Sima
-Sima Qian
 Simak
 Sime
 Simeon
@@ -33966,8 +33398,6 @@ Sir ; Seth-Smith
 Sir ; Simpson
 Sir ; Wallace
 Sir ; Younghusband
-Sir Gawain y el Caballero Verde
-Sir Walter Scott
 Siringo
 Sirven
 Sismondi
@@ -34113,7 +33543,6 @@ Sophie May ; Pratt
 Sophocles
 Sophonisba Preston
 Sophus
-Sor Juana InÃ©s de la Cruz
 Sorabji
 Søren
 Sörensen
@@ -34237,7 +33666,6 @@ St. Johnston
 St. Mars
 St. Paul
 St. Sernin
-StÃ©phane MallarmÃ©
 Staats
 Stables
 Stace
@@ -34282,7 +33710,6 @@ Stanley F.
 Stanley G. (Stanley Grauman)
 Stanley Isaac
 Stanley J.
-Stanley J. Weyman
 Stanley John
 Stanley Kuhl
 Stanley Paul
@@ -34371,7 +33798,6 @@ Stephen ; Lindsay
 Stephen ; Mantegazza
 Stephen A.
 Stephen Angus Douglas
-Stephen Crane
 Stephen D. (Stephen Denison)
 Stephen David
 Stephen David ; Lee
@@ -34555,7 +33981,6 @@ Stutterheim
 Stutzman
 Stuxberg
 Su
-Su Shi
 Su'anzhuren
 Suarès
 Suburg
@@ -34566,7 +33991,6 @@ Sue
 Sue Ainslie
 Suelette
 Suematsu
-Suetonio
 Suetonius
 Suffling
 Sugawara no Takasue no Musume ; Murasaki Shikibu ; Izumi Shikibu
@@ -34584,7 +34008,6 @@ Sumner
 Sumner Charles
 Sumner U. (Sumner Upham)
 Sun
-Sun Tzu
 Sunday
 Sundén
 Sunity Devee
@@ -34606,7 +34029,6 @@ Susan ; Clark
 Susan ; Warner
 Susan Anne Livingston Ridley
 Susan Archer Talley
-Susan Coolidge
 Susan E. (Susan Elston)
 Susan Fenimore
 Susan Morrow
@@ -34664,7 +34086,6 @@ Sydney ; Clark
 Sydney ; Jones
 Sydney C.
 Sydney George
-Sydney Grundy
 Sydney Herman
 Sydney Howard
 Sydney J.
@@ -34798,7 +34219,6 @@ T. W. H. (Thomas William Hodgson)
 T. Watson
 T. Wemyss (Thomas Wemyss)
 T.B. Peterson & Brothers (Philadelphia
-TÃ¡cito
 Tabakow
 Tabb
 Taber
@@ -34861,7 +34281,6 @@ Tarver
 Tasso
 Tassy
 Tatham
-Tatiana Lobo
 Tatlow
 Taunay
 Tautphoeus
@@ -34917,7 +34336,6 @@ Terence
 Terence J. (Terence Joseph)
 Terenzio
 Teresa
-Teresa de Ãvila
 Terese
 Terhi
 Terhune
@@ -34946,7 +34364,6 @@ Th.
 Th. (Théodore)
 Th. (Théodule)
 Th. (Thiodolf)
-ThÃ©ophile Gautier
 Thackeray
 Thad. W. H. (Thaddeus William Henry)
 Thaddeus
@@ -34959,7 +34376,6 @@ Thatcher
 Thayer
 the Apostle
 the automotive business magazine
-The Brothers Grimm
 the Elder
 The Harmsworth
 the Venerable
@@ -34999,7 +34415,6 @@ Theodore Clifford ; Schneider
 Theodore D. (Theodore Dehon)
 Théodore de
 Theodore DeBose
-Theodore Dreiser
 Theodore Edward
 Theodore Elmer ; Good
 Theodore F. (Theodore Frelinghuysen)
@@ -35093,8 +34508,6 @@ Thomas C. (Thomas Chrowder) ; Salisbury
 Thomas C. (Thomas Clark)
 Thomas C. (Thomas Cooke)
 Thomas Caldecot
-Thomas Campion
-Thomas Carlyle
 Thomas Carr
 Thomas Chandler
 Thomas Charles
@@ -35108,8 +34521,6 @@ Thomas D. (Thomas Darlington) ; Tower
 Thomas D. (Thomas Davis)
 Thomas D. (Thomas Day)
 Thomas D'Arcy
-Thomas De Quincey
-Thomas Dekker
 Thomas Dick
 Thomas Dove
 Thomas Dunn
@@ -35136,17 +34547,13 @@ Thomas Gwyn
 Thomas H.
 Thomas H. (Thomas Hamilton) ; Ormsbee
 Thomas Hall
-Thomas Hardy
 Thomas Hart
 Thomas Hawkes
 Thomas Henry
 Thomas Henry ; Barker
 Thomas Henry ; Moran
-Thomas Henry Huxley
 Thomas Herbert
-Thomas Heywood
 Thomas Hill
-Thomas Hobbes
 Thomas Hope
 Thomas Hungerford
 Thomas Hunt
@@ -35160,29 +34567,20 @@ Thomas L. (Thomas Leiper)
 Thomas Lambert
 Thomas Lindsay
 Thomas Little
-Thomas Lodge
 Thomas Love
-Thomas Love Peacock
 Thomas Lovell
 Thomas M.
 Thomas M. (Thomas Martin)
 Thomas Maitland ; Bolton
-Thomas Malory
 Thomas McKenny
-Thomas Middleton
-Thomas More
 Thomas Morison
 Thomas Morris
-Thomas Morton
-Thomas Nashe
 Thomas Nathaniel
 Thomas Nelson
 Thomas Ostenson
 Thomas P.
 Thomas P. ; Marcet
-Thomas Paine
 Thomas Peckett
-Thomas Peckett Prest
 Thomas Pelham
 Thomas Peter
 Thomas Proctor
@@ -35211,9 +34609,7 @@ Thomas Whitney
 Thomas William
 Thomas William Francis
 Thomas Wodehouse Legh
-Thomas Wyatt
 Thomason
-Thomas-Simon Gueullette
 Thomasson
 Thomas-Stanford
 Thomaz José de
@@ -35294,20 +34690,17 @@ Tinseau
 Tinsley
 Tiplady
 Tirso de
-Tirso de Molina
 Tischner
 Tissandier
 Tissot
 Tit
 Titchener
 Tito
-Tito Livio
 Titus
 Titus Maccius
 Tiuppa
 Tivadar
 Tjalling ; Halbertsma
-Tobias Smollett
 Tobin
 Tobler
 Toby A. ; Davis
@@ -35332,11 +34725,7 @@ Tolstoi
 Tolstoy
 Tom
 Tom R.
-Tom Taylor
 Tom W.
-TomÃ¡s de Iriarte
-TomÃ¡s GonzÃ¡lez
-TomÃ¡s Moro
 Tomás António
 Tomás de
 Tomás de ; Bretón de los Herreros
@@ -35377,7 +34766,6 @@ Törneroos
 Török
 Torpey
 Torquato
-Torquato Tasso
 Torr
 Torrence
 Torrey
@@ -35462,9 +34850,7 @@ Trinidad Bean & Elevator Company
 Trinity College (Dublin
 Trinity College (Randolph County
 Trinkler
-TristÃ¡n e Isolda
 Tristan
-Tristan CorbiÃ¨re
 Troll-Borostyání
 Trolle
 Trollope
@@ -35495,7 +34881,6 @@ Tschirch
 Tschudi
 Tuason
 Tubbs
-TucÃ­dides
 Tucher
 Tucic
 Tucker
@@ -35575,7 +34960,6 @@ Uccellini
 Uchard
 Udden
 Udo
-Ueda Akinari
 Ugo
 Uhland
 Uhle
@@ -35686,7 +35070,6 @@ Uppenborn
 Upright
 Upton
 Upton ; Williams
-Upton Sinclair
 Upward
 Urann
 Urban
@@ -35877,11 +35260,9 @@ Velvin
 Venable
 Venables
 Venier
-Ventura de la Vega
 Venture
 Vera
 Vera C. (Vera Charlesworth)
-VerÃ³nica Stigger
 Verde
 Verdier
 Vereshchagin
@@ -35902,7 +35283,6 @@ Verney Lovett ; Burton
 Vernon
 Vernon L.
 Vernon L. (Vernon Lyman)
-Vernon Lee
 Véron
 Verona
 Verra
@@ -35922,14 +35302,12 @@ Veth
 Veuillot
 Vèze
 Viana
-Viasa
 Vic (Victor Sargent)
 Vic ; Roberts
 Vicary
 Vicente
 Vicente ; Mitre
 Vicente ; Sastre
-Vicente Blasco IbÃ¡Ã±ez
 Vicente de Almeida de
 Vicente Fidel ; Lacasa
 Vickers
@@ -35943,7 +35321,6 @@ Víctor África
 Victor Alexander
 Victor Alfred
 Victor Alvin
-Victor Hugo
 Víctor José
 Victor Maximilian
 Victor Oscar
@@ -36022,7 +35399,6 @@ Virgil D. (Virgil Dewey)
 Virgil D. (Virgil Dillin)
 Virgil F.
 Virgil M. (Virgil McClure)
-Virgilio
 Virginia
 Virginia ; Woolf
 Virginia C.
@@ -36436,7 +35812,6 @@ Walshe
 Walt
 Walt ; Gilchrist
 Walt ; Richmond
-Walt Whitman
 Waltari
 Walter
 Walter ; Aesop
@@ -36466,7 +35841,6 @@ Walter Crum
 Walter D.
 Walter Dalrymple Maitland
 Walter Davis ; Baker
-Walter de la Mare
 Walter E. (Walter Edward)
 Walter E. ; Baserga
 Walter F.
@@ -36504,7 +35878,6 @@ Walter M. (Walter Matthew) ; Calvert
 Walter Moore
 Walter Noble
 Walter P. (Walter Penn) ; Vorhies
-Walter Pater
 Walter Phelps
 Walter Poole
 Walter Prichard
@@ -36539,7 +35912,6 @@ Wanchun
 Wanda
 Wandrei
 Wang
-Wang Wei
 Wann
 Wannamaker
 Warbasse
@@ -36586,7 +35958,6 @@ Washington
 Washington ; Hale
 Washington Baker ; Hulbert
 Washington Bryan ; Crumpton
-Washington Irving
 Wasielewski
 Wason
 Wassermann
@@ -36681,7 +36052,6 @@ Welton
 Wemyss
 Wen
 Wenceslao
-Wenceslao Ayguals de Izco
 Wenceslau de
 Wendela
 Wenfang
@@ -36865,8 +36235,6 @@ Wilhelm ; Vischer
 Wilhelm ; Vosseler
 Wilhelm Alfred
 Wilhelm Gottlieb
-Wilhelm Grimm
-Wilhelm Hauff
 Wilhelm Heinrich
 Wilhelm Joseph von
 Wilhelm Max
@@ -36882,7 +36250,6 @@ Wilkes
 Wilkie
 Wilkie ; Dickens
 Wilkie ; Gaskell
-Wilkie Collins
 Wilkins
 Wilkinson
 Wilkuna
@@ -36982,7 +36349,6 @@ William B. ; Bouvé
 William Barclay
 William Barrett
 William Barry
-William Beckford
 William Bell
 William Benjamin
 William Bennett
@@ -36990,7 +36356,6 @@ William Bentinck
 William Berryman
 William Berryman ; Osborn
 William Bigelow
-William Blake
 William Bodham
 William Bond
 William Bower
@@ -37018,7 +36383,6 @@ William Clark
 William Cleaver
 William Clinton
 William Colby
-William Congreve
 William Constantine ; Scoville
 William Cornwallis
 William Cowper
@@ -37038,7 +36402,6 @@ William De Witt
 William de Wiveleslie
 William Dean
 William Dean ; Bangs
-William Dean Howells
 William Denison
 William Diller
 William Dixon
@@ -37129,7 +36492,6 @@ William Henry Oliphant
 William Hepworth
 William Hetherington
 William Hickling
-William Hickling Prescott
 William Hill
 William Hodgson
 William Holden
@@ -37164,7 +36526,6 @@ William L. (William Le Roy)
 William L. (William Leete)
 William L. (William Leonard)
 William L. (William Lewis)
-William Langland
 William Laughlin ; Weise
 William Lee
 William Lewis
@@ -37181,14 +36542,12 @@ William M. (William Mackergo)
 William MacLeod
 William Makepeace
 William Makepeace ; Dickens
-William Makepeace Thackeray
 William Malone
 William Martin
 William Merriam
 William Michael
 William Milligan
 William Montgomery
-William Morris
 William Morton
 William Murray
 William N. (William Nelson)
@@ -37198,7 +36557,6 @@ William O. (William Otis)
 William O. S.
 William O'Connor
 William Oliver
-William Ospina
 William P.
 William P. (William Pendleton)
 William P. (William Peterfield)
@@ -37238,7 +36596,6 @@ William S. (William Swan)
 William Scott
 William Scrugham
 William Seymour
-William Shakespeare
 William Sloane
 William Sowden ; Hendrick
 William Stanhope
@@ -37275,7 +36632,6 @@ William Wells
 William Wetmore
 William Whatley
 William Wilson
-William Wordsworth
 William Wylie
 William Young
 William Younger
@@ -37414,7 +36770,6 @@ Wolff
 Wolfgang
 Wolfgang Amadeus
 Wolfram
-Wolfram von Eschenbach
 Woll
 Wollaston
 Wollheim
@@ -37484,7 +36839,6 @@ Writers' Program of the Work Projects Administration in the State of Arizona
 Wrong
 Wroth
 Wu
-Wu Cheng'en
 Wugenzi
 Wuhangyeke
 Wundt
@@ -37518,7 +36872,6 @@ X
 X.-B. (Xavier-Boniface)
 Xavier
 Xavier de
-Xavier Villaurrutia
 Xenophon
 Xenophon ; Witt
 Xi
@@ -37548,7 +36901,6 @@ Xuan
 Xueqiaozhuren
 Xueqin
 Xun
-Xunzi
 Y. (Yrjö)
 Yacki
 Yaco
@@ -37557,7 +36909,6 @@ Yajñavalkya
 Yakov Aleksandrovich
 Yale
 Yale University. Divinity School
-Yamamoto Tsunetomo
 Yamanaka & Company
 Yan
 Yan Phou
@@ -37670,7 +37021,6 @@ Zäunemann
 Zavie
 Zayas y Sotomayor
 Zealia B. (Zealia Brown)
-Zeami
 Zebina
 Zech
 Zeigler
@@ -37702,7 +37052,6 @@ Zhongjing
 Zhongshu
 Zhou
 Zhu
-Zhu Xi
 Zhuang
 Zhuangzi
 Zhuge
