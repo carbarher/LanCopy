@@ -22,7 +22,6 @@ if exist "%CD%\error_log.txt" (
 )
 
 if not "%RC%"=="0" (
-    pause
     exit /b %RC%
 )
 
