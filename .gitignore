@@ -37,3 +37,4 @@ scripts/goodreads_bbe_books.csv
 _verify_*/
 _buildcheck/
 _build_out_import_tool/
+_flat_build/
