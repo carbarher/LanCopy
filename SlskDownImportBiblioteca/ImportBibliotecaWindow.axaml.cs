@@ -338,6 +338,12 @@ public partial class ImportBibliotecaWindow : Window
         public Task<ConversionResult> EnqueueCalibreTxtAsync(string inputPath, string outputDir, CancellationToken ct = default) =>
             _calibre.EnqueueConversionAsync(inputPath, outputDir, ct);
 
+        public bool ShouldImportByPublicDomainPolicy(string destFileName, string? sourcePathOrEntry, out string? reason)
+        {
+            reason = null;
+            return true;
+        }
+
         /// <summary>App dedicada: sin detector ONNX; aplica solo tamaño y filtros de calidad.</summary>
         public bool ShouldEnqueueTxtForImport(string destFileName, string destFullPath, long sizeBytes, bool qualityScan)
         {

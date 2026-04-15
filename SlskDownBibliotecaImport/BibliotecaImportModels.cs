@@ -61,6 +61,7 @@ public sealed class ImportRunReport
     public int SkippedExistingFileName { get; set; }
     public int SkippedQuickSigInDest { get; set; }
     public int SkippedContentHash { get; set; }
+    public int SkippedByPublicDomainPolicy { get; set; }
     public int SkippedCheckpointResume { get; set; }
     public int DroppedDuplicateDestPrepass { get; set; }
     public int DroppedDuplicateQuickSigPrepass { get; set; }

@@ -24,6 +24,7 @@ public interface IBibliotecaImportHost
     /// <summary>False en la herramienta independiente: <see cref="RunPipelineFullVerifyAsync"/> no aplica.</summary>
     bool SupportsPipelineFullVerify { get; }
     Task<ConversionResult> EnqueueCalibreTxtAsync(string inputPath, string outputDir, CancellationToken ct = default);
+    bool ShouldImportByPublicDomainPolicy(string destFileName, string? sourcePathOrEntry, out string? reason);
     bool ShouldEnqueueTxtForImport(string destFileName, string destFullPath, long sizeBytes, bool qualityScan);
     void NotifyImportCompleted(int copied);
     Task RebuildLibraryIndexIfNeededAsync(string importDest, CancellationToken ct);

@@ -11,8 +11,9 @@ using System.Text.Json;
 using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
-using SharpCompress.Archives.Rar;
+using SharpCompress.Archives;
 using SharpCompress.Common;
+using SharpCompress.Readers;
 
 namespace SlskDownBibliotecaImport;
 
@@ -119,10 +120,19 @@ public static class BibliotecaImportFilesystem
                     using var s = e?.Open();
                     return s != null ? ComputeStreamContentHashHex(s) : null;
                 }
-                using var rar = RarArchive.Open(c.ArchivePath);
-                var re = rar.Entries.FirstOrDefault(x => string.Equals(x.Key, c.EntryName, StringComparison.OrdinalIgnoreCase));
-                using var rs = re?.OpenEntryStream();
-                return rs != null ? ComputeStreamContentHashHex(rs) : null;
+                using (var stream = File.OpenRead(c.ArchivePath))
+                using (var reader = ReaderFactory.OpenReader(stream))
+                {
+                    while (reader.MoveToNextEntry())
+                    {
+                        if (!reader.Entry.IsDirectory && string.Equals(reader.Entry.Key, c.EntryName, StringComparison.OrdinalIgnoreCase))
+                        {
+                            using var rs = reader.OpenEntryStream();
+                            return ComputeStreamContentHashHex(rs);
+                        }
+                    }
+                }
+                return null;
             }
             using var fs = File.OpenRead(c.FilePath);
             return ComputeStreamContentHashHex(fs);
@@ -145,13 +155,21 @@ public static class BibliotecaImportFilesystem
         }
         else
         {
-            using var archive = RarArchive.Open(candidate.ArchivePath);
-            var entry = archive.Entries.FirstOrDefault(e =>
-                string.Equals(e.Key, candidate.EntryName, StringComparison.OrdinalIgnoreCase));
-            if (entry == null) throw new InvalidOperationException($"Entrada no encontrada: {candidate.EntryName}");
-            using var src = entry.OpenEntryStream();
-            using var dst = File.Create(destFile);
-            src.CopyTo(dst);
+            using var stream = File.OpenRead(candidate.ArchivePath);
+            using var reader = ReaderFactory.OpenReader(stream);
+            bool found = false;
+            while (reader.MoveToNextEntry())
+            {
+                if (!reader.Entry.IsDirectory && string.Equals(reader.Entry.Key, candidate.EntryName, StringComparison.OrdinalIgnoreCase))
+                {
+                    using var src = reader.OpenEntryStream();
+                    using var dst = File.Create(destFile);
+                    src.CopyTo(dst);
+                    found = true;
+                    break;
+                }
+            }
+            if (!found) throw new InvalidOperationException($"Entrada no encontrada: {candidate.EntryName}");
         }
     }
 
@@ -542,17 +560,21 @@ public static class BibliotecaImportFilesystem
                         var rarName = Path.GetFileName(file);
                         if (s_rxRarMultiVol.IsMatch(rarName))
                         { Interlocked.Increment(ref rarMultiVol); return; }
-                        using var rar = RarArchive.Open(file);
-                        foreach (var entry in rar.Entries)
+                        using (var stream = File.OpenRead(file))
+                        using (var reader = ReaderFactory.OpenReader(stream))
                         {
-                            if (entry.IsDirectory || entry.Key == null) continue;
-                            if (entry.Size == 0) continue;
-                            var entryExt = Path.GetExtension(entry.Key);
-                            if (!allowedExts.Contains(entryExt)) continue;
-                            if (minBytes > 0 && entry.Size < minBytes) { Interlocked.Increment(ref belowMin); continue; }
-                            var destName = NormalizeImportAuthorName(BuildArchiveDestName(file, entry.Key, entryExt));
-                            archiveCandidates.Add(new ImportCandidate { ArchivePath = file, EntryName = entry.Key, DestFileName = destName, SizeBytes = entry.Size });
-                            Interlocked.Increment(ref archiveAdded);
+                            while (reader.MoveToNextEntry())
+                            {
+                                var entry = reader.Entry;
+                                if (entry.IsDirectory || entry.Key == null) continue;
+                                if (entry.Size == 0) continue;
+                                var entryExt = Path.GetExtension(entry.Key);
+                                if (!allowedExts.Contains(entryExt)) continue;
+                                if (minBytes > 0 && entry.Size < minBytes) { Interlocked.Increment(ref belowMin); continue; }
+                                var destName = NormalizeImportAuthorName(BuildArchiveDestName(file, entry.Key, entryExt));
+                                archiveCandidates.Add(new ImportCandidate { ArchivePath = file, EntryName = entry.Key, DestFileName = destName, SizeBytes = entry.Size });
+                                Interlocked.Increment(ref archiveAdded);
+                            }
                         }
                     }
                     catch (MultiVolumeExtractionException)

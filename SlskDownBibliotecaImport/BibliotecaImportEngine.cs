@@ -60,7 +60,7 @@ public static class BibliotecaImportEngine
         host.Log("");
 
         int copied = 0, skipped = 0, errors = 0, txtOk = 0, txtFail = 0, extracted = 0;
-        int skipExistingFile = 0, skipQuickSigDest = 0, skipContentHash = 0, copyIoRetries = 0;
+        int skipExistingFile = 0, skipQuickSigDest = 0, skipContentHash = 0, skipPdPolicy = 0, copyIoRetries = 0;
         int resumeFromCheckpoint = 0, droppedQuickSigPrepass = 0;
         long copiedBytes = 0;
         var copiedPaths = new System.Collections.Concurrent.ConcurrentBag<string>();
@@ -140,9 +140,9 @@ public static class BibliotecaImportEngine
             int archivedN = 0;
             foreach (var c in candidates) if (c.IsArchived) archivedN++;
             host.Log($"📋 {candidates.Count} candidatos ({archivedN} en ZIP/RAR)");
-            if (scan.RarMultiVolume > 0)  host.Log($"   ⚠️ {scan.RarMultiVolume} RAR multi-volumen ignorados (requieren todos los volúmenes)");
-            if (scan.ZipCorrupted > 0)    host.Log($"   ⚠️ {scan.ZipCorrupted} ZIP/RAR corruptos o protegidos ignorados");
-            if (scan.BelowMinSize > 0)    host.Log($"   ⚠️ {scan.BelowMinSize} archivos descartados por tamaño mínimo");
+            if (scan.RarMultiVolume > 0) host.Log($"   ⚠️ {scan.RarMultiVolume} RAR multi-volumen ignorados (requieren todos los volúmenes)");
+            if (scan.ZipCorrupted > 0) host.Log($"   ⚠️ {scan.ZipCorrupted} ZIP/RAR corruptos o protegidos ignorados");
+            if (scan.BelowMinSize > 0) host.Log($"   ⚠️ {scan.BelowMinSize} archivos descartados por tamaño mínimo");
 
             if (candidates.Count == 0)
             {
@@ -157,10 +157,10 @@ public static class BibliotecaImportEngine
                 var n = candidates.Count;
                 var hasArchives = candidates.Exists(c => c.IsArchived);
                 // Base: respeta preferencia del usuario como "mínimo", pero auto-eleva para lotes grandes.
-                o.FastMode   = o.FastMode || n >= 8000;
-                o.QuickSig   = o.QuickSig || n >= 2500;
+                o.FastMode = o.FastMode || n >= 8000;
+                o.QuickSig = o.QuickSig || n >= 2500;
                 o.MinimalLog = o.MinimalLog || n >= 3000;
-                o.WarmCache  = true;
+                o.WarmCache = true;
                 // hashDedup fuerte solo en lotes pequeños/medianos y cuando no hay fast mode (salvo forzado)
                 if (!o.HashDedupForce)
                     o.HashDedup = o.HashDedup && !o.FastMode && n <= 20000;
@@ -210,8 +210,8 @@ public static class BibliotecaImportEngine
                     var ext2 = Path.GetExtension(c.DestFileName);
                     byExt[ext2] = byExt.TryGetValue(ext2, out var n) ? n + 1 : 1;
                 }
-                var kvps = new System.Collections.Generic.List<System.Collections.Generic.KeyValuePair<string,int>>(byExt);
-                kvps.Sort(static (a,b) => b.Value.CompareTo(a.Value));
+                var kvps = new System.Collections.Generic.List<System.Collections.Generic.KeyValuePair<string, int>>(byExt);
+                kvps.Sort(static (a, b) => b.Value.CompareTo(a.Value));
                 host.Log("📊 Desglose por formato:");
                 foreach (var kv in kvps)
                     host.Log($"   {kv.Key.TrimStart('.')} → {kv.Value}");
@@ -353,211 +353,227 @@ public static class BibliotecaImportEngine
             var swCopyPhase = System.Diagnostics.Stopwatch.StartNew();
             await Parallel.ForEachAsync(candidates, parallelImport, async (cap, parallelCt) =>
             {
-                    var destFileName = cap.DestFileName;
-                    var destFile     = Path.Combine(importDest, destFileName);
-                    var srcPathForHeat = cap.IsArchived ? cap.ArchivePath : cap.FilePath;
-                    var srcTop = BibliotecaImportFilesystem.GetSourceTopFolder(importSrc, srcPathForHeat);
-                    sourceHeatmap.AddOrUpdate(srcTop, 1, static (_, prev) => prev + 1);
+                var destFileName = cap.DestFileName;
+                var destFile = Path.Combine(importDest, destFileName);
+                var srcPathForHeat = cap.IsArchived ? cap.ArchivePath : cap.FilePath;
+                var srcTop = BibliotecaImportFilesystem.GetSourceTopFolder(importSrc, srcPathForHeat);
+                sourceHeatmap.AddOrUpdate(srcTop, 1, static (_, prev) => prev + 1);
 
-                    if (o.AutoPause)
+                if (o.AutoPause)
+                {
+                    var activeDl = host.ActiveDownloads;
+                    if (activeDl >= 3)
+                        await Task.Delay(220, parallelCt).ConfigureAwait(false);
+                }
+
+                var sourcePathOrEntry = cap.IsArchived
+                    ? Path.Combine(cap.ArchivePath, cap.EntryName)
+                    : cap.FilePath;
+
+                if (!host.ShouldImportByPublicDomainPolicy(destFileName, sourcePathOrEntry, out var pdReason))
+                {
+                    var pdSkipNum = System.Threading.Interlocked.Increment(ref skipPdPolicy);
+                    System.Threading.Interlocked.Increment(ref skipped);
+                    if (!o.MinimalLog && (pdSkipNum <= 20 || pdSkipNum % 200 == 0))
                     {
-                        var activeDl = host.ActiveDownloads;
-                        if (activeDl >= 3)
-                            await Task.Delay(220, parallelCt).ConfigureAwait(false);
+                        var suffix = string.IsNullOrWhiteSpace(pdReason) ? string.Empty : $" — {pdReason}";
+                        host.Log($"  🚫 [PD pre-import] omitido #{pdSkipNum:N0}: {destFileName}{suffix}");
                     }
+                    goto UpdateUi;
+                }
 
-                    // Skip duplicado por nombre
-                    if (o.SkipDup && File.Exists(destFile))
+                // Skip duplicado por nombre
+                if (o.SkipDup && File.Exists(destFile))
+                {
+                    System.Threading.Interlocked.Increment(ref skipExistingFile);
+                    System.Threading.Interlocked.Increment(ref skipped);
+                    goto UpdateUi;
+                }
+
+                // Skip duplicado por firma rápida (size + nombre normalizado sin extensión)
+                if (o.QuickSig && cap.SizeBytes > 0)
+                {
+                    var qsig = BibliotecaImportFilesystem.BuildQuickImportSignature(destFileName, cap.SizeBytes);
+                    if (existingQuickSigs.ContainsKey(qsig))
                     {
-                        System.Threading.Interlocked.Increment(ref skipExistingFile);
+                        System.Threading.Interlocked.Increment(ref skipQuickSigDest);
                         System.Threading.Interlocked.Increment(ref skipped);
                         goto UpdateUi;
                     }
+                }
 
-                    // Skip duplicado por firma rápida (size + nombre normalizado sin extensión)
-                    if (o.QuickSig && cap.SizeBytes > 0)
+                // Skip duplicado por hash (precalculado o on-demand)
+                if (o.HashDedup && !existingHashes.IsEmpty)
+                {
+                    var srcKey = BibliotecaImportFilesystem.CandidateContentDedupKey(cap);
+                    string? srcHash = null;
+                    if (srcHashMap.TryGetValue(srcKey, out var precalc))
+                        srcHash = precalc;
+                    else
                     {
-                        var qsig = BibliotecaImportFilesystem.BuildQuickImportSignature(destFileName, cap.SizeBytes);
-                        if (existingQuickSigs.ContainsKey(qsig))
-                        {
-                            System.Threading.Interlocked.Increment(ref skipQuickSigDest);
-                            System.Threading.Interlocked.Increment(ref skipped);
-                            goto UpdateUi;
-                        }
+                        srcHash = BibliotecaImportFilesystem.TryComputeCandidateHash(cap);
+                        srcHashMap.TryAdd(srcKey, srcHash);
                     }
-
-                    // Skip duplicado por hash (precalculado o on-demand)
-                    if (o.HashDedup && !existingHashes.IsEmpty)
+                    if (srcHash != null && existingHashes.ContainsKey(srcHash))
                     {
-                        var srcKey = BibliotecaImportFilesystem.CandidateContentDedupKey(cap);
-                        string? srcHash = null;
-                        if (srcHashMap.TryGetValue(srcKey, out var precalc))
-                            srcHash = precalc;
-                        else
-                        {
-                            srcHash = BibliotecaImportFilesystem.TryComputeCandidateHash(cap);
-                            srcHashMap.TryAdd(srcKey, srcHash);
-                        }
-                        if (srcHash != null && existingHashes.ContainsKey(srcHash))
-                        {
-                            System.Threading.Interlocked.Increment(ref skipContentHash);
-                            System.Threading.Interlocked.Increment(ref skipped);
-                            goto UpdateUi;
-                        }
+                        System.Threading.Interlocked.Increment(ref skipContentHash);
+                        System.Threading.Interlocked.Increment(ref skipped);
+                        goto UpdateUi;
                     }
+                }
 
-                    // Resolver conflicto de nombre (lock dedicado, más corto)
-                    lock (nameConflictLock)
-                    {
-                        if (File.Exists(destFile))
-                            destFile = BibliotecaImportFilesystem.ResolveNameConflict(importDest, destFileName);
-                    }
+                // Resolver conflicto de nombre (lock dedicado, más corto)
+                lock (nameConflictLock)
+                {
+                    if (File.Exists(destFile))
+                        destFile = BibliotecaImportFilesystem.ResolveNameConflict(importDest, destFileName);
+                }
 
-                    try
+                try
+                {
+                    if (cap.IsArchived)
                     {
-                        if (cap.IsArchived)
+                        var archSem = archiveExtractLocks.GetOrAdd(cap.ArchivePath, _ => new System.Threading.SemaphoreSlim(1, 1));
+                        await archSem.WaitAsync(parallelCt).ConfigureAwait(false);
+                        try
                         {
-                            var archSem = archiveExtractLocks.GetOrAdd(cap.ArchivePath, _ => new System.Threading.SemaphoreSlim(1, 1));
-                            await archSem.WaitAsync(parallelCt).ConfigureAwait(false);
+                            BibliotecaImportFilesystem.ExtractFromArchive(cap, destFile);
+                            System.Threading.Interlocked.Increment(ref extracted);
+                        }
+                        finally { archSem.Release(); }
+                    }
+                    else
+                    {
+                        const int maxCopyAttempts = 3;
+                        bool copyOk = false;
+                        for (int attempt = 0; attempt < maxCopyAttempts && !copyOk; attempt++)
+                        {
                             try
                             {
-                                BibliotecaImportFilesystem.ExtractFromArchive(cap, destFile);
-                                System.Threading.Interlocked.Increment(ref extracted);
+                                File.Copy(cap.FilePath, destFile, overwrite: false);
+                                copyOk = true;
                             }
-                            finally { archSem.Release(); }
-                        }
-                        else
-                        {
-                            const int maxCopyAttempts = 3;
-                            bool copyOk = false;
-                            for (int attempt = 0; attempt < maxCopyAttempts && !copyOk; attempt++)
+                            catch (IOException) when (attempt < maxCopyAttempts - 1)
                             {
-                                try
+                                System.Threading.Interlocked.Increment(ref copyIoRetries);
+                                lock (nameConflictLock)
                                 {
-                                    File.Copy(cap.FilePath, destFile, overwrite: false);
-                                    copyOk = true;
-                                }
-                                catch (IOException) when (attempt < maxCopyAttempts - 1)
-                                {
-                                    System.Threading.Interlocked.Increment(ref copyIoRetries);
-                                    lock (nameConflictLock)
-                                    {
-                                        destFile = BibliotecaImportFilesystem.ResolveNameConflict(importDest, Path.GetFileName(destFile));
-                                    }
+                                    destFile = BibliotecaImportFilesystem.ResolveNameConflict(importDest, Path.GetFileName(destFile));
                                 }
                             }
-                            if (!copyOk)
-                                throw new IOException("No se pudo copiar tras reintentos de I/O.");
                         }
-                        var copyNum = System.Threading.Interlocked.Increment(ref copied);
-                        System.Threading.Interlocked.Add(ref copiedBytes, cap.SizeBytes);
-                        copiedPaths.Add(destFile);
-                        if (o.QualityScan)
-                        {
-                            bool suspicious =
-                                cap.SizeBytes > 0 && cap.SizeBytes < 32 * 1024 ||
-                                destFileName.Contains("unknown", StringComparison.OrdinalIgnoreCase) ||
-                                CountUnderscoreOrDash(destFileName) > 16;
-                            if (suspicious)
-                            {
-                                var sN = System.Threading.Interlocked.Increment(ref suspiciousCount);
-                                if (!o.MinimalLog && (sN <= 10 || sN % 200 == 0))
-                                    host.Log($"  ⚠️ Calidad: candidato sospechoso (#{sN})");
-                            }
-                        }
-                        if (!o.MinimalLog && (copyNum <= 30 || copyNum % 150 == 0))
-                            host.Log($"  ✅ Copia OK #{copyNum:N0}{(cap.IsArchived ? " (desde ZIP/RAR)" : "")}");
-
-                        // checkpoint: snapshot infrecuente para minimizar I/O
-                        lock (importDone)
-                        {
-                            importDone.Add(destFileName);
-                        }
-                        if (o.QuickSig && cap.SizeBytes > 0)
-                            existingQuickSigs.TryAdd(BibliotecaImportFilesystem.BuildQuickImportSignature(destFileName, cap.SizeBytes), 0);
-                        var shouldCheckpointByCount = (System.Threading.Interlocked.Increment(ref checkpointCounter) % checkpointStride) == 0;
-                        var nowCpTicks = DateTime.UtcNow.Ticks;
-                        var shouldCheckpointByTime = (nowCpTicks - System.Threading.Volatile.Read(ref lastCheckpointTicks)) > TimeSpan.FromSeconds(15).Ticks;
-                        lock (checkpointIoLock)
-                        {
-                            BibliotecaImportFilesystem.AppendImportCheckpointDelta(importCheckpointDeltaPath, destFileName);
-                            if (shouldCheckpointByCount || shouldCheckpointByTime)
-                            {
-                                BibliotecaImportFilesystem.MergeImportCheckpointDeltaIntoMain(importCheckpointPath, importCheckpointDeltaPath);
-                                System.Threading.Volatile.Write(ref lastCheckpointTicks, nowCpTicks);
-                            }
-                        }
-
-                        // Generar TXT si está habilitado (solo si pasa tamaño ≥200 KB, español y calidad)
-                        if (o.GenTxt && host.CalibreAvailable)
-                        {
-                            var ext = Path.GetExtension(destFile);
-                            if (!ext.Equals(".txt", StringComparison.OrdinalIgnoreCase) &&
-                                !ext.Equals(".text", StringComparison.OrdinalIgnoreCase) &&
-                                host.ShouldEnqueueTxtForImport(destFileName, destFile, cap.SizeBytes, o.QualityScan))
-                            {
-                                try
-                                {
-                                    var r = await host.EnqueueCalibreTxtAsync(destFile, importDest, parallelCt).ConfigureAwait(false);
-                                    if (r.Success && !r.Skipped) System.Threading.Interlocked.Increment(ref txtOk);
-                                    else if (!r.Skipped) System.Threading.Interlocked.Increment(ref txtFail);
-                                }
-                                catch { System.Threading.Interlocked.Increment(ref txtFail); }
-                            }
-                        }
+                        if (!copyOk)
+                            throw new IOException("No se pudo copiar tras reintentos de I/O.");
                     }
-                    catch (OperationCanceledException) { throw; }
-                    catch (Exception ex)
+                    var copyNum = System.Threading.Interlocked.Increment(ref copied);
+                    System.Threading.Interlocked.Add(ref copiedBytes, cap.SizeBytes);
+                    copiedPaths.Add(destFile);
+                    if (o.QualityScan)
                     {
-                        System.Threading.Interlocked.Increment(ref errors);
-                        failedCandidates.Add(cap);
-                        if (errorSamples.Count < 20)
-                            errorSamples.Enqueue($"{destFileName}: {ex.Message}");
-                        host.Log($"  ❌ Fallo #{System.Threading.Volatile.Read(ref errors):N0}: {ex.Message}");
+                        bool suspicious =
+                            cap.SizeBytes > 0 && cap.SizeBytes < 32 * 1024 ||
+                            destFileName.Contains("unknown", StringComparison.OrdinalIgnoreCase) ||
+                            CountUnderscoreOrDash(destFileName) > 16;
+                        if (suspicious)
+                        {
+                            var sN = System.Threading.Interlocked.Increment(ref suspiciousCount);
+                            if (!o.MinimalLog && (sN <= 10 || sN % 200 == 0))
+                                host.Log($"  ⚠️ Calidad: candidato sospechoso (#{sN})");
+                        }
+                    }
+                    if (!o.MinimalLog && (copyNum <= 30 || copyNum % 150 == 0))
+                        host.Log($"  ✅ Copia OK #{copyNum:N0}{(cap.IsArchived ? " (desde ZIP/RAR)" : "")}");
+
+                    // checkpoint: snapshot infrecuente para minimizar I/O
+                    lock (importDone)
+                    {
+                        importDone.Add(destFileName);
+                    }
+                    if (o.QuickSig && cap.SizeBytes > 0)
+                        existingQuickSigs.TryAdd(BibliotecaImportFilesystem.BuildQuickImportSignature(destFileName, cap.SizeBytes), 0);
+                    var shouldCheckpointByCount = (System.Threading.Interlocked.Increment(ref checkpointCounter) % checkpointStride) == 0;
+                    var nowCpTicks = DateTime.UtcNow.Ticks;
+                    var shouldCheckpointByTime = (nowCpTicks - System.Threading.Volatile.Read(ref lastCheckpointTicks)) > TimeSpan.FromSeconds(15).Ticks;
+                    lock (checkpointIoLock)
+                    {
+                        BibliotecaImportFilesystem.AppendImportCheckpointDelta(importCheckpointDeltaPath, destFileName);
+                        if (shouldCheckpointByCount || shouldCheckpointByTime)
+                        {
+                            BibliotecaImportFilesystem.MergeImportCheckpointDeltaIntoMain(importCheckpointPath, importCheckpointDeltaPath);
+                            System.Threading.Volatile.Write(ref lastCheckpointTicks, nowCpTicks);
+                        }
                     }
 
-                    UpdateUi:
-                    var curIdx = System.Threading.Interlocked.Increment(ref idx);
-                    var snapCopied = System.Threading.Volatile.Read(ref copied);
-                    var snapSkipped = System.Threading.Volatile.Read(ref skipped);
-                    var snapErrors = System.Threading.Volatile.Read(ref errors);
-                    var snapExtracted = System.Threading.Volatile.Read(ref extracted);
-                    var snapTxtOk = System.Threading.Volatile.Read(ref txtOk);
-                    var snapTxtFail = System.Threading.Volatile.Read(ref txtFail);
-                    bool pushUi = curIdx == 1 || curIdx >= candidates.Count || (curIdx % 12 == 0);
-                    var nowUiTicks = DateTime.UtcNow.Ticks;
-                    if (pushUi && nowUiTicks - System.Threading.Volatile.Read(ref lastUiPushTicks) < TimeSpan.FromMilliseconds(250).Ticks)
-                        pushUi = false;
-                    if (pushUi)
+                    // Generar TXT si está habilitado (solo si pasa tamaño ≥200 KB, español y calidad)
+                    if (o.GenTxt && host.CalibreAvailable)
                     {
-                        string etaStr = "";
-                            string speedStr = "";
-                        if (curIdx >= 10 && importSw.Elapsed.TotalSeconds > 1)
+                        var ext = Path.GetExtension(destFile);
+                        if (!ext.Equals(".txt", StringComparison.OrdinalIgnoreCase) &&
+                            !ext.Equals(".text", StringComparison.OrdinalIgnoreCase) &&
+                            host.ShouldEnqueueTxtForImport(destFileName, destFile, cap.SizeBytes, o.QualityScan))
                         {
-                            var secPerFile = importSw.Elapsed.TotalSeconds / curIdx;
-                            var remaining  = (candidates.Count - curIdx) * secPerFile;
-                            etaStr = remaining >= 60
-                                ? $" · ETA {(int)(remaining / 60)}m{(int)(remaining % 60):D2}s"
-                                : $" · ETA {(int)remaining}s";
-                                var bps = System.Threading.Volatile.Read(ref copiedBytes) / importSw.Elapsed.TotalSeconds;
-                                speedStr = bps > 0 ? $" · {(bps / (1024 * 1024)):F1} MB/s" : "";
+                            try
+                            {
+                                var r = await host.EnqueueCalibreTxtAsync(destFile, importDest, parallelCt).ConfigureAwait(false);
+                                if (r.Success && !r.Skipped) System.Threading.Interlocked.Increment(ref txtOk);
+                                else if (!r.Skipped) System.Threading.Interlocked.Increment(ref txtFail);
+                            }
+                            catch { System.Threading.Interlocked.Increment(ref txtFail); }
                         }
-                        var pct = candidates.Count > 0 ? 100.0 * curIdx / candidates.Count : 0d;
-                        var logTime = DateTime.Now.ToString("HH:mm:ss");
-                        var txtPart = (o.GenTxt && host.CalibreAvailable)
-                            ? $" · TXT ok {snapTxtOk:N0} / fallo {snapTxtFail:N0}"
-                            : "";
-                        host.Log(
-                            $"[{logTime}] Avance {curIdx:N0}/{candidates.Count:N0} ({pct:F1}%) · " +
-                            $"copiados {snapCopied:N0} · omitidos {snapSkipped:N0} · err {snapErrors:N0} · ZIP/RAR {snapExtracted:N0}{txtPart}{etaStr}{speedStr} · workers={workerCount}");
-                        host.PostToUi(() =>
-                        {
-                            ui.SetProgressValue(curIdx);
-                            ui.SetStatus($"[{curIdx}/{candidates.Count}] {snapCopied} copiados · {snapSkipped} dup · {snapErrors} err{etaStr}{speedStr}");
-                            ui.SetPerf($"workers={workerCount} · done={curIdx}/{candidates.Count} · copied={snapCopied} · skipped={snapSkipped} · err={snapErrors}{speedStr}");
-                        });
-                            System.Threading.Volatile.Write(ref lastUiPushTicks, nowUiTicks);
                     }
+                }
+                catch (OperationCanceledException) { throw; }
+                catch (Exception ex)
+                {
+                    System.Threading.Interlocked.Increment(ref errors);
+                    failedCandidates.Add(cap);
+                    if (errorSamples.Count < 20)
+                        errorSamples.Enqueue($"{destFileName}: {ex.Message}");
+                    host.Log($"  ❌ Fallo #{System.Threading.Volatile.Read(ref errors):N0}: {ex.Message}");
+                }
+
+            UpdateUi:
+                var curIdx = System.Threading.Interlocked.Increment(ref idx);
+                var snapCopied = System.Threading.Volatile.Read(ref copied);
+                var snapSkipped = System.Threading.Volatile.Read(ref skipped);
+                var snapErrors = System.Threading.Volatile.Read(ref errors);
+                var snapExtracted = System.Threading.Volatile.Read(ref extracted);
+                var snapTxtOk = System.Threading.Volatile.Read(ref txtOk);
+                var snapTxtFail = System.Threading.Volatile.Read(ref txtFail);
+                bool pushUi = curIdx == 1 || curIdx >= candidates.Count || (curIdx % 12 == 0);
+                var nowUiTicks = DateTime.UtcNow.Ticks;
+                if (pushUi && nowUiTicks - System.Threading.Volatile.Read(ref lastUiPushTicks) < TimeSpan.FromMilliseconds(250).Ticks)
+                    pushUi = false;
+                if (pushUi)
+                {
+                    string etaStr = "";
+                    string speedStr = "";
+                    if (curIdx >= 10 && importSw.Elapsed.TotalSeconds > 1)
+                    {
+                        var secPerFile = importSw.Elapsed.TotalSeconds / curIdx;
+                        var remaining = (candidates.Count - curIdx) * secPerFile;
+                        etaStr = remaining >= 60
+                            ? $" · ETA {(int)(remaining / 60)}m{(int)(remaining % 60):D2}s"
+                            : $" · ETA {(int)remaining}s";
+                        var bps = System.Threading.Volatile.Read(ref copiedBytes) / importSw.Elapsed.TotalSeconds;
+                        speedStr = bps > 0 ? $" · {(bps / (1024 * 1024)):F1} MB/s" : "";
+                    }
+                    var pct = candidates.Count > 0 ? 100.0 * curIdx / candidates.Count : 0d;
+                    var logTime = DateTime.Now.ToString("HH:mm:ss");
+                    var txtPart = (o.GenTxt && host.CalibreAvailable)
+                        ? $" · TXT ok {snapTxtOk:N0} / fallo {snapTxtFail:N0}"
+                        : "";
+                    host.Log(
+                        $"[{logTime}] Avance {curIdx:N0}/{candidates.Count:N0} ({pct:F1}%) · " +
+                        $"copiados {snapCopied:N0} · omitidos {snapSkipped:N0} · err {snapErrors:N0} · ZIP/RAR {snapExtracted:N0}{txtPart}{etaStr}{speedStr} · workers={workerCount}");
+                    host.PostToUi(() =>
+                    {
+                        ui.SetProgressValue(curIdx);
+                        ui.SetStatus($"[{curIdx}/{candidates.Count}] {snapCopied} copiados · {snapSkipped} dup · {snapErrors} err{etaStr}{speedStr}");
+                        ui.SetPerf($"workers={workerCount} · done={curIdx}/{candidates.Count} · copied={snapCopied} · skipped={snapSkipped} · err={snapErrors}{speedStr}");
+                    });
+                    System.Threading.Volatile.Write(ref lastUiPushTicks, nowUiTicks);
+                }
             }).ConfigureAwait(false);
 
             foreach (var sem in archiveExtractLocks.Values)
@@ -639,6 +655,7 @@ public static class BibliotecaImportEngine
                 SkippedExistingFileName = skipExistingFile,
                 SkippedQuickSigInDest = skipQuickSigDest,
                 SkippedContentHash = skipContentHash,
+                SkippedByPublicDomainPolicy = skipPdPolicy,
                 SkippedCheckpointResume = resumeFromCheckpoint,
                 DroppedDuplicateDestPrepass = droppedSameDest,
                 DroppedDuplicateQuickSigPrepass = droppedQuickSigPrepass,
@@ -692,7 +709,7 @@ public static class BibliotecaImportEngine
                 csv.AppendLine("");
                 csv.AppendLine("source_folder,count");
                 foreach (var kv in report.SourceHeatmap)
-                    csv.AppendLine($"\"{kv.Key.Replace("\"","\"\"")}\",{kv.Value}");
+                    csv.AppendLine($"\"{kv.Key.Replace("\"", "\"\"")}\",{kv.Value}");
                 File.WriteAllText(repBase + ".csv", csv.ToString(), Encoding.UTF8);
                 host.Log($"📊 Reporte exportado: {Path.GetFileName(repBase)}.json/.csv");
             }
@@ -710,7 +727,8 @@ public static class BibliotecaImportEngine
                     BibliotecaImportFilesystem.MergeImportCheckpointDeltaIntoMain(importCheckpointPath, importCheckpointDeltaPath);
             }
 
-            host.PostToUi(() => {
+            host.PostToUi(() =>
+            {
                 host.Log("");
                 host.Log(summary);
                 host.Status(summary);
@@ -726,8 +744,8 @@ public static class BibliotecaImportEngine
             host.Log(
                 $"⏱ Fases: scan {swScan.Elapsed.TotalSeconds:F1}s · hash-dest {swDestHash.Elapsed.TotalSeconds:F1}s · hash-src {swSrcHash.Elapsed.TotalSeconds:F1}s · " +
                 $"copia-paralela {report.CopyParallelSeconds:F1}s (~{report.AvgMsPerCandidateInCopyPhase:F0} ms/candidato) · total {swTotal.Elapsed.TotalSeconds:F1}s");
-            if (!o.MinimalLog && (skipExistingFile + skipQuickSigDest + skipContentHash + resumeFromCheckpoint) > 0)
-                host.Log($"   📎 Omitidos en copia: ya existía nombre {skipExistingFile:N0} · firma en destino {skipQuickSigDest:N0} · mismo contenido (hash) {skipContentHash:N0} · checkpoint previo {resumeFromCheckpoint:N0}");
+            if (!o.MinimalLog && (skipExistingFile + skipQuickSigDest + skipContentHash + skipPdPolicy + resumeFromCheckpoint) > 0)
+                host.Log($"   📎 Omitidos en copia: ya existía nombre {skipExistingFile:N0} · firma en destino {skipQuickSigDest:N0} · mismo contenido (hash) {skipContentHash:N0} · política BD/PD {skipPdPolicy:N0} · checkpoint previo {resumeFromCheckpoint:N0}");
             if (!o.MinimalLog && (droppedSameDest + droppedQuickSigPrepass + copyIoRetries) > 0)
                 host.Log($"   📎 Pre-filtro / I/O: mismo destino en lista {droppedSameDest:N0} · misma firma en lista {droppedQuickSigPrepass:N0} · reintentos copia {copyIoRetries:N0}");
             if (!sourceHeatmap.IsEmpty)
