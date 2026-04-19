@@ -23,12 +23,7 @@ public partial class ImportBibliotecaWindow : Window
     {
         InitializeComponent();
         Closed += (_, _) => _calibre.Dispose();
-        Opened += (_, _) =>
-        {
-            if (CmbPreset != null)
-                CmbPreset.SelectedIndex = 2;
-            _ = LoadPathsFromConfigAsync();
-        };
+        Opened += (_, _) => _ = LoadPathsFromConfigAsync();
     }
 
     private async Task LoadPathsFromConfigAsync()
@@ -45,57 +40,24 @@ public partial class ImportBibliotecaWindow : Window
         catch { /* rutas vacías */ }
     }
 
-    private static void ApplyImportPreset(int idx, BibliotecaImportRuntimeState o)
+    /// <summary>Siempre usa el modo completo (sin presets, sin modo noche).</summary>
+    private static void ApplyImportPreset(BibliotecaImportRuntimeState o)
     {
+        // Modo completo fijo (equivalente al antiguo preset 0)
         o.SkipDup = true;
         o.WantArchive = true;
         o.QuickSig = true;
         o.WarmCache = true;
         o.AutoPause = true;
         o.Prioritize = true;
-        o.MinimalLog = true;
+        o.MinimalLog = false;
         o.QualityScan = true;
-        o.HashDedup = false;
+        o.HashDedup = true;
         o.HashDedupForce = false;
         o.NightAuto = false;
-        o.FastMode = true;
+        o.FastMode = false;
         o.GenTxt = true;
-
-        switch (idx)
-        {
-            case 0:
-                o.FastMode = false;
-                o.HashDedup = true;
-                o.MinimalLog = false;
-                o.AutoPause = true;
-                o.GenTxt = true;
-                o.MinBytes = 200L * 1024;
-                break;
-            case 2:
-                o.FastMode = true;
-                o.HashDedup = false;
-                o.MinimalLog = true;
-                o.GenTxt = true;
-                o.AutoPause = false;
-                o.MinBytes = 200L * 1024;
-                break;
-            case 3:
-                o.NightAuto = true;
-                o.FastMode = true;
-                o.MinimalLog = true;
-                o.AutoPause = false;
-                o.NightStart = 23;
-                o.NightEnd = 7;
-                o.MinBytes = 200L * 1024;
-                break;
-            default:
-                o.FastMode = true;
-                o.HashDedup = false;
-                o.AutoPause = true;
-                o.GenTxt = true;
-                o.MinBytes = 200L * 1024;
-                break;
-        }
+        o.MinBytes = 200L * 1024;
     }
 
     private async void BtnBrowseSource_Click(object? sender, RoutedEventArgs e)
@@ -189,9 +151,8 @@ public partial class ImportBibliotecaWindow : Window
             PipelineTxt = ChkPipelineTxt?.IsChecked == true,
         };
 
-        var presetIdx = CmbPreset?.SelectedIndex ?? 2;
-        if (presetIdx < 0) presetIdx = 2;
-        ApplyImportPreset(presetIdx, o);
+        // Siempre usa modo completo (sin presets)
+        ApplyImportPreset(o);
         o.DryRun = ChkDryRun?.IsChecked == true;
         o.PipelineVerify = ChkPipelineVerify?.IsChecked == true;
         o.PipelineTxt = ChkPipelineTxt?.IsChecked == true;
@@ -307,11 +268,41 @@ public partial class ImportBibliotecaWindow : Window
     {
         private readonly ImportBibliotecaWindow _w;
         private readonly CalibreConverterService _calibre;
+        private readonly bool _pdFilterEnabled;
 
         public StandaloneImportHost(ImportBibliotecaWindow w, CalibreConverterService calibre)
         {
             _w = w;
             _calibre = calibre;
+            // Load PD setting synchronously (default to true if config unavailable)
+            try
+            {
+                var cfg = LoadConfigSync();
+                _pdFilterEnabled = cfg.DownloadOnlyPublicDomain;
+            }
+            catch
+            {
+                _pdFilterEnabled = true; // Default to enabled
+            }
+        }
+
+        private static SlskDownAvalonia.Models.AppConfig LoadConfigSync()
+        {
+            var path = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
+                "SlskDownAvalonia", "config.json");
+            if (!File.Exists(path))
+                return new SlskDownAvalonia.Models.AppConfig();
+            try
+            {
+                var json = File.ReadAllText(path);
+                return System.Text.Json.JsonSerializer.Deserialize<SlskDownAvalonia.Models.AppConfig>(json)
+                    ?? new SlskDownAvalonia.Models.AppConfig();
+            }
+            catch
+            {
+                return new SlskDownAvalonia.Models.AppConfig();
+            }
         }
 
         public void LogClear() => Dispatcher.UIThread.Post(() => { if (_w.TxtLog != null) _w.TxtLog.Text = ""; });
@@ -338,10 +329,77 @@ public partial class ImportBibliotecaWindow : Window
         public Task<ConversionResult> EnqueueCalibreTxtAsync(string inputPath, string outputDir, CancellationToken ct = default) =>
             _calibre.EnqueueConversionAsync(inputPath, outputDir, ct);
 
+        // Simplified PD validation for standalone import tool (no heavy dependencies)
+        private static readonly HashSet<string> s_nonLiteraryTokens = new(StringComparer.OrdinalIgnoreCase)
+        {
+            "magazine", "journal", "newspaper", "periodical", "music", "mp3", "flac",
+            "bootleg", "audiobook", "podcast", "video", "film", "movie", "manual",
+            "guide", "catalog", "map", "atlas", "concert", "festival"
+        };
+
         public bool ShouldImportByPublicDomainPolicy(string destFileName, string? sourcePathOrEntry, out string? reason)
         {
             reason = null;
-            return true;
+
+            // PD filtering check (value loaded in constructor from AppConfig)
+            if (!_pdFilterEnabled)
+                return true;
+
+            // Quick non-literary check
+            var fn = Path.GetFileNameWithoutExtension(destFileName);
+            foreach (var token in s_nonLiteraryTokens)
+            {
+                if (fn.Contains(token, StringComparison.OrdinalIgnoreCase))
+                {
+                    reason = $"Token no literario: {token}";
+                    return false;
+                }
+            }
+
+            // Try to extract author from path/filename
+            var author = TryExtractAuthor(destFileName, sourcePathOrEntry);
+            if (string.IsNullOrWhiteSpace(author))
+            {
+                reason = "Autor no identificable";
+                return false;
+            }
+
+            // In standalone mode: accept if author looks like "Lastname, Firstname" pattern
+            // (simplified validation - full Gutenberg catalog only available in main app)
+            if (author.Contains(',') || author.Contains('_') || author.Contains(" - "))
+            {
+                return true;
+            }
+
+            reason = "Formato de autor no reconocido (se espera 'Apellido, Nombre')";
+            return false;
+        }
+
+        private static string? TryExtractAuthor(string fileName, string? fullPath)
+        {
+            // Try from parent folder name
+            if (!string.IsNullOrEmpty(fullPath))
+            {
+                var dir = Path.GetDirectoryName(fullPath);
+                if (!string.IsNullOrEmpty(dir))
+                {
+                    var parent = Path.GetFileName(dir);
+                    if (!string.IsNullOrWhiteSpace(parent) && parent.Length > 2)
+                        return parent;
+                }
+            }
+
+            // Try from filename: "Author - Title.ext" or "Author_Title.ext"
+            var fn = Path.GetFileNameWithoutExtension(fileName);
+            var separators = new[] { " - ", "_", " – " };
+            foreach (var sep in separators)
+            {
+                var idx = fn.IndexOf(sep, StringComparison.OrdinalIgnoreCase);
+                if (idx > 0)
+                    return fn[..idx].Trim();
+            }
+
+            return null;
         }
 
         /// <summary>App dedicada: sin detector ONNX; aplica solo tamaño y filtros de calidad.</summary>

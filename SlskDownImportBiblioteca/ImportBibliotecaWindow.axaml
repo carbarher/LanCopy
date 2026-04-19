@@ -27,13 +27,7 @@
       <TextBox Grid.Row="4" Grid.ColumnSpan="2" Name="TxtDest" Watermark="Carpeta de descargas" Margin="0,4,0,8" />
 
       <StackPanel Grid.Row="5" Grid.ColumnSpan="2" Orientation="Horizontal" Spacing="16" Margin="0,4,0,8">
-        <TextBlock VerticalAlignment="Center" Text="Preset:" />
-        <ComboBox Name="CmbPreset" Width="220">
-          <ComboBoxItem Content="Conservador" />
-          <ComboBoxItem Content="Equilibrado" />
-          <ComboBoxItem Content="Máximo rendimiento" />
-          <ComboBoxItem Content="Nocturno" />
-        </ComboBox>
+        <TextBlock VerticalAlignment="Center" Text="Modo: Completo (hash dedup + validación PD)" FontWeight="SemiBold" />
         <CheckBox Name="ChkDryRun" Content="Simulación (dry-run)" />
         <CheckBox Name="ChkPipelineVerify" Content="Post: verificación completa" />
         <CheckBox Name="ChkPipelineTxt" Content="Post: TXTs faltantes" />
