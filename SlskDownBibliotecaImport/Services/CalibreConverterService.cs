@@ -256,6 +256,27 @@ namespace SlskDownBibliotecaImport.Services
             EmitLog("⚠️ Calibre no detectado. Instálalo o configura la ruta manualmente.");
         }
 
+        private static bool NeedsTxtConversionCandidate(string filePath)
+        {
+            if (!File.Exists(filePath))
+                return false;
+
+            var ext = Path.GetExtension(filePath);
+            if (!s_allSupportedExtensions.Contains(ext))
+                return false;
+
+            // TXT/TEXT: limpiar siempre para mantener normalización consistente.
+            if (s_textExtensions.Contains(ext))
+                return true;
+
+            var dir = Path.GetDirectoryName(filePath);
+            if (string.IsNullOrWhiteSpace(dir))
+                return false;
+
+            var txtPath = Path.Combine(dir, Path.GetFileNameWithoutExtension(filePath) + ".txt");
+            return !File.Exists(txtPath);
+        }
+
         /// <summary>
         /// Convierte un archivo a TXT optimizado para lectura usando Calibre.
         /// Si el archivo ya es TXT, solo lo limpia para lectura.
@@ -458,8 +479,23 @@ namespace SlskDownBibliotecaImport.Services
                 IEnumerable<string> fileSource;
                 if (restrictToFiles != null && restrictToFiles.Count > 0)
                 {
-                    EmitLog($"📂 Convirtiendo {restrictToFiles.Count} archivos nuevos de la sesión...");
-                    fileSource = restrictToFiles.Where(File.Exists);
+                    var restrictedCandidates = restrictToFiles
+                        .Where(NeedsTxtConversionCandidate)
+                        .Distinct(StringComparer.OrdinalIgnoreCase)
+                        .ToArray();
+
+                    EmitLog($"📂 Convirtiendo {restrictedCandidates.Length} archivos nuevos de la sesión...");
+                    var skippedByPresence = Math.Max(0, restrictToFiles.Count - restrictedCandidates.Length);
+                    if (skippedByPresence > 0)
+                        EmitLog($"   ⏭️ Omitidos por TXT existente/no válido: {skippedByPresence}");
+
+                    if (restrictedCandidates.Length == 0)
+                    {
+                        EmitLog("✅ Conversión omitida: archivos de sesión ya convertidos o fuera de alcance.");
+                        return batch;
+                    }
+
+                    fileSource = restrictedCandidates;
                 }
                 else
                 {
