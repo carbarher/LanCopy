@@ -438,7 +438,8 @@ namespace SlskDownBibliotecaImport.Services
         {
             ConversionStarted?.Invoke(this, EventArgs.Empty);
             var batch = new BatchConversionResult();
-            try {
+            try
+            {
                 // TXT se guarda junto al archivo original, no en subcarpeta separada
                 txtOutputDir ??= downloadsDir;
 
@@ -728,14 +729,14 @@ namespace SlskDownBibliotecaImport.Services
             ConversionCompleted?.Invoke(this, result);
             ConversionProgress?.Invoke(this, new TxtConversionProgressEventArgs
             {
-                FileName  = Path.GetFileName(file),
-                Current   = current,
-                Total     = totalFiles,
+                FileName = Path.GetFileName(file),
+                Current = current,
+                Total = totalFiles,
                 Converted = batch.Converted,
-                Failed    = batch.Failed,
-                Skipped   = batch.Skipped,
-                Success   = result.Success && !result.Skipped,
-                Error     = result.Error
+                Failed = batch.Failed,
+                Skipped = batch.Skipped,
+                Success = result.Success && !result.Skipped,
+                Error = result.Error
             });
         }
 
@@ -772,9 +773,9 @@ namespace SlskDownBibliotecaImport.Services
             {
                 var metaArgs = new System.Text.StringBuilder();
                 if (!string.IsNullOrWhiteSpace(title))
-                    metaArgs.Append($" --title \"{title.Replace("\"", "'")}\"" );
+                    metaArgs.Append($" --title \"{title.Replace("\"", "'")}\"");
                 if (!string.IsNullOrWhiteSpace(author))
-                    metaArgs.Append($" --authors \"{author.Replace("\"", "'")}\"" );
+                    metaArgs.Append($" --authors \"{author.Replace("\"", "'")}\"");
                 var args = $"\"{inputPath}\" \"{tempTxt}\" --txt-output-formatting=plain{metaArgs}";
 
                 var calibreDir = Path.GetDirectoryName(_ebookConvertPath)!;
