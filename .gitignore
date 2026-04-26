@@ -38,3 +38,7 @@ _verify_*/
 _buildcheck/
 _build_out_import_tool/
 _flat_build/
+
+# LanCopy local artifacts
+LanCopy/publish/
+LanCopy/write_*.py
