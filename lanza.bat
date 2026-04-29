@@ -71,8 +71,8 @@ if exist obj rmdir /s /q obj 2>nul
 echo Limpieza completada
 echo.
 
-echo [3/4] Compilando SlskDownAvalonia (Release)...
-dotnet build SlskDownAvalonia.csproj -c Release
+echo [3/4] Compilando y publicando SlskDownAvalonia (Release)...
+dotnet publish SlskDownAvalonia.csproj -c Release
 
 if %ERRORLEVEL% NEQ 0 (
     echo.
@@ -85,22 +85,22 @@ echo Compilacion exitosa
 echo.
 
 echo [4/4] Verificando ejecutable...
-if exist "bin\Release\net9.0\SlskDownAvalonia.exe" (
+if exist "bin\Release\net9.0\publish\SlskDownAvalonia.exe" (
     echo Ejecutable encontrado
     echo.
     echo Iniciando SlskDownAvalonia...
     echo ========================================
-    start "" "bin\Release\net9.0\SlskDownAvalonia.exe"
+    start "" "bin\Release\net9.0\publish\SlskDownAvalonia.exe"
     echo SlskDownAvalonia iniciado
     echo.
-    echo Ubicacion: c:\p2p\SlskDownAvalonia\bin\Release\net9.0\SlskDownAvalonia.exe
+    echo Ubicacion: c:\p2p\SlskDownAvalonia\bin\Release\net9.0\publish\SlskDownAvalonia.exe
     echo.
     timeout /t 1 >nul
 ) else (
     echo ERROR: No se genero el ejecutable
     echo.
     echo Verificando errores...
-    dir bin\Release\net9.0\ 2>nul
+    dir bin\Release\net9.0\publish\ 2>nul
     echo.
     exit /b 1
 )

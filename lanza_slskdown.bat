@@ -10,8 +10,8 @@ echo [1/3] Limpiando compilacion anterior...
 dotnet clean SlskDown\SlskDown.csproj -c Release
 echo.
 
-echo [2/3] Compilando SlskDown (Release)...
-dotnet build SlskDown\SlskDown.csproj -c Release
+echo [2/3] Compilando y publicando SlskDown (Release)...
+dotnet publish SlskDown\SlskDown.csproj -c Release
 
 if %ERRORLEVEL% NEQ 0 (
     echo.
@@ -27,12 +27,12 @@ echo.
 
 echo [3/3] Ejecutando SlskDown...
 echo ========================================
-cd SlskDown\bin\Release\net9.0-windows
+cd SlskDown\bin\Release\net9.0-windows\publish
 start "" SlskDown.exe
 
 echo.
 echo SlskDown iniciado
-echo Ubicacion: c:\p2p\SlskDown\bin\Release\net9.0-windows\SlskDown.exe
+echo Ubicacion: c:\p2p\SlskDown\bin\Release\net9.0-windows\publish\SlskDown.exe
 echo.
 echo Esperando 3 segundos para verificar logs...
 timeout /t 3 /nobreak >nul
