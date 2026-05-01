@@ -85,15 +85,19 @@ echo Compilacion exitosa
 echo.
 
 echo [4/4] Verificando ejecutable...
-if exist "bin\Release\net9.0\publish\SlskDownAvalonia.exe" (
+set "EXE_PATH="
+if exist "bin\Release\net9.0\publish\SlskDownAvalonia.exe" set "EXE_PATH=bin\Release\net9.0\publish\SlskDownAvalonia.exe"
+if exist "bin\Release\net9.0\win-x64\publish\SlskDownAvalonia.exe" set "EXE_PATH=bin\Release\net9.0\win-x64\publish\SlskDownAvalonia.exe"
+
+if defined EXE_PATH (
     echo Ejecutable encontrado
     echo.
     echo Iniciando SlskDownAvalonia...
     echo ========================================
-    start "" "bin\Release\net9.0\publish\SlskDownAvalonia.exe"
+    start "" "%EXE_PATH%"
     echo SlskDownAvalonia iniciado
     echo.
-    echo Ubicacion: c:\p2p\SlskDownAvalonia\bin\Release\net9.0\publish\SlskDownAvalonia.exe
+    echo Ubicacion: c:\p2p\SlskDownAvalonia\%EXE_PATH%
     echo.
     timeout /t 1 >nul
 ) else (
@@ -101,6 +105,7 @@ if exist "bin\Release\net9.0\publish\SlskDownAvalonia.exe" (
     echo.
     echo Verificando errores...
     dir bin\Release\net9.0\publish\ 2>nul
+    dir bin\Release\net9.0\win-x64\publish\ 2>nul
     echo.
     exit /b 1
 )
