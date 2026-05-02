@@ -1,0 +1,654 @@
+<Window x:Class="ScoreDown.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="🎵 Partitura Downloader — IMSLP + Mutopia + CPDL"
+        Height="720" Width="1000" MinHeight="600" MinWidth="800"
+        Background="#1E1E2E" Foreground="White" FontFamily="Segoe UI" FontSize="13"
+    PreviewKeyDown="Window_PreviewKeyDown"
+    Closing="Window_Closing">
+
+    <Window.Resources>
+        <Style TargetType="Button">
+            <Setter Property="Background" Value="#7C3AED"/>
+            <Setter Property="Foreground" Value="White"/>
+            <Setter Property="BorderThickness" Value="0"/>
+            <Setter Property="Padding" Value="14,7"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="FontSize" Value="13"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="{TemplateBinding BorderThickness}"
+                                CornerRadius="4"
+                                Padding="{TemplateBinding Padding}">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Border>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+            <Style.Triggers>
+                <Trigger Property="IsMouseOver" Value="True">
+                    <Setter Property="Background" Value="#6D28D9"/>
+                </Trigger>
+                <Trigger Property="IsEnabled" Value="False">
+                    <Setter Property="Background" Value="#3D3D5C"/>
+                    <Setter Property="Foreground" Value="#888"/>
+                </Trigger>
+            </Style.Triggers>
+        </Style>
+        <Style TargetType="TextBox">
+            <Setter Property="Background" Value="#2D2D44"/>
+            <Setter Property="Foreground" Value="White"/>
+            <Setter Property="CaretBrush" Value="White"/>
+            <Setter Property="BorderBrush" Value="#555"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="Padding" Value="8,6"/>
+            <Setter Property="FontSize" Value="13"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="TextBox">
+                        <Border x:Name="border"
+                                Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="{TemplateBinding BorderThickness}"
+                                CornerRadius="4">
+                            <ScrollViewer x:Name="PART_ContentHost"
+                                          Margin="{TemplateBinding Padding}"
+                                          VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsFocused" Value="True">
+                                <Setter TargetName="border" Property="BorderBrush" Value="#7C3AED"/>
+                            </Trigger>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter TargetName="border" Property="Background" Value="#1E1E2E"/>
+                                <Setter Property="Foreground" Value="#888"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+        <Style TargetType="CheckBox">
+            <Setter Property="Foreground" Value="White"/>
+            <Setter Property="VerticalContentAlignment" Value="Center"/>
+        </Style>
+        <Style TargetType="ListBox">
+            <Setter Property="Background" Value="#2D2D44"/>
+            <Setter Property="Foreground" Value="White"/>
+            <Setter Property="BorderBrush" Value="#555"/>
+        </Style>
+        <Style TargetType="ListBoxItem">
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="Foreground" Value="White"/>
+            <Setter Property="Padding" Value="6,4"/>
+            <Style.Triggers>
+                <Trigger Property="IsMouseOver" Value="True">
+                    <Setter Property="Background" Value="#3D3D5C"/>
+                </Trigger>
+                <Trigger Property="IsSelected" Value="True">
+                    <Setter Property="Background" Value="#4C1D95"/>
+                </Trigger>
+            </Style.Triggers>
+        </Style>
+        <Style TargetType="ComboBox">
+            <Setter Property="Background" Value="#2D2D44"/>
+            <Setter Property="Foreground" Value="White"/>
+            <Setter Property="BorderBrush" Value="#555"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="Padding" Value="6,4"/>
+            <Setter Property="FontSize" Value="13"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ComboBox">
+                        <Grid>
+                            <ToggleButton x:Name="toggleButton"
+                                          IsChecked="{Binding IsDropDownOpen, Mode=TwoWay, RelativeSource={RelativeSource TemplatedParent}}"
+                                          Background="{TemplateBinding Background}"
+                                          BorderBrush="{TemplateBinding BorderBrush}"
+                                          BorderThickness="{TemplateBinding BorderThickness}"
+                                          Focusable="False"
+                                          ClickMode="Press">
+                                <ToggleButton.Template>
+                                    <ControlTemplate TargetType="ToggleButton">
+                                        <Border x:Name="border"
+                                                Background="{TemplateBinding Background}"
+                                                BorderBrush="{TemplateBinding BorderBrush}"
+                                                BorderThickness="{TemplateBinding BorderThickness}"
+                                                CornerRadius="4">
+                                            <Grid>
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="*"/>
+                                                    <ColumnDefinition Width="20"/>
+                                                </Grid.ColumnDefinitions>
+                                                <Path x:Name="arrow" Grid.Column="1"
+                                                      Data="M 0 0 L 4 4 L 8 0 Z"
+                                                      Fill="White" HorizontalAlignment="Center"
+                                                      VerticalAlignment="Center"/>
+                                            </Grid>
+                                        </Border>
+                                        <ControlTemplate.Triggers>
+                                            <Trigger Property="IsMouseOver" Value="True">
+                                                <Setter TargetName="border" Property="Background" Value="#3D3D5C"/>
+                                            </Trigger>
+                                        </ControlTemplate.Triggers>
+                                    </ControlTemplate>
+                                </ToggleButton.Template>
+                            </ToggleButton>
+                            <ContentPresenter x:Name="contentSite"
+                                              IsHitTestVisible="False"
+                                              Content="{TemplateBinding SelectionBoxItem}"
+                                              ContentTemplate="{TemplateBinding SelectionBoxItemTemplate}"
+                                              ContentTemplateSelector="{TemplateBinding ItemTemplateSelector}"
+                                              Margin="8,4,24,4"
+                                              VerticalAlignment="Center"
+                                              HorizontalAlignment="Left"
+                                              TextElement.Foreground="White"/>
+                            <TextBox x:Name="PART_EditableTextBox"
+                                     Style="{x:Null}"
+                                     Background="#2D2D44" Foreground="White" CaretBrush="White"
+                                     BorderThickness="0"
+                                     HorizontalAlignment="Left" VerticalAlignment="Center"
+                                     Margin="8,0,24,0"
+                                     Focusable="True" Visibility="Hidden" IsReadOnly="{TemplateBinding IsReadOnly}"/>
+                            <Popup x:Name="PART_Popup"
+                                   Placement="Bottom"
+                                   IsOpen="{TemplateBinding IsDropDownOpen}"
+                                   AllowsTransparency="True"
+                                   PopupAnimation="Slide">
+                                <Border x:Name="dropdownBorder"
+                                        MinWidth="{TemplateBinding ActualWidth}"
+                                        MaxHeight="{TemplateBinding MaxDropDownHeight}"
+                                        Background="#2D2D44"
+                                        BorderBrush="#555"
+                                        BorderThickness="1"
+                                        CornerRadius="0,0,4,4">
+                                    <ScrollViewer>
+                                        <ItemsPresenter KeyboardNavigation.DirectionalNavigation="Contained"/>
+                                    </ScrollViewer>
+                                </Border>
+                            </Popup>
+                        </Grid>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsEditable" Value="True">
+                                <Setter TargetName="PART_EditableTextBox" Property="Visibility" Value="Visible"/>
+                                <Setter TargetName="contentSite" Property="Visibility" Value="Hidden"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+        <Style TargetType="ComboBoxItem">
+            <Setter Property="Background" Value="#2D2D44"/>
+            <Setter Property="Foreground" Value="White"/>
+            <Setter Property="Padding" Value="8,5"/>
+            <Style.Triggers>
+                <Trigger Property="IsMouseOver" Value="True">
+                    <Setter Property="Background" Value="#3D3D5C"/>
+                </Trigger>
+                <Trigger Property="IsHighlighted" Value="True">
+                    <Setter Property="Background" Value="#4C1D95"/>
+                    <Setter Property="Foreground" Value="White"/>
+                </Trigger>
+            </Style.Triggers>
+        </Style>
+    </Window.Resources>
+
+    <Grid Margin="12">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="120"/>
+        </Grid.RowDefinitions>
+
+        <!-- Título -->
+        <TextBlock Grid.Row="0" Text="🎵 Partitura Downloader" FontSize="20" FontWeight="Bold"
+                   Foreground="#A78BFA" Margin="0,0,0,12"/>
+
+        <!-- Barra de búsqueda -->
+        <Grid Grid.Row="1" Margin="0,0,0,10">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="Auto"/>
+            </Grid.RowDefinitions>
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="Auto"/>
+                <ColumnDefinition Width="Auto"/>
+                <ColumnDefinition Width="Auto"/>
+            </Grid.ColumnDefinitions>
+            <TextBox x:Name="txtSearch" Grid.Row="0" Grid.Column="0"
+                     Text="Bach inventions"
+                     TextChanged="TxtSearch_TextChanged"
+                     KeyDown="TxtSearch_KeyDown"
+                     ToolTip="Escribe el nombre de la obra o compositor y pulsa Enter o Buscar"/>
+            <Popup x:Name="popComposerSuggestions"
+                   Grid.Row="0" Grid.Column="0"
+                   PlacementTarget="{Binding ElementName=txtSearch}"
+                   Placement="Bottom"
+                   AllowsTransparency="True"
+                   StaysOpen="False">
+                <Border Background="#13131F" BorderBrush="#555" BorderThickness="1" MinWidth="260">
+                    <ListBox x:Name="lstComposerSuggestions"
+                             MaxHeight="180"
+                             MouseDoubleClick="LstComposerSuggestions_MouseDoubleClick"
+                             SelectionChanged="LstComposerSuggestions_SelectionChanged"/>
+                </Border>
+            </Popup>
+            <ComboBox x:Name="cmbSource" Grid.Row="0" Grid.Column="1" Width="110"
+                      Margin="8,0,0,0" SelectedIndex="0"
+                      SelectionChanged="CmbSource_SelectionChanged"
+                      Background="#2D2D44" Foreground="White" BorderBrush="#555"
+                      ToolTip="Fuente de búsqueda">
+                <ComboBoxItem>IMSLP</ComboBoxItem>
+                <ComboBoxItem>Mutopia</ComboBoxItem>
+                <ComboBoxItem>CPDL</ComboBoxItem>
+                <ComboBoxItem>Offline</ComboBoxItem>
+                <ComboBoxItem>Todas</ComboBoxItem>
+            </ComboBox>
+            <Button x:Name="btnSearch" Grid.Row="0" Grid.Column="2" Content="🔍 Buscar"
+                    Margin="8,0,0,0" Click="BtnSearch_Click"/>
+            <Button x:Name="btnCancelSearch" Grid.Row="0" Grid.Column="3" Content="✖ Cancelar"
+                    Margin="6,0,0,0" Click="BtnCancelSearch_Click" IsEnabled="False"
+                    Background="#991B1B"/>
+
+            <Grid Grid.Row="1" Grid.Column="0" Grid.ColumnSpan="4" Margin="0,6,0,0">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+                <ComboBox x:Name="cmbHistory" Grid.Column="0" Height="26"
+                          Margin="0,0,8,0"
+                          Background="#2D2D44" Foreground="White" BorderBrush="#555"
+                          SelectionChanged="CmbHistory_SelectionChanged"
+                          ToolTip="Búsquedas recientes"/>
+                <TextBlock x:Name="txtCacheStats" Grid.Column="1" VerticalAlignment="Center"
+                           Foreground="#A78BFA" Margin="0,0,8,0" Text="Cache H:0 M:0 (0)"/>
+                <Button x:Name="btnClearCache" Grid.Column="2" Content="🧹 Limpiar cache"
+                        Padding="10,4" Click="BtnClearCache_Click" Background="#374151"/>
+                <Button x:Name="btnFetchCatalog" Grid.Column="3" Content="📥 Catálogo"
+                        Padding="10,4" Margin="8,0,0,0" Background="#0F766E"
+                        Click="BtnFetchCatalog_Click"
+                        ToolTip="Descarga el catálogo completo de la fuente seleccionada"/>
+                <Button x:Name="btnDownloadAll" Grid.Column="4" Content="🚀 Descargar todo"
+                    Padding="10,4" Margin="4,0,0,0" Background="#7C3AED"
+                    Click="BtnDownloadAll_Click"
+                    ToolTip="Un clic: usa fuente Todas, crea carpeta si falta y descarga todo"/>
+                <Button x:Name="btnCancelCatalog" Grid.Column="5" Content="⏹ Detener"
+                        Padding="10,4" Margin="4,0,0,0" Background="#991B1B" IsEnabled="False"
+                        Click="BtnCancelCatalog_Click"
+                        ToolTip="Detener descarga de catálogo"/>
+            </Grid>
+
+            <Grid Grid.Row="2" Grid.Column="0" Grid.ColumnSpan="4" Margin="0,6,0,0">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="180"/>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+                <TextBox x:Name="txtTitleSearch" Grid.Column="0" Margin="0,0,8,0"
+                         KeyDown="TxtSearch_KeyDown"
+                         ToolTip="Búsqueda avanzada por título"/>
+                <TextBox x:Name="txtComposerSearch" Grid.Column="1" Margin="0,0,8,0"
+                         KeyDown="TxtSearch_KeyDown"
+                         ToolTip="Búsqueda avanzada por compositor"/>
+                <TextBox x:Name="txtTagFilter" Grid.Column="2" Margin="0,0,8,0"
+                     TextChanged="TxtTagFilter_TextChanged"
+                     ToolTip="Filtrar por tag"/>
+                <Button Grid.Column="3" Content="🏷 Lote" Padding="10,6" Margin="0,0,4,0"
+                    Background="#0F766E" Click="BtnBulkTag_Click"/>
+                <Button Grid.Column="4" Content="⬆ Biblioteca" Padding="10,6" Margin="0,0,4,0"
+                        Background="#1D4ED8" Click="BtnImportLibrary_Click"/>
+                <Button Grid.Column="5" Content="⬇ Biblioteca" Padding="10,6"
+                        Background="#065F46" Click="BtnExportLibrary_Click"/>
+                <Button Grid.Column="6" Content="🌐 HTML" Padding="10,6" Margin="4,0,0,0"
+                    Background="#334155" Click="BtnExportHtml_Click"/>
+                <Button Grid.Column="7" Content="📂 Compositor" Padding="10,6" Margin="4,0,0,0"
+                    Background="#374151" Click="BtnOpenComposerFolder_Click"/>
+            </Grid>
+        </Grid>
+
+        <!-- Lista de resultados -->
+        <Grid Grid.Row="2">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="*"/>
+            </Grid.RowDefinitions>
+
+            <!-- Cabecera con selección global -->
+            <Grid Grid.Row="0" Margin="0,0,0,4">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+                <CheckBox x:Name="chkSelectAll" Grid.Column="0" Content="Sel. todo"
+                          Checked="ChkSelectAll_Changed" Unchecked="ChkSelectAll_Changed" Margin="4,0,12,0"/>
+                <TextBlock x:Name="txtResultCount" Grid.Column="1"
+                           Text="Sin resultados" Foreground="#A78BFA" VerticalAlignment="Center"/>
+                <ComboBox x:Name="cmbFilterSource" Grid.Column="2" Width="92"
+                          Margin="0,0,8,0" SelectedIndex="0"
+                          SelectionChanged="FilterChanged"
+                          Background="#2D2D44" Foreground="White" BorderBrush="#555"
+                          ToolTip="Filtrar por fuente">
+                    <ComboBoxItem>Todas</ComboBoxItem>
+                    <ComboBoxItem>IMSLP</ComboBoxItem>
+                    <ComboBoxItem>Mutopia</ComboBoxItem>
+                    <ComboBoxItem>CPDL</ComboBoxItem>
+                    <ComboBoxItem>Offline</ComboBoxItem>
+                </ComboBox>
+                <CheckBox x:Name="chkOnlyPdf" Grid.Column="3" Content="Solo PDF"
+                          Foreground="#A78BFA" Margin="0,0,8,0"
+                          Checked="FilterChanged" Unchecked="FilterChanged"/>
+                <CheckBox x:Name="chkOnlyMidi" Grid.Column="4" Content="Solo MIDI"
+                          Foreground="#A78BFA"
+                          Checked="FilterChanged" Unchecked="FilterChanged"/>
+                <CheckBox x:Name="chkOnlyFavorites" Grid.Column="4" Content="★ Favoritos"
+                          Foreground="#FBBF24" Margin="92,0,0,0"
+                          Checked="FilterChanged" Unchecked="FilterChanged"/>
+            </Grid>
+
+            <!-- Lista + panel lateral -->
+            <Grid Grid.Row="1">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="5"/>
+                    <ColumnDefinition Width="230" MinWidth="140" MaxWidth="340"/>
+                </Grid.ColumnDefinitions>
+
+                <!-- Listado de obras -->
+                <ListBox x:Name="lstResults" Grid.Column="0"
+                         ScrollViewer.VerticalScrollBarVisibility="Auto"
+                         SelectionMode="Extended"
+                         SelectionChanged="LstResults_SelectionChanged"
+                         PreviewMouseRightButtonDown="LstResults_PreviewMouseRightButtonDown">
+                    <ListBox.ContextMenu>
+                        <ContextMenu>
+                            <MenuItem Header="🌐 Abrir página web" Click="CtxMenuOpenPage_Click"/>
+                            <Separator/>
+                            <MenuItem Header="✔ Seleccionar" Click="CtxMenuSelect_Click"/>
+                            <MenuItem Header="☐ Deseleccionar" Click="CtxMenuDeselect_Click"/>
+                            <Separator/>
+                            <MenuItem Header="Solo PDF (este grupo)" Click="CtxMenuOnlyPdf_Click"/>
+                            <MenuItem Header="Solo MIDI (este grupo)" Click="CtxMenuOnlyMidi_Click"/>
+                            <MenuItem Header="Todos los formatos" Click="CtxMenuAllFormats_Click"/>
+                        </ContextMenu>
+                    </ListBox.ContextMenu>
+                    <ListBox.ItemTemplate>
+                        <DataTemplate>
+                            <StackPanel Margin="2,4">
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="Auto"/>
+                                        <ColumnDefinition Width="*"/>
+                                    </Grid.ColumnDefinitions>
+                                    <CheckBox Grid.Column="0" IsChecked="{Binding IsSelected}"
+                                              Margin="0,0,8,0" VerticalAlignment="Center"
+                                              Checked="ItemSelectionChanged" Unchecked="ItemSelectionChanged"/>
+                                    <StackPanel Grid.Column="1">
+                                        <StackPanel Orientation="Horizontal">
+                                            <TextBlock Text="★" Foreground="#FBBF24" Margin="0,0,6,0">
+                                                <TextBlock.Style>
+                                                    <Style TargetType="TextBlock">
+                                                        <Setter Property="Visibility" Value="Visible"/>
+                                                        <Style.Triggers>
+                                                            <DataTrigger Binding="{Binding IsFavorite}" Value="False">
+                                                                <Setter Property="Visibility" Value="Collapsed"/>
+                                                            </DataTrigger>
+                                                        </Style.Triggers>
+                                                    </Style>
+                                                </TextBlock.Style>
+                                            </TextBlock>
+                                            <TextBlock Text="{Binding DisplayName}" FontWeight="SemiBold"
+                                                       Foreground="#E2E8F0" TextTrimming="CharacterEllipsis"/>
+                                        </StackPanel>
+                                        <Border Background="#0F766E" CornerRadius="3" Padding="5,2" Margin="0,3,0,2" HorizontalAlignment="Left">
+                                            <Border.Style>
+                                                <Style TargetType="Border">
+                                                    <Setter Property="Visibility" Value="Visible"/>
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding UserTag}" Value="">
+                                                            <Setter Property="Visibility" Value="Collapsed"/>
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </Border.Style>
+                                            <TextBlock Text="{Binding UserTag}" FontSize="10" Foreground="#CCFBF1"/>
+                                        </Border>
+                                        <ItemsControl ItemsSource="{Binding Files}">
+                                            <ItemsControl.ItemsPanel>
+                                                <ItemsPanelTemplate>
+                                                    <WrapPanel/>
+                                                </ItemsPanelTemplate>
+                                            </ItemsControl.ItemsPanel>
+                                            <ItemsControl.ItemTemplate>
+                                                <DataTemplate>
+                                                    <Border Background="#4C1D95" CornerRadius="3"
+                                                            Padding="5,2" Margin="0,2,4,0">
+                                                        <TextBlock Text="{Binding Label}" FontSize="11"
+                                                                   Foreground="#DDD6FE"/>
+                                                    </Border>
+                                                </DataTemplate>
+                                            </ItemsControl.ItemTemplate>
+                                        </ItemsControl>
+                                    </StackPanel>
+                                </Grid>
+                            </StackPanel>
+                        </DataTemplate>
+                    </ListBox.ItemTemplate>
+                </ListBox>
+
+                <!-- Splitter -->
+                <GridSplitter Grid.Column="1" Width="5" HorizontalAlignment="Stretch"
+                              Background="#3D3D5C" Cursor="SizeWE"/>
+
+                <!-- Panel info obra seleccionada -->
+                <Border Grid.Column="2" Background="#1A1A30" BorderBrush="#3D3D5C" BorderThickness="1,0,0,0">
+                    <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+                        <StackPanel Margin="10,8">
+                            <TextBlock x:Name="txtInfoHint" Text="← Selecciona una obra"
+                                       Foreground="#555" FontStyle="Italic" TextWrapping="Wrap"/>
+                            <StackPanel x:Name="pnlInfoContent" Visibility="Collapsed">
+                                <TextBlock x:Name="txtInfoTitle" FontWeight="Bold" TextWrapping="Wrap"
+                                           Foreground="#E2E8F0" FontSize="13" Margin="0,0,0,4"/>
+                                <TextBlock x:Name="txtInfoComposer" Foreground="#A78BFA"
+                                           TextWrapping="Wrap" Margin="0,0,0,6" FontSize="12"/>
+                                <Border Background="#374151" CornerRadius="3" Padding="5,2"
+                                        Margin="0,0,0,10" HorizontalAlignment="Left">
+                                    <TextBlock x:Name="txtInfoSource" FontSize="11" Foreground="#DDD6FE"/>
+                                </Border>
+                                <TextBlock Text="🌐 Página:" Foreground="#888" FontSize="11" Margin="0,0,0,2"/>
+                                <TextBlock x:Name="txtInfoUrl" TextWrapping="Wrap" FontSize="11"
+                                           Foreground="#60A5FA" Cursor="Hand"
+                                           TextDecorations="Underline" Margin="0,0,0,10"
+                                           MouseLeftButtonUp="TxtInfoUrl_Click"
+                                           ToolTip="Clic para abrir en navegador"/>
+                                <TextBlock Text="📄 Archivos:" Foreground="#888" FontSize="11" Margin="0,0,0,4"/>
+                                <ItemsControl x:Name="icInfoFiles">
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate>
+                                            <TextBlock Text="{Binding Label}" Foreground="#DDD6FE"
+                                                       FontSize="11" Margin="0,1"/>
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+                                <TextBlock Text="🏷 Tag:" Foreground="#888" FontSize="11" Margin="0,10,0,4"/>
+                                <TextBox x:Name="txtTagEditor" TextChanged="TxtTagEditor_TextChanged"/>
+                                <Grid Margin="0,6,0,0">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="Auto"/>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="Auto"/>
+                                        <ColumnDefinition Width="Auto"/>
+                                    </Grid.ColumnDefinitions>
+                                    <ToggleButton x:Name="btnFavorite" Grid.Column="0" Content="☆ Favorito" Padding="10,5" Margin="0,0,8,0"
+                                                  Checked="BtnFavorite_Checked" Unchecked="BtnFavorite_Checked"/>
+                                    <TextBlock x:Name="txtTagStatus" Grid.Column="1" Foreground="#666" FontSize="10" VerticalAlignment="Center"/>
+                                    <Button x:Name="btnSaveTag" Grid.Column="2" Content="Guardar tag" Padding="10,5" Margin="8,0,0,0" Click="BtnSaveTag_Click"/>
+                                    <Button Grid.Column="3" Content="Limpiar" Padding="10,5" Margin="4,0,0,0" Background="#374151" Click="BtnClearTag_Click"/>
+                                </Grid>
+                                <TextBlock Text="Vista previa:" Foreground="#888" FontSize="11" Margin="0,10,0,4"/>
+                                <TextBlock x:Name="txtPreviewHint" Foreground="#94A3B8" FontSize="10" TextWrapping="Wrap" Margin="0,0,0,4"/>
+                                <Border Background="#0B1020" BorderBrush="#333" BorderThickness="1" Height="220">
+                                    <Grid>
+                                        <WebBrowser x:Name="wbPreview" Visibility="Collapsed"/>
+                                        <TextBlock x:Name="txtPreviewFallback" Visibility="Visible"
+                                                   HorizontalAlignment="Center" VerticalAlignment="Center"
+                                                   Foreground="#666" Text="Sin vista previa"/>
+                                    </Grid>
+                                </Border>
+                            </StackPanel>
+                        </StackPanel>
+                    </ScrollViewer>
+                </Border>
+            </Grid>
+        </Grid>
+
+        <!-- Controles de descarga -->
+        <Grid Grid.Row="3" Margin="0,10,0,8">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="Auto"/>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="Auto"/>
+                <ColumnDefinition Width="Auto"/>
+                <ColumnDefinition Width="Auto"/>
+                <ColumnDefinition Width="Auto"/>
+                <ColumnDefinition Width="Auto"/>
+            </Grid.ColumnDefinitions>
+
+            <TextBlock Grid.Column="0" Text="📁 Destino:" VerticalAlignment="Center" Margin="0,0,8,0"/>
+            <TextBox x:Name="txtDestFolder" Grid.Column="1" Text="D:\partituras"
+                     ToolTip="Carpeta donde se guardarán los archivos. También puedes arrastrar una carpeta aquí."
+                     AllowDrop="True" Drop="TxtDestFolder_Drop" DragOver="TxtDestFolder_DragOver"/>
+            <Button Grid.Column="2" Content="📂" Margin="6,0,0,0" Padding="10,7"
+                    Click="BtnChooseFolder_Click" ToolTip="Seleccionar carpeta"/>
+            <Button x:Name="btnDownload" Grid.Column="3" Content="⬇ Descargar seleccionados"
+                    Margin="8,0,0,0" Click="BtnDownload_Click" IsEnabled="False"
+                    Background="#065F46" ToolTip="Ctrl+D"/>
+            <Button x:Name="btnCancelDownload" Grid.Column="4" Content="✖ Parar"
+                    Margin="6,0,0,0" Click="BtnCancelDownload_Click" IsEnabled="False"
+                    Background="#991B1B"/>
+            <Button x:Name="btnExportJson" Grid.Column="5" Content="⬡ JSON"
+                    Margin="8,0,0,0" Padding="10,7" Click="BtnExportJson_Click" IsEnabled="False"
+                    Background="#1D4ED8" ToolTip="Exportar resultados a JSON"/>
+            <Button x:Name="btnExportCsv" Grid.Column="6" Content="📋 CSV"
+                    Margin="4,0,0,0" Padding="10,7" Click="BtnExportCsv_Click" IsEnabled="False"
+                    Background="#065F46" ToolTip="Exportar resultados a CSV"/>
+        </Grid>
+
+        <!-- Área de log y progreso -->
+        <Grid Grid.Row="4">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="*"/>
+            </Grid.RowDefinitions>
+            <Grid Grid.Row="0" Margin="0,0,0,4">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="Auto"/>
+                </Grid.RowDefinitions>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="200"/>
+                </Grid.ColumnDefinitions>
+                <TextBlock x:Name="txtStatus" Grid.Row="0" Grid.Column="0"
+                           Text="Listo. Escribe una búsqueda y pulsa Buscar."
+                           Foreground="#A78BFA" VerticalAlignment="Center"
+                           TextTrimming="CharacterEllipsis"/>
+                <ProgressBar x:Name="pbProgress" Grid.Row="0" Grid.Column="1"
+                             Height="18" Minimum="0" Maximum="100"
+                             Foreground="#7C3AED" Background="#3D3D5C"
+                             BorderThickness="0"/>
+                <TextBlock x:Name="txtFileProgress" Grid.Row="1" Grid.Column="0"
+                           Foreground="#666" FontSize="10" Visibility="Collapsed"
+                           TextTrimming="CharacterEllipsis" VerticalAlignment="Center"/>
+                <ProgressBar x:Name="pbFileProgress" Grid.Row="1" Grid.Column="1"
+                             Height="5" Minimum="0" Maximum="100" Margin="0,2,0,0"
+                             Foreground="#A78BFA" Background="#2D2D44" BorderThickness="0"
+                             Visibility="Collapsed"/>
+                <TextBlock x:Name="txtSessionStats" Grid.Row="0" Grid.Column="0"
+                           HorizontalAlignment="Right" Margin="0,0,8,0"
+                           Foreground="#666" FontSize="10" Text="S:0 · Obras:0 · Desc:0"/>
+            </Grid>
+            <Grid Grid.Row="1">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="260"/>
+                    <ColumnDefinition Width="8"/>
+                    <ColumnDefinition Width="*"/>
+                </Grid.ColumnDefinitions>
+                <Border Grid.Column="0" BorderBrush="#333" BorderThickness="1" Background="#111827">
+                    <Grid>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="*"/>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="110"/>
+                        </Grid.RowDefinitions>
+                        <TextBlock Grid.Row="0" Text="Cola de descarga" Foreground="#A78BFA" Margin="8,6,8,4" FontWeight="SemiBold"/>
+                        <ListBox x:Name="lstQueue" Grid.Row="1" Margin="6,0,6,6" BorderThickness="0">
+                            <ListBox.ContextMenu>
+                                <ContextMenu>
+                                    <MenuItem Header="⏸ Pausar archivo" Click="CtxQueuePause_Click"/>
+                                    <MenuItem Header="▶ Reanudar archivo" Click="CtxQueueResume_Click"/>
+                                    <MenuItem Header="↻ Reintentar archivo" Click="CtxQueueRetry_Click"/>
+                                </ContextMenu>
+                            </ListBox.ContextMenu>
+                            <ListBox.ItemTemplate>
+                                <DataTemplate>
+                                    <StackPanel Margin="2,3">
+                                        <TextBlock Text="{Binding FileName}" Foreground="#E5E7EB" TextTrimming="CharacterEllipsis"/>
+                                        <TextBlock Text="{Binding Status}" Foreground="#94A3B8" FontSize="10" TextTrimming="CharacterEllipsis"/>
+                                        <ProgressBar Value="{Binding Percent}" Minimum="0" Maximum="100" Height="4" Margin="0,3,0,0"
+                                                     Foreground="#0EA5E9" Background="#1F2937" BorderThickness="0"/>
+                                    </StackPanel>
+                                </DataTemplate>
+                            </ListBox.ItemTemplate>
+                        </ListBox>
+                        <TextBlock Grid.Row="2" Text="Historial reciente" Foreground="#A78BFA" Margin="8,0,8,4" FontWeight="SemiBold"/>
+                        <ListBox x:Name="lstDownloadHistory" Grid.Row="3" Margin="6,0,6,6" BorderThickness="0"
+                                 MouseDoubleClick="LstDownloadHistory_MouseDoubleClick">
+                            <ListBox.ContextMenu>
+                                <ContextMenu>
+                                    <MenuItem Header="📂 Abrir carpeta" Click="CtxHistoryOpenFolder_Click"/>
+                                    <MenuItem Header="📄 Abrir archivo" Click="CtxHistoryOpenFile_Click"/>
+                                </ContextMenu>
+                            </ListBox.ContextMenu>
+                            <ListBox.ItemTemplate>
+                                <DataTemplate>
+                                    <StackPanel Margin="2,2">
+                                        <TextBlock Text="{Binding FileName}" Foreground="#E5E7EB" TextTrimming="CharacterEllipsis"/>
+                                        <TextBlock Text="{Binding Summary}" Foreground="#94A3B8" FontSize="10" TextTrimming="CharacterEllipsis"/>
+                                    </StackPanel>
+                                </DataTemplate>
+                            </ListBox.ItemTemplate>
+                        </ListBox>
+                    </Grid>
+                </Border>
+                <TextBox x:Name="txtLog" Grid.Column="2"
+                         IsReadOnly="True" TextWrapping="Wrap"
+                         VerticalScrollBarVisibility="Auto"
+                         Background="#13131F" Foreground="#94A3B8"
+                         FontFamily="Consolas" FontSize="11"
+                         BorderBrush="#333" Padding="6"
+                         ToolTip="Ctrl+K: limpiar log"/>
+            </Grid>
+        </Grid>
+    </Grid>
+</Window>
