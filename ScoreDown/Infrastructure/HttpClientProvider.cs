@@ -8,26 +8,36 @@ namespace ScoreDown.Infrastructure;
 /// </summary>
 public static class HttpClientProvider
 {
-    private static readonly HttpClient DefaultClient = new();
-    private static readonly HttpClient LongTimeoutClient = new();
-    private static readonly HttpClient ShortTimeoutClient = new();
+    private static readonly HttpClient DefaultClient = CreateClient(TimeSpan.FromSeconds(30), 24);
+    private static readonly HttpClient LongTimeoutClient = CreateClient(TimeSpan.FromMinutes(5), 16);
+    private static readonly HttpClient ShortTimeoutClient = CreateClient(TimeSpan.FromSeconds(10), 24);
+
+    private static HttpClient CreateClient(TimeSpan timeout, int maxConnectionsPerServer)
+    {
+        var handler = new SocketsHttpHandler
+        {
+            MaxConnectionsPerServer = maxConnectionsPerServer,
+            AutomaticDecompression = System.Net.DecompressionMethods.GZip |
+                                     System.Net.DecompressionMethods.Deflate |
+                                     System.Net.DecompressionMethods.Brotli,
+            PooledConnectionLifetime = TimeSpan.FromMinutes(10),
+            PooledConnectionIdleTimeout = TimeSpan.FromMinutes(2)
+        };
+
+        var client = new HttpClient(handler)
+        {
+            Timeout = timeout
+        };
+
+        client.DefaultRequestHeaders.UserAgent.ParseAdd(
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120 Safari/537.36");
+
+        return client;
+    }
 
     static HttpClientProvider()
     {
-        // Standard: 30s (metadata, search)
-        DefaultClient.DefaultRequestHeaders.UserAgent.ParseAdd(
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120 Safari/537.36");
-        DefaultClient.Timeout = TimeSpan.FromSeconds(30);
-
-        // Long: 5min (large file downloads)
-        LongTimeoutClient.DefaultRequestHeaders.UserAgent.ParseAdd(
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120 Safari/537.36");
-        LongTimeoutClient.Timeout = TimeSpan.FromMinutes(5);
-
-        // Short: 10s (quick metadata checks)
-        ShortTimeoutClient.DefaultRequestHeaders.UserAgent.ParseAdd(
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120 Safari/537.36");
-        ShortTimeoutClient.Timeout = TimeSpan.FromSeconds(10);
+        // Clients are preconfigured with handler-level pooling and decompression.
     }
 
     /// <summary>

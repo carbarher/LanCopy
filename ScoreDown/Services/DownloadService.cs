@@ -9,7 +9,7 @@ public class DownloadService
 {
     private readonly HttpClient _http;
     // Paralelismo para descargas en lote (DownloadAllAsync)
-    private const int BatchParallelism = 3;
+    private const int BatchParallelism = 6;
     // NOTA: Timeout configurado en HttpClientProvider.GetLongTimeout() (5min)
     // Esto aplica a TODAS las descargas. Para archivos muy grandes (>1GB),
     // el caller puede implementar CancellationTokenSource con timeout dinámico
@@ -109,7 +109,7 @@ public class DownloadService
                 await using var stream = await response.Content.ReadAsStreamAsync(ct).ConfigureAwait(false);
                 await using var fileStream = File.Create(tempPath);
 
-                var buffer = new byte[81920];
+                var buffer = new byte[262144];
                 int read;
                 var sw = System.Diagnostics.Stopwatch.StartNew();
 

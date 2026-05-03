@@ -20,6 +20,7 @@ public class PartituraItem : INotifyPropertyChanged
     private bool _isSelected = true;
     private string _source = "IMSLP";
     private string _userTag = string.Empty;
+    private int _sourcePageId;
 
     public string Title { get => _title; set => Set(ref _title, value); }
     public string Composer { get => _composer; set => Set(ref _composer, value); }
@@ -27,6 +28,7 @@ public class PartituraItem : INotifyPropertyChanged
     public bool IsSelected { get => _isSelected; set => Set(ref _isSelected, value); }
     public string Source { get => _source; set => Set(ref _source, value); }
     public string UserTag { get => _userTag; set => Set(ref _userTag, value); }
+    public int SourcePageId { get => _sourcePageId; set => Set(ref _sourcePageId, value); }
 
     public List<PartituraFile> Files { get; set; } = new();
 

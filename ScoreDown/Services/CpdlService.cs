@@ -14,6 +14,14 @@ namespace ScoreDown.Services;
 public class CpdlService
 {
     private readonly HttpClient _http;
+    private readonly string _noFilesPageIdsPath = Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+        "ScoreDown",
+        "cpdl-no-files-pageids.json");
+    private readonly HashSet<int> _knownNoFilesPageIds = [];
+    private readonly object _noFilesLock = new();
+    private const int NoFilesFlushBatch = 50;
+    private int _pendingNoFilesWrites;
     private string? _manualCookieHeader;
     private string? _manualUserAgent;
     private const string BaseUrl = "https://www.cpdl.org";
@@ -36,6 +44,7 @@ public class CpdlService
     public CpdlService()
     {
         _http = HttpClientProvider.GetDefault();
+        LoadNoFilesBlacklist();
     }
 
     public bool HasManualSession => !string.IsNullOrWhiteSpace(_manualCookieHeader);
@@ -47,6 +56,16 @@ public class CpdlService
     {
         _manualCookieHeader = string.IsNullOrWhiteSpace(cookieHeader) ? null : cookieHeader.Trim();
         _manualUserAgent = string.IsNullOrWhiteSpace(userAgent) ? null : userAgent.Trim();
+    }
+
+    public void FlushNoFilesBlacklist()
+    {
+        lock (_noFilesLock)
+        {
+            if (_pendingNoFilesWrites <= 0) return;
+            SaveNoFilesBlacklistUnsafe();
+            _pendingNoFilesWrites = 0;
+        }
     }
 
     public async Task<List<PartituraItem>> SearchAsync(
@@ -249,6 +268,8 @@ public class CpdlService
         new(@"\(([^,)]+),\s*([^)]+)\)\s*$", RegexOptions.Compiled);
     private static readonly Regex s_composerSuffix =
         new(@"\s*\([^,)]+,\s*[^)]+\)\s*$", RegexOptions.Compiled);
+    private static readonly Regex s_parentheticalSuffix =
+        new(@"\([^)]+\)\s*$", RegexOptions.Compiled);
 
     /// <summary>
     /// Streams the full CPDL catalog via MediaWiki allpages API.
@@ -309,13 +330,30 @@ public class CpdlService
                         batch.Add((pageId, rawTitle));
                     }
 
-                    var allowedPageIds = await FetchLikelyWorkPageIdsAsync(batch, ct).ConfigureAwait(false);
+                    var filter = await FetchLikelyWorkPageIdsAsync(batch, ct).ConfigureAwait(false);
 
                     foreach (var entry in batch)
                     {
                         var rawTitle = entry.Title;
 
-                        if (allowedPageIds is not null && entry.PageId > 0 && !allowedPageIds.Contains(entry.PageId))
+                        if (entry.PageId > 0 && IsKnownNoFilesPage(entry.PageId))
+                        {
+                            filteredOut++;
+                            continue;
+                        }
+
+                        var keep = true;
+                        if (filter is not null && entry.PageId > 0 && filter.EvaluatedPageIds.Contains(entry.PageId))
+                        {
+                            keep = filter.AllowedPageIds.Contains(entry.PageId);
+                        }
+                        else
+                        {
+                            // If API filtering is unavailable or partial, avoid obvious non-work pages.
+                            keep = LooksLikeCatalogWorkTitle(rawTitle);
+                        }
+
+                        if (!keep)
                         {
                             filteredOut++;
                             continue;
@@ -333,7 +371,8 @@ public class CpdlService
                             Title = cleanTitle,
                             Composer = composer,
                             PageUrl = pageUrl,
-                            Source = "CPDL"
+                            Source = "CPDL",
+                            SourcePageId = entry.PageId
                             // Files empty — lazy-loaded via LoadFilesAsync
                         });
                         total++;
@@ -366,13 +405,76 @@ public class CpdlService
     {
         if (item.Files.Count > 0) return true;
         if (string.IsNullOrEmpty(item.PageUrl)) return false;
+        if (item.SourcePageId > 0 && IsKnownNoFilesPage(item.SourcePageId)) return false;
+
         var loaded = await LoadWorkPageAsync(item.Title, item.PageUrl, ct).ConfigureAwait(false);
         if (loaded?.Files.Count > 0)
         {
             item.Files.AddRange(loaded.Files);
             return true;
         }
+
+        if (item.SourcePageId > 0)
+            RegisterNoFilesPage(item.SourcePageId);
+
         return false;
+    }
+
+    private bool IsKnownNoFilesPage(int pageId)
+    {
+        lock (_noFilesLock)
+            return _knownNoFilesPageIds.Contains(pageId);
+    }
+
+    private void RegisterNoFilesPage(int pageId)
+    {
+        if (pageId <= 0) return;
+
+        lock (_noFilesLock)
+        {
+            if (!_knownNoFilesPageIds.Add(pageId)) return;
+
+            _pendingNoFilesWrites++;
+            if (_pendingNoFilesWrites >= NoFilesFlushBatch)
+            {
+                SaveNoFilesBlacklistUnsafe();
+                _pendingNoFilesWrites = 0;
+            }
+        }
+    }
+
+    private void LoadNoFilesBlacklist()
+    {
+        try
+        {
+            if (!File.Exists(_noFilesPageIdsPath)) return;
+
+            var json = File.ReadAllText(_noFilesPageIdsPath);
+            var ids = JsonSerializer.Deserialize<List<int>>(json) ?? [];
+            lock (_noFilesLock)
+            {
+                _knownNoFilesPageIds.Clear();
+                foreach (var id in ids)
+                {
+                    if (id > 0)
+                        _knownNoFilesPageIds.Add(id);
+                }
+            }
+        }
+        catch
+        {
+            // Ignore corrupt cache. Next saves will replace it.
+        }
+    }
+
+    private void SaveNoFilesBlacklistUnsafe()
+    {
+        var dir = Path.GetDirectoryName(_noFilesPageIdsPath);
+        if (!string.IsNullOrWhiteSpace(dir))
+            Directory.CreateDirectory(dir);
+
+        var payload = _knownNoFilesPageIds.OrderBy(id => id).ToList();
+        File.WriteAllText(_noFilesPageIdsPath, JsonSerializer.Serialize(payload));
     }
 
     private async Task<string?> FetchJsonAsync(string url, CancellationToken ct)
@@ -416,18 +518,25 @@ public class CpdlService
         return await HttpHelper.FetchHtmlAsync(_http, url, maxRetries: 3, ct).ConfigureAwait(false);
     }
 
-    private async Task<HashSet<int>?> FetchLikelyWorkPageIdsAsync(List<(int PageId, string Title)> batch, CancellationToken ct)
+    private sealed class CpdlPageFilterResult
+    {
+        public HashSet<int> AllowedPageIds { get; } = [];
+        public HashSet<int> EvaluatedPageIds { get; } = [];
+    }
+
+    private async Task<CpdlPageFilterResult?> FetchLikelyWorkPageIdsAsync(List<(int PageId, string Title)> batch, CancellationToken ct)
     {
         var pageIds = batch.Where(x => x.PageId > 0).Select(x => x.PageId).Distinct().ToList();
         if (pageIds.Count == 0) return null;
 
-        var result = new HashSet<int>();
+        var result = new CpdlPageFilterResult();
+        var successfulChunks = 0;
 
         foreach (var chunk in pageIds.Chunk(100))
         {
-            var url = $"{ApiUrl}?action=query&prop=categories&cllimit=max&format=json&pageids={string.Join('|', chunk)}";
+            var url = $"{ApiUrl}?action=query&prop=categories|images&cllimit=max&imlimit=max&format=json&pageids={string.Join('|', chunk)}";
             var json = await FetchJsonAsync(url, ct).ConfigureAwait(false);
-            if (json is null) return null;
+            if (json is null) continue;
 
             JsonDocument doc;
             try
@@ -436,14 +545,16 @@ public class CpdlService
             }
             catch
             {
-                return null;
+                continue;
             }
 
             using (doc)
             {
                 if (!doc.RootElement.TryGetProperty("query", out var query) ||
                     !query.TryGetProperty("pages", out var pages))
-                    return null;
+                    continue;
+
+                successfulChunks++;
 
                 foreach (var page in pages.EnumerateObject())
                 {
@@ -451,13 +562,17 @@ public class CpdlService
                     if (!value.TryGetProperty("pageid", out var pageIdEl) || !pageIdEl.TryGetInt32(out var pageId))
                         continue;
 
-                    if (value.TryGetProperty("categories", out var categories) && HasLikelyWorkCategory(categories))
-                        result.Add(pageId);
+                    result.EvaluatedPageIds.Add(pageId);
+
+                    var hasLikelyCategory = value.TryGetProperty("categories", out var categories) && HasLikelyWorkCategory(categories);
+                    var hasDownloadableMedia = value.TryGetProperty("images", out var images) && HasLikelyDownloadableMedia(images);
+                    if (hasLikelyCategory && hasDownloadableMedia)
+                        result.AllowedPageIds.Add(pageId);
                 }
             }
         }
 
-        return result;
+        return successfulChunks > 0 ? result : null;
     }
 
     private static bool HasLikelyWorkCategory(JsonElement categories)
@@ -476,5 +591,35 @@ public class CpdlService
         }
 
         return false;
+    }
+
+    private static bool HasLikelyDownloadableMedia(JsonElement images)
+    {
+        foreach (var image in images.EnumerateArray())
+        {
+            if (!image.TryGetProperty("title", out var titleEl))
+                continue;
+
+            var title = titleEl.GetString() ?? string.Empty;
+            if (!title.StartsWith("File:", StringComparison.OrdinalIgnoreCase))
+                continue;
+
+            if (GetExtension(title) is not null)
+                return true;
+        }
+
+        return false;
+    }
+
+    private static bool LooksLikeCatalogWorkTitle(string rawTitle)
+    {
+        if (string.IsNullOrWhiteSpace(rawTitle)) return false;
+        if (rawTitle.Length < 6) return false;
+
+        if (s_composerInTitle.IsMatch(rawTitle))
+            return true;
+
+        // Many CPDL works end with a parenthetical disambiguator; keep those as fallback.
+        return s_parentheticalSuffix.IsMatch(rawTitle);
     }
 }

@@ -23,10 +23,13 @@ public partial class MainWindow : Window, IAsyncDisposable
 {
     private sealed class SourceStats
     {
+        public DateTime StartedUtc = DateTime.UtcNow;
+        public int CurrentParallelism;
         public int ItemsSeen;
         public int DownloadedItems;
         public int ExistingItems;
         public int DownloadedFiles;
+        public long DownloadedBytes;
         public int SkippedFiles;
         public int RejectedItems;
         public int ErroredItems;
@@ -824,6 +827,13 @@ public partial class MainWindow : Window, IAsyncDisposable
                 Log("ℹ️ Modo Descargar todo: IMSLP incluido en descarga automática (puede tardar bastante)");
             }
 
+            downloadable = await ApplyBulkPreflightAsync(downloadable, progress, ct).ConfigureAwait(false);
+            if (downloadable.Count == 0)
+            {
+                Log("⚠️ Preflight descartó todas las fuentes para descarga automática (baja disponibilidad de archivos)");
+                return;
+            }
+
             int totalProcessedItems = 0;
             int totalDownloadedItems = 0;
             int totalExistingItems = 0;
@@ -834,9 +844,16 @@ public partial class MainWindow : Window, IAsyncDisposable
             int totalFailedFiles = 0;
             int totalCancelledItems = 0;
             int totalCancelledFiles = 0;
+            int totalAutoStoppedItems = 0;
             int consecutiveErrors = 0;
             var sourceStats = new ConcurrentDictionary<string, SourceStats>(StringComparer.OrdinalIgnoreCase);
             var errorTypes = new ConcurrentDictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+            var cpdlWindow = new Queue<bool>();
+            var cpdlWindowLock = new object();
+            int cpdlAutoStopActive = 0;
+            const int cpdlWindowSize = 500;
+            const int cpdlWindowMin = 200;
+            const double cpdlNoFilesStopRatio = 0.85;
 
             static SourceStats GetStats(ConcurrentDictionary<string, SourceStats> map, string source)
                 => map.GetOrAdd(string.IsNullOrWhiteSpace(source) ? "Desconocida" : source, _ => new SourceStats());
@@ -847,213 +864,290 @@ public partial class MainWindow : Window, IAsyncDisposable
                 map.AddOrUpdate(key, 1, (_, n) => n + 1);
             }
 
+            string BuildLiveSourceMetrics()
+            {
+                if (sourceStats.IsEmpty) return string.Empty;
+
+                var now = DateTime.UtcNow;
+                var parts = new List<string>();
+                foreach (var kv in sourceStats.OrderBy(k => k.Key, StringComparer.OrdinalIgnoreCase))
+                {
+                    var s = kv.Value;
+                    var elapsedSec = Math.Max((now - s.StartedUtc).TotalSeconds, 1);
+                    var elapsedMin = Math.Max(elapsedSec / 60.0, 1.0 / 60.0);
+                    var worksPerMin = s.ItemsSeen / elapsedMin;
+                    var mbPerSec = (s.DownloadedBytes / (1024.0 * 1024.0)) / elapsedSec;
+                    var noFilesRatio = s.ItemsSeen > 0 ? (double)s.RejectedItems / s.ItemsSeen : 0;
+                    parts.Add($"{kv.Key}: {worksPerMin:F1} ob/min · {mbPerSec:F2} MB/s · sin={noFilesRatio:P0} · p={Math.Max(1, s.CurrentParallelism)}");
+                }
+
+                return string.Join(" | ", parts);
+            }
+
             void ReportProgressEvery50()
             {
                 var processed = System.Threading.Interlocked.Increment(ref totalProcessedItems);
                 if (processed % 50 == 0)
                 {
                     progress.Report($"📥 {processed}/{downloadable.Count} obras · nuevas={totalDownloadedItems} previas={totalExistingItems} sin-archivos={totalRejectedItems} error={totalErroredItems} · archivos ✅{totalDownloadedFiles} ⏭️{totalSkippedFiles} ❌{totalFailedFiles}");
+
+                    if (processed % 200 == 0)
+                    {
+                        var metrics = BuildLiveSourceMetrics();
+                        if (!string.IsNullOrWhiteSpace(metrics))
+                            Log($"⚡ Métricas: {metrics}");
+                    }
                 }
             }
 
-            // Concurrencia adaptativa: SemaphoreSlim permite ajustar MaxCount en runtime
-            // empieza en 3, baja a 1 si ≥5 errores seguidos
-            var concSem = new SemaphoreSlim(3, 3);
-            int currentConcurrency = 3;
-
-            Log($"📥 Fase 2: descargando {downloadable.Count} obras ({currentConcurrency} simultáneas)...");
-
-            var downloadTasks = downloadable.Select(async item =>
+            bool RegisterCpdlLoadOutcome(bool hasFiles)
             {
-                await concSem.WaitAsync(ct).ConfigureAwait(false);
-                try
+                lock (cpdlWindowLock)
                 {
-                    ct.ThrowIfCancellationRequested();
+                    cpdlWindow.Enqueue(hasFiles);
+                    if (cpdlWindow.Count > cpdlWindowSize)
+                        cpdlWindow.Dequeue();
 
-                    var stats = GetStats(sourceStats, item.Source);
-                    System.Threading.Interlocked.Increment(ref stats.ItemsSeen);
+                    if (cpdlWindow.Count < cpdlWindowMin)
+                        return false;
 
-                    // IMSLP/CPDL: cargar links de descarga (petición por obra)
-                    // Con reintentos — transient failures (429, 502-504) son esperables en catálogo masivo
-                    if (item.Files.Count == 0)
-                    {
-                        bool loaded = false;
-                        int loadAttempts = 0;
-                        const int maxLoadAttempts = 2;  // 1 reintento
+                    var noFiles = cpdlWindow.Count(x => !x);
+                    var ratio = (double)noFiles / cpdlWindow.Count;
+                    return ratio >= cpdlNoFilesStopRatio;
+                }
+            }
 
-                        while (loadAttempts < maxLoadAttempts && !loaded)
-                        {
-                            try
-                            {
-                                loaded = item.Source == "IMSLP"
-                                    ? await _imslp.LoadFilesAsync(item, ct)
-                                    : await _cpdl.LoadFilesAsync(item, ct);
-                                if (loaded)
-                                    System.Threading.Volatile.Write(ref consecutiveErrors, 0);
-                            }
-                            catch (OperationCanceledException) { throw; }
-                            catch { /* transient error, reintentará */ }
+            static int GetSourceParallelism(string src) => src switch
+            {
+                "IMSLP" => 8,
+                "Mutopia" => 6,
+                "CPDL" => 3,
+                _ => 4
+            };
 
-                            if (!loaded)
-                            {
-                                loadAttempts++;
-                                if (loadAttempts < maxLoadAttempts)
-                                {
-                                    // Backoff: 2s + jitter
-                                    var backoffMs = 2000 + Random.Shared.Next(0, 500);
-                                    await Task.Delay(backoffMs, ct).ConfigureAwait(false);
-                                }
-                            }
-                        }
+            static IEnumerable<PartituraFile> OrderFilesForSpeed(IEnumerable<PartituraFile> files) =>
+                files.OrderByDescending(f => string.Equals(f.Format, "PDF", StringComparison.OrdinalIgnoreCase))
+                     .ThenBy(f => f.Format, StringComparer.OrdinalIgnoreCase);
 
-                        if (!loaded)
-                        {
-                            System.Threading.Interlocked.Increment(ref consecutiveErrors);
-                            System.Threading.Interlocked.Increment(ref stats.RejectedItems);
-                            System.Threading.Interlocked.Increment(ref totalRejectedItems);
-                            AddErrorType(errorTypes, "Sin archivos detectados en la página");
-                            ReportProgressEvery50();
-                            return;
-                        }
-                    }
+            var bySourceParallelism = downloadable
+                .GroupBy(i => string.IsNullOrWhiteSpace(i.Source) ? "Desconocida" : i.Source)
+                .OrderBy(g => g.Key, StringComparer.OrdinalIgnoreCase)
+                .Select(g => $"{g.Key}={GetSourceParallelism(g.Key)}")
+                .ToArray();
 
-                    var subFolder = BuildDestSubFolder(destFolder!, item);
-                    bool itemDownloaded = false;
-                    bool itemSkippedOnly = false;
-                    bool itemHasError = false;
-                    bool itemCancelled = false;
-                    bool sawAnyFileResult = false;
+            Log($"📥 Fase 2: descargando {downloadable.Count} obras ({string.Join(" | ", bySourceParallelism)})...");
 
-                    foreach (var file in item.Files)
+            var sourceWorkers = downloadable
+                .GroupBy(i => string.IsNullOrWhiteSpace(i.Source) ? "Desconocida" : i.Source)
+                .Select(async group =>
+                {
+                    var sourceName = group.Key;
+                    var sourceItems = group.ToList();
+                    var maxParallel = GetSourceParallelism(sourceName);
+                    var minParallel = sourceName == "CPDL" ? 1 : 2;
+                    var currentParallel = maxParallel;
+
+                    var sourceStatsEntry = GetStats(sourceStats, sourceName);
+                    sourceStatsEntry.CurrentParallelism = currentParallel;
+
+                    for (int offset = 0; offset < sourceItems.Count;)
                     {
                         ct.ThrowIfCancellationRequested();
-                        try
-                        {
-                            var (cpdlCookie, cpdlUa) = item.Source == "CPDL" ? _cpdl.GetSessionHeaders() : (null, null);
-                            var result = await _downloader.DownloadFileAsync(file, subFolder, null, null, ct, cpdlCookie, cpdlUa);
-                            if (result.Success)
-                            {
-                                sawAnyFileResult = true;
-                                if (result.Skipped)
-                                {
-                                    itemSkippedOnly = true;
-                                    System.Threading.Interlocked.Increment(ref stats.SkippedFiles);
-                                    System.Threading.Interlocked.Increment(ref totalSkippedFiles);
-                                }
-                                else
-                                {
-                                    itemDownloaded = true;
-                                    itemSkippedOnly = false;
-                                    System.Threading.Interlocked.Increment(ref stats.DownloadedFiles);
-                                    System.Threading.Interlocked.Increment(ref totalDownloadedFiles);
-                                }
-                                System.Threading.Volatile.Write(ref consecutiveErrors, 0);
-                            }
-                            else if (result.Cancelled)
-                            {
-                                sawAnyFileResult = true;
-                                itemCancelled = true;
-                                System.Threading.Interlocked.Increment(ref stats.CancelledFiles);
-                                System.Threading.Interlocked.Increment(ref totalCancelledFiles);
-                            }
-                            else
-                            {
-                                sawAnyFileResult = true;
-                                itemHasError = true;
-                                System.Threading.Interlocked.Increment(ref stats.FailedFiles);
-                                System.Threading.Interlocked.Increment(ref totalFailedFiles);
-                                AddErrorType(errorTypes, result.Error);
 
-                                var errors = System.Threading.Interlocked.Increment(ref consecutiveErrors);
-                                if (errors >= 5)
-                                {
-                                    // Solo intenta bajar a concurrencia 1 una vez (con CompareExchange)
-                                    if (System.Threading.Interlocked.CompareExchange(ref currentConcurrency, 1, 3) == 3)
-                                    {
-                                        // Drena 2 slots del semáforo (3 -> 1)
-                                        // Pero lo hace con try/catch para evitar race conditions
-                                        try
-                                        {
-                                            await concSem.WaitAsync(TimeSpan.FromSeconds(5), ct).ConfigureAwait(false);
-                                            await concSem.WaitAsync(TimeSpan.FromSeconds(5), ct).ConfigureAwait(false);
-                                        }
-                                        catch
-                                        {
-                                            // Si falla el drenaje, continuamos de todas formas
-                                            // (el error de concurrencia es menos crítico que el timeout)
-                                        }
-                                        progress.Report("⚠️ Errores repetidos: reduciendo a 1 descarga simultánea");
-                                        await Task.Delay(3000, ct).ConfigureAwait(false);
-                                    }
-                                }
-                            }
-                        }
-                        catch (OperationCanceledException) { throw; }
-                        catch (Exception ex)
-                        {
-                            sawAnyFileResult = true;
-                            itemHasError = true;
-                            System.Threading.Interlocked.Increment(ref stats.FailedFiles);
-                            System.Threading.Interlocked.Increment(ref totalFailedFiles);
-                            AddErrorType(errorTypes, ex.GetType().Name);
+                        var batchSize = Math.Min(sourceItems.Count - offset, Math.Max(currentParallel * 24, currentParallel));
+                        var batch = sourceItems.GetRange(offset, batchSize);
+                        offset += batchSize;
 
-                            // Reducir concurrencia si acumulamos errores seguidos (posible 429)
-                            var errors = System.Threading.Interlocked.Increment(ref consecutiveErrors);
-                            if (errors >= 5)
+                        int batchProcessed = 0;
+                        int batchHardErrors = 0;
+
+                        var options = new ParallelOptions
+                        {
+                            CancellationToken = ct,
+                            MaxDegreeOfParallelism = currentParallel
+                        };
+
+                        await Parallel.ForEachAsync(batch, options, async (item, itemCt) =>
+                        {
+                            itemCt.ThrowIfCancellationRequested();
+
+                            var stats = GetStats(sourceStats, item.Source);
+                            System.Threading.Interlocked.Increment(ref stats.ItemsSeen);
+
+                            if (item.Source == "CPDL" && System.Threading.Volatile.Read(ref cpdlAutoStopActive) == 1)
                             {
-                                // Solo intenta bajar a concurrencia 1 una vez (con CompareExchange)
-                                if (System.Threading.Interlocked.CompareExchange(ref currentConcurrency, 1, 3) == 3)
+                                System.Threading.Interlocked.Increment(ref stats.CancelledItems);
+                                System.Threading.Interlocked.Increment(ref totalCancelledItems);
+                                System.Threading.Interlocked.Increment(ref totalAutoStoppedItems);
+                                System.Threading.Interlocked.Increment(ref batchProcessed);
+                                ReportProgressEvery50();
+                                return;
+                            }
+
+                            if (item.Files.Count == 0)
+                            {
+                                bool loaded = false;
+                                int loadAttempts = 0;
+                                const int maxLoadAttempts = 2;
+
+                                while (loadAttempts < maxLoadAttempts && !loaded)
                                 {
-                                    // Drena 2 slots del semáforo (3 -> 1)
-                                    // Pero lo hace con try/catch para evitar race conditions
                                     try
                                     {
-                                        await concSem.WaitAsync(TimeSpan.FromSeconds(5), ct).ConfigureAwait(false);
-                                        await concSem.WaitAsync(TimeSpan.FromSeconds(5), ct).ConfigureAwait(false);
+                                        loaded = item.Source == "IMSLP"
+                                            ? await _imslp.LoadFilesAsync(item, itemCt).ConfigureAwait(false)
+                                            : await _cpdl.LoadFilesAsync(item, itemCt).ConfigureAwait(false);
+
+                                        if (loaded)
+                                            System.Threading.Volatile.Write(ref consecutiveErrors, 0);
                                     }
-                                    catch
+                                    catch (OperationCanceledException) { throw; }
+                                    catch { }
+
+                                    if (!loaded)
                                     {
-                                        // Si falla el drenaje, continuamos de todas formas
-                                        // (el error de concurrencia es menos crítico que el timeout)
+                                        loadAttempts++;
+                                        if (loadAttempts < maxLoadAttempts)
+                                        {
+                                            var backoffMs = 1500 + Random.Shared.Next(0, 500);
+                                            await Task.Delay(backoffMs, itemCt).ConfigureAwait(false);
+                                        }
                                     }
-                                    progress.Report("⚠️ Errores repetidos: reduciendo a 1 descarga simultánea");
-                                    await Task.Delay(3000, ct).ConfigureAwait(false);
                                 }
+
+                                if (item.Source == "CPDL")
+                                {
+                                    var shouldStop = RegisterCpdlLoadOutcome(loaded);
+                                    if (shouldStop && System.Threading.Interlocked.CompareExchange(ref cpdlAutoStopActive, 1, 0) == 0)
+                                        progress.Report("⚠️ CPDL auto-stop activado: alta proporción de sin-archivos en ventana reciente; se omiten pendientes CPDL");
+                                }
+
+                                if (!loaded)
+                                {
+                                    System.Threading.Interlocked.Increment(ref consecutiveErrors);
+                                    System.Threading.Interlocked.Increment(ref stats.RejectedItems);
+                                    System.Threading.Interlocked.Increment(ref totalRejectedItems);
+                                    AddErrorType(errorTypes, "Sin archivos detectados en la página");
+                                    System.Threading.Interlocked.Increment(ref batchProcessed);
+                                    ReportProgressEvery50();
+                                    return;
+                                }
+                            }
+
+                            var subFolder = BuildDestSubFolder(destFolder!, item);
+                            bool itemDownloaded = false;
+                            bool itemSkippedOnly = false;
+                            bool itemHasError = false;
+                            bool itemCancelled = false;
+                            bool sawAnyFileResult = false;
+
+                            foreach (var file in OrderFilesForSpeed(item.Files))
+                            {
+                                itemCt.ThrowIfCancellationRequested();
+                                try
+                                {
+                                    var (cpdlCookie, cpdlUa) = item.Source == "CPDL" ? _cpdl.GetSessionHeaders() : (null, null);
+                                    var result = await _downloader.DownloadFileAsync(file, subFolder, null, null, itemCt, cpdlCookie, cpdlUa).ConfigureAwait(false);
+                                    if (result.Success)
+                                    {
+                                        sawAnyFileResult = true;
+                                        if (result.Skipped)
+                                        {
+                                            itemSkippedOnly = true;
+                                            System.Threading.Interlocked.Increment(ref stats.SkippedFiles);
+                                            System.Threading.Interlocked.Increment(ref totalSkippedFiles);
+                                        }
+                                        else
+                                        {
+                                            itemDownloaded = true;
+                                            itemSkippedOnly = false;
+                                            System.Threading.Interlocked.Increment(ref stats.DownloadedFiles);
+                                            System.Threading.Interlocked.Add(ref stats.DownloadedBytes, result.BytesDownloaded);
+                                            System.Threading.Interlocked.Increment(ref totalDownloadedFiles);
+                                        }
+                                        System.Threading.Volatile.Write(ref consecutiveErrors, 0);
+                                    }
+                                    else if (result.Cancelled)
+                                    {
+                                        sawAnyFileResult = true;
+                                        itemCancelled = true;
+                                        System.Threading.Interlocked.Increment(ref stats.CancelledFiles);
+                                        System.Threading.Interlocked.Increment(ref totalCancelledFiles);
+                                    }
+                                    else
+                                    {
+                                        sawAnyFileResult = true;
+                                        itemHasError = true;
+                                        System.Threading.Interlocked.Increment(ref stats.FailedFiles);
+                                        System.Threading.Interlocked.Increment(ref totalFailedFiles);
+                                        AddErrorType(errorTypes, result.Error);
+                                        var errors = System.Threading.Interlocked.Increment(ref consecutiveErrors);
+                                        if (errors >= 5)
+                                            await Task.Delay(1200, itemCt).ConfigureAwait(false);
+                                    }
+                                }
+                                catch (OperationCanceledException) { throw; }
+                                catch (Exception ex)
+                                {
+                                    sawAnyFileResult = true;
+                                    itemHasError = true;
+                                    System.Threading.Interlocked.Increment(ref stats.FailedFiles);
+                                    System.Threading.Interlocked.Increment(ref totalFailedFiles);
+                                    AddErrorType(errorTypes, ex.GetType().Name);
+
+                                    var errors = System.Threading.Interlocked.Increment(ref consecutiveErrors);
+                                    if (errors >= 5)
+                                        await Task.Delay(1200, itemCt).ConfigureAwait(false);
+                                }
+                            }
+
+                            if (itemHasError)
+                            {
+                                System.Threading.Interlocked.Increment(ref stats.ErroredItems);
+                                System.Threading.Interlocked.Increment(ref totalErroredItems);
+                                System.Threading.Interlocked.Increment(ref batchHardErrors);
+                            }
+                            else if (itemCancelled)
+                            {
+                                System.Threading.Interlocked.Increment(ref stats.CancelledItems);
+                                System.Threading.Interlocked.Increment(ref totalCancelledItems);
+                            }
+                            else if (itemDownloaded)
+                            {
+                                System.Threading.Interlocked.Increment(ref stats.DownloadedItems);
+                                System.Threading.Interlocked.Increment(ref totalDownloadedItems);
+                            }
+                            else if (itemSkippedOnly || sawAnyFileResult)
+                            {
+                                System.Threading.Interlocked.Increment(ref stats.ExistingItems);
+                                System.Threading.Interlocked.Increment(ref totalExistingItems);
+                            }
+
+                            System.Threading.Interlocked.Increment(ref batchProcessed);
+                            ReportProgressEvery50();
+                        }).ConfigureAwait(false);
+
+                        if (batchProcessed >= Math.Max(12, currentParallel * 4))
+                        {
+                            var hardRatio = batchProcessed == 0 ? 0 : (double)batchHardErrors / batchProcessed;
+                            var previous = currentParallel;
+
+                            if (hardRatio >= 0.18 && currentParallel > minParallel)
+                                currentParallel--;
+                            else if (hardRatio <= 0.04 && currentParallel < maxParallel)
+                                currentParallel++;
+
+                            if (currentParallel != previous)
+                            {
+                                sourceStatsEntry.CurrentParallelism = currentParallel;
+                                progress.Report($"⚙️ {sourceName}: concurrencia {previous} -> {currentParallel} (error duro {hardRatio:P0})");
                             }
                         }
                     }
+                })
+                .ToList();
 
-                    // Clasifica resultado por obra para no confundirlo con métricas por archivo.
-                    if (itemHasError)
-                    {
-                        System.Threading.Interlocked.Increment(ref stats.ErroredItems);
-                        System.Threading.Interlocked.Increment(ref totalErroredItems);
-                    }
-                    else if (itemCancelled)
-                    {
-                        System.Threading.Interlocked.Increment(ref stats.CancelledItems);
-                        System.Threading.Interlocked.Increment(ref totalCancelledItems);
-                    }
-                    else if (itemDownloaded)
-                    {
-                        System.Threading.Interlocked.Increment(ref stats.DownloadedItems);
-                        System.Threading.Interlocked.Increment(ref totalDownloadedItems);
-                    }
-                    else if (itemSkippedOnly || sawAnyFileResult)
-                    {
-                        System.Threading.Interlocked.Increment(ref stats.ExistingItems);
-                        System.Threading.Interlocked.Increment(ref totalExistingItems);
-                    }
-
-                    ReportProgressEvery50();
-                }
-                finally
-                {
-                    concSem.Release();
-                }
-            }).ToList();
-
-            await Task.WhenAll(downloadTasks).ConfigureAwait(false);
+            await Task.WhenAll(sourceWorkers).ConfigureAwait(false);
 
             Log("📊 Resumen por fuente:");
             foreach (var kv in sourceStats.OrderBy(k => k.Key, StringComparer.OrdinalIgnoreCase))
@@ -1071,6 +1165,8 @@ public partial class MainWindow : Window, IAsyncDisposable
 
             Log($"📌 Totales obras: Nuevas={totalDownloadedItems} | Ya en carpeta={totalExistingItems} | Sin archivos detectados={totalRejectedItems} | Error={totalErroredItems} | Canceladas={totalCancelledItems}");
             Log($"📌 Totales archivos: Nuevos={totalDownloadedFiles} | Ya en carpeta={totalSkippedFiles} | Error={totalFailedFiles} | Cancelados={totalCancelledFiles}");
+            if (totalAutoStoppedItems > 0)
+                Log($"🛑 CPDL auto-stop: {totalAutoStoppedItems} obras CPDL omitidas por ratio alto de sin-archivos");
 
             progress.Report($"✅ Completado: obras {totalProcessedItems}/{downloadable.Count} · nuevas={totalDownloadedItems} previas={totalExistingItems} sin-archivos={totalRejectedItems} error={totalErroredItems} · archivos ✅{totalDownloadedFiles} ⏭️{totalSkippedFiles} ❌{totalFailedFiles}");
             ShowToast("ScoreDown", $"Catálogo completo: obras nuevas {totalDownloadedItems} · previas {totalExistingItems}");
@@ -1089,6 +1185,7 @@ public partial class MainWindow : Window, IAsyncDisposable
         }
         finally
         {
+            _cpdl.FlushNoFilesBlacklist();
             btnFetchCatalog.IsEnabled = true;
             btnDownloadAll.IsEnabled = true;
             btnCancelCatalog.IsEnabled = false;
@@ -1101,6 +1198,77 @@ public partial class MainWindow : Window, IAsyncDisposable
         _catalogCts?.Cancel();
         _downloadCts?.Cancel();
         Log("⏹ Descargas canceladas por el usuario");
+    }
+
+    private async Task<List<PartituraItem>> ApplyBulkPreflightAsync(
+        List<PartituraItem> downloadable,
+        IProgress<string> progress,
+        CancellationToken ct)
+    {
+        if (downloadable.Count < 100)
+            return downloadable;
+
+        const int sampleSize = 100;
+        const int minSample = 40;
+
+        var skipSources = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var candidates = downloadable
+            .Where(i => i.Files.Count == 0 && (i.Source == "CPDL" || i.Source == "IMSLP"))
+            .GroupBy(i => i.Source)
+            .ToList();
+
+        foreach (var group in candidates)
+        {
+            ct.ThrowIfCancellationRequested();
+
+            var source = group.Key;
+            var sample = group.Take(sampleSize).ToList();
+            if (sample.Count == 0)
+                continue;
+
+            progress.Report($"🧪 Preflight {source}: muestreando {sample.Count} obras...");
+
+            var tested = 0;
+            var withFiles = 0;
+            foreach (var item in sample)
+            {
+                ct.ThrowIfCancellationRequested();
+
+                bool loaded;
+                try
+                {
+                    loaded = source == "CPDL"
+                        ? await _cpdl.LoadFilesAsync(item, ct).ConfigureAwait(false)
+                        : await _imslp.LoadFilesAsync(item, ct).ConfigureAwait(false);
+                }
+                catch (OperationCanceledException) { throw; }
+                catch
+                {
+                    loaded = false;
+                }
+
+                tested++;
+                if (loaded && item.Files.Count > 0)
+                    withFiles++;
+            }
+
+            var ratio = tested == 0 ? 0 : (double)withFiles / tested;
+            var threshold = source == "CPDL" ? 0.35 : 0.15;
+            Log($"🧪 Preflight {source}: {withFiles}/{tested} con archivos ({ratio:P0})");
+
+            if (tested >= minSample && ratio < threshold)
+            {
+                skipSources.Add(source);
+                Log($"⚠️ Preflight {source}: tasa baja ({ratio:P0}) — se excluye de descarga masiva en esta corrida");
+            }
+        }
+
+        if (skipSources.Count == 0)
+            return downloadable;
+
+        var filtered = downloadable.Where(i => !skipSources.Contains(i.Source)).ToList();
+        progress.Report($"⚠️ Preflight activo: fuentes omitidas => {string.Join(", ", skipSources.OrderBy(x => x))}");
+        return filtered;
     }
 
     private void BtnCpdlSession_Click(object sender, RoutedEventArgs e)
@@ -2011,6 +2179,7 @@ public partial class MainWindow : Window, IAsyncDisposable
             PageUrl = i.PageUrl,
             IsSelected = i.IsSelected,
             Source = i.Source,
+            SourcePageId = i.SourcePageId,
             UserTag = i.UserTag,
             Files = i.Files.Select(f => new PartituraFile
             {
