@@ -3,7 +3,12 @@ using System.IO;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
-using System.Windows.Media;
+using WpfColor = System.Windows.Media.Color;
+using WpfColorConverter = System.Windows.Media.ColorConverter;
+using WpfBrushes = System.Windows.Media.Brushes;
+using WpfSolidColorBrush = System.Windows.Media.SolidColorBrush;
+using WpfOrientation = System.Windows.Controls.Orientation;
+using WpfHorizontalAlignment = System.Windows.HorizontalAlignment;
 using WpfButton = System.Windows.Controls.Button;
 using WpfPanel = System.Windows.Controls.Panel;
 using WpfTextBox = System.Windows.Controls.TextBox;
@@ -134,6 +139,9 @@ public static class DarkDialogService
         return path;
     }
 
+    private static WpfSolidColorBrush Hex(string hex)
+        => new((WpfColor)WpfColorConverter.ConvertFromString(hex)!);
+
     private sealed class DarkMessageWindow : Window
     {
         public MessageBoxResult Result { get; private set; } = MessageBoxResult.None;
@@ -145,8 +153,8 @@ public static class DarkDialogService
             MinWidth = 420;
             SizeToContent = SizeToContent.Height;
             ResizeMode = ResizeMode.NoResize;
-            Background = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#1E1E2E"));
-            Foreground = Brushes.White;
+            Background = Hex("#1E1E2E");
+            Foreground = WpfBrushes.White;
 
             var root = new Grid { Margin = new Thickness(16) };
             root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
@@ -180,8 +188,8 @@ public static class DarkDialogService
 
             var buttonsPanel = new StackPanel
             {
-                Orientation = Orientation.Horizontal,
-                HorizontalAlignment = HorizontalAlignment.Right,
+                Orientation = WpfOrientation.Horizontal,
+                HorizontalAlignment = WpfHorizontalAlignment.Right,
                 Margin = new Thickness(0, 14, 0, 0)
             };
             AddButtons(buttonsPanel, buttons);
@@ -241,9 +249,9 @@ public static class DarkDialogService
                 MinWidth = 84,
                 Margin = new Thickness(8, 0, 0, 0),
                 Padding = new Thickness(12, 6, 12, 6),
-                Background = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#2D2D44")),
-                Foreground = Brushes.White,
-                BorderBrush = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#555")),
+                Background = Hex("#2D2D44"),
+                Foreground = WpfBrushes.White,
+                BorderBrush = Hex("#555"),
                 BorderThickness = new Thickness(1),
                 IsDefault = isDefault
             };
@@ -271,8 +279,8 @@ public static class DarkDialogService
             MinWidth = 540;
             SizeToContent = SizeToContent.Height;
             ResizeMode = ResizeMode.NoResize;
-            Background = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#1E1E2E"));
-            Foreground = Brushes.White;
+            Background = Hex("#1E1E2E");
+            Foreground = WpfBrushes.White;
 
             var root = new Grid { Margin = new Thickness(16) };
             root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
@@ -283,7 +291,7 @@ public static class DarkDialogService
             {
                 Text = caption,
                 Margin = new Thickness(0, 0, 0, 6),
-                Foreground = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#B0B0C0"))
+                Foreground = Hex("#B0B0C0")
             };
             Grid.SetRow(captionText, 0);
 
@@ -291,9 +299,9 @@ public static class DarkDialogService
             {
                 Text = initialPath ?? string.Empty,
                 Padding = new Thickness(10, 6, 10, 6),
-                Background = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#2D2D44")),
-                Foreground = Brushes.White,
-                BorderBrush = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#555")),
+                Background = Hex("#2D2D44"),
+                Foreground = WpfBrushes.White,
+                BorderBrush = Hex("#555"),
                 BorderThickness = new Thickness(1),
                 ToolTip = hint
             };
@@ -301,8 +309,8 @@ public static class DarkDialogService
 
             var buttons = new StackPanel
             {
-                Orientation = Orientation.Horizontal,
-                HorizontalAlignment = HorizontalAlignment.Right,
+                Orientation = WpfOrientation.Horizontal,
+                HorizontalAlignment = WpfHorizontalAlignment.Right,
                 Margin = new Thickness(0, 12, 0, 0)
             };
 
@@ -312,9 +320,9 @@ public static class DarkDialogService
                 MinWidth = 92,
                 Margin = new Thickness(8, 0, 0, 0),
                 Padding = new Thickness(12, 6, 12, 6),
-                Background = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#374151")),
-                Foreground = Brushes.White,
-                BorderBrush = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#555")),
+                Background = Hex("#374151"),
+                Foreground = WpfBrushes.White,
+                BorderBrush = Hex("#555"),
                 BorderThickness = new Thickness(1)
             };
             btnCancel.Click += (_, _) =>
@@ -329,9 +337,9 @@ public static class DarkDialogService
                 MinWidth = 92,
                 Margin = new Thickness(8, 0, 0, 0),
                 Padding = new Thickness(12, 6, 12, 6),
-                Background = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#7C3AED")),
-                Foreground = Brushes.White,
-                BorderBrush = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#555")),
+                Background = Hex("#7C3AED"),
+                Foreground = WpfBrushes.White,
+                BorderBrush = Hex("#555"),
                 BorderThickness = new Thickness(1),
                 IsDefault = true
             };

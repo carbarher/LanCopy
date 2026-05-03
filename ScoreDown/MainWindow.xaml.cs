@@ -21,6 +21,20 @@ namespace ScoreDown;
 
 public partial class MainWindow : Window, IAsyncDisposable
 {
+    private sealed class SourceStats
+    {
+        public int ItemsSeen;
+        public int DownloadedItems;
+        public int ExistingItems;
+        public int DownloadedFiles;
+        public int SkippedFiles;
+        public int RejectedItems;
+        public int ErroredItems;
+        public int FailedFiles;
+        public int CancelledItems;
+        public int CancelledFiles;
+    }
+
     private readonly ImslpService _imslp = new();
     private readonly MutopiaService _mutopia = new();
     private readonly CpdlService _cpdl = new();
@@ -40,7 +54,6 @@ public partial class MainWindow : Window, IAsyncDisposable
     private const int MaxCacheEntries = 20;
     private readonly List<string> _recentQueries = new();
     private readonly Dictionary<string, string> _savedTags = new(StringComparer.OrdinalIgnoreCase);
-    private readonly HashSet<string> _savedFavorites = new(StringComparer.OrdinalIgnoreCase);
     private const int MaxRecentQueries = 12;
     // R3: debounce timer for tag filter
     private readonly DispatcherTimer _tagFilterDebounce;
@@ -59,9 +72,6 @@ public partial class MainWindow : Window, IAsyncDisposable
     private readonly string _tagsPath = Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
         "ScoreDown", "tags.json");
-    private readonly string _favoritesPath = Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-        "ScoreDown", "favorites.json");
     private readonly string _downloadHistoryPath = Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
         "ScoreDown", "download-history.json");
@@ -130,7 +140,6 @@ public partial class MainWindow : Window, IAsyncDisposable
         _currentDestFolder = txtDestFolder.Text?.Trim() ?? string.Empty;
         LoadSearchHistory();
         LoadTags();
-        LoadFavorites();
         LoadDownloadHistory();
         LoadOfflineLibrary();
         RefreshHistoryCombo();
@@ -166,7 +175,6 @@ public partial class MainWindow : Window, IAsyncDisposable
     {
         CleanupRuntimeResources();
         SaveTags();
-        SaveFavorites();
         SaveDownloadHistory();
         SaveOfflineLibrary();
 
@@ -308,8 +316,6 @@ public partial class MainWindow : Window, IAsyncDisposable
             pnlInfoContent.Visibility = Visibility.Collapsed;
             _suppressTagUiEvents = true;
             txtTagEditor.Text = string.Empty;
-            btnFavorite.IsChecked = false;
-            btnFavorite.Content = "☆ Favorito";
             _suppressTagUiEvents = false;
             txtTagStatus.Text = string.Empty;
             UpdatePreview(null);
@@ -325,8 +331,6 @@ public partial class MainWindow : Window, IAsyncDisposable
         icInfoFiles.ItemsSource = item.Files;
         _suppressTagUiEvents = true;
         txtTagEditor.Text = item.UserTag;
-        btnFavorite.IsChecked = item.IsFavorite;
-        btnFavorite.Content = item.IsFavorite ? "★ Favorito" : "☆ Favorito";
         _suppressTagUiEvents = false;
         txtTagStatus.Text = string.IsNullOrWhiteSpace(item.UserTag) ? "Sin tag" : "Tag cargado";
         UpdatePreview(item);
@@ -393,21 +397,6 @@ public partial class MainWindow : Window, IAsyncDisposable
     {
         txtTagEditor.Text = string.Empty;
         BtnSaveTag_Click(sender, e);
-    }
-
-    private void BtnFavorite_Checked(object sender, RoutedEventArgs e)
-    {
-        if (_suppressTagUiEvents) return;
-        if (lstResults.SelectedItem is not PartituraItem item) return;
-
-        item.IsFavorite = btnFavorite.IsChecked == true;
-        btnFavorite.Content = item.IsFavorite ? "★ Favorito" : "☆ Favorito";
-        var key = BuildDedupKey(item);
-        if (item.IsFavorite) _savedFavorites.Add(key); else _savedFavorites.Remove(key);
-        SaveFavorites();
-        txtTagStatus.Text = item.IsFavorite ? "Favorito guardado" : "Favorito quitado";
-        lstResults.Items.Refresh();
-        ApplyFilter();
     }
 
     private void TxtInfoUrl_Click(object sender, System.Windows.Input.MouseButtonEventArgs e)
@@ -742,6 +731,7 @@ public partial class MainWindow : Window, IAsyncDisposable
         btnFetchCatalog.IsEnabled = false;
         btnDownloadAll.IsEnabled = false;
         btnCancelCatalog.IsEnabled = true;
+        btnCancelAllDownloads.IsEnabled = true;
         ClearResults();
         _catalogSeenKeys.Clear();
 
@@ -816,6 +806,13 @@ public partial class MainWindow : Window, IAsyncDisposable
                 ? catalogItems.Where(i => i.Source != "IMSLP").ToList()
                 : catalogItems.ToList();
 
+            var bySource = downloadable
+                .GroupBy(i => string.IsNullOrWhiteSpace(i.Source) ? "Desconocida" : i.Source)
+                .OrderBy(g => g.Key, StringComparer.OrdinalIgnoreCase)
+                .Select(g => $"{g.Key}:{g.Count()}")
+                .ToArray();
+            Log($"📦 Obras para descarga por fuente: {(bySource.Length == 0 ? "ninguna" : string.Join(" | ", bySource))}");
+
             int imslpCount = 0;
             if (source == "Todas" && !includeImlspWhenAll)
             {
@@ -827,8 +824,38 @@ public partial class MainWindow : Window, IAsyncDisposable
                 Log("ℹ️ Modo Descargar todo: IMSLP incluido en descarga automática (puede tardar bastante)");
             }
 
-            int totalDone = 0;
+            int totalProcessedItems = 0;
+            int totalDownloadedItems = 0;
+            int totalExistingItems = 0;
+            int totalDownloadedFiles = 0;
+            int totalSkippedFiles = 0;
+            int totalRejectedItems = 0;
+            int totalErroredItems = 0;
+            int totalFailedFiles = 0;
+            int totalCancelledItems = 0;
+            int totalCancelledFiles = 0;
             int consecutiveErrors = 0;
+            var sourceStats = new ConcurrentDictionary<string, SourceStats>(StringComparer.OrdinalIgnoreCase);
+            var errorTypes = new ConcurrentDictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+
+            static SourceStats GetStats(ConcurrentDictionary<string, SourceStats> map, string source)
+                => map.GetOrAdd(string.IsNullOrWhiteSpace(source) ? "Desconocida" : source, _ => new SourceStats());
+
+            static void AddErrorType(ConcurrentDictionary<string, int> map, string? error)
+            {
+                var key = string.IsNullOrWhiteSpace(error) ? "Desconocido" : error.Trim();
+                map.AddOrUpdate(key, 1, (_, n) => n + 1);
+            }
+
+            void ReportProgressEvery50()
+            {
+                var processed = System.Threading.Interlocked.Increment(ref totalProcessedItems);
+                if (processed % 50 == 0)
+                {
+                    progress.Report($"📥 {processed}/{downloadable.Count} obras · nuevas={totalDownloadedItems} previas={totalExistingItems} sin-archivos={totalRejectedItems} error={totalErroredItems} · archivos ✅{totalDownloadedFiles} ⏭️{totalSkippedFiles} ❌{totalFailedFiles}");
+                }
+            }
+
             // Concurrencia adaptativa: SemaphoreSlim permite ajustar MaxCount en runtime
             // empieza en 3, baja a 1 si ≥5 errores seguidos
             var concSem = new SemaphoreSlim(3, 3);
@@ -842,6 +869,9 @@ public partial class MainWindow : Window, IAsyncDisposable
                 try
                 {
                     ct.ThrowIfCancellationRequested();
+
+                    var stats = GetStats(sourceStats, item.Source);
+                    System.Threading.Interlocked.Increment(ref stats.ItemsSeen);
 
                     // IMSLP/CPDL: cargar links de descarga (petición por obra)
                     // Con reintentos — transient failures (429, 502-504) son esperables en catálogo masivo
@@ -879,23 +909,94 @@ public partial class MainWindow : Window, IAsyncDisposable
                         if (!loaded)
                         {
                             System.Threading.Interlocked.Increment(ref consecutiveErrors);
+                            System.Threading.Interlocked.Increment(ref stats.RejectedItems);
+                            System.Threading.Interlocked.Increment(ref totalRejectedItems);
+                            AddErrorType(errorTypes, "Sin archivos detectados en la página");
+                            ReportProgressEvery50();
                             return;
                         }
                     }
 
                     var subFolder = BuildDestSubFolder(destFolder!, item);
+                    bool itemDownloaded = false;
+                    bool itemSkippedOnly = false;
+                    bool itemHasError = false;
+                    bool itemCancelled = false;
+                    bool sawAnyFileResult = false;
 
                     foreach (var file in item.Files)
                     {
                         ct.ThrowIfCancellationRequested();
                         try
                         {
-                            await _downloader.DownloadFileAsync(file, subFolder, null, null, ct);
-                            System.Threading.Volatile.Write(ref consecutiveErrors, 0);
+                            var (cpdlCookie, cpdlUa) = item.Source == "CPDL" ? _cpdl.GetSessionHeaders() : (null, null);
+                            var result = await _downloader.DownloadFileAsync(file, subFolder, null, null, ct, cpdlCookie, cpdlUa);
+                            if (result.Success)
+                            {
+                                sawAnyFileResult = true;
+                                if (result.Skipped)
+                                {
+                                    itemSkippedOnly = true;
+                                    System.Threading.Interlocked.Increment(ref stats.SkippedFiles);
+                                    System.Threading.Interlocked.Increment(ref totalSkippedFiles);
+                                }
+                                else
+                                {
+                                    itemDownloaded = true;
+                                    itemSkippedOnly = false;
+                                    System.Threading.Interlocked.Increment(ref stats.DownloadedFiles);
+                                    System.Threading.Interlocked.Increment(ref totalDownloadedFiles);
+                                }
+                                System.Threading.Volatile.Write(ref consecutiveErrors, 0);
+                            }
+                            else if (result.Cancelled)
+                            {
+                                sawAnyFileResult = true;
+                                itemCancelled = true;
+                                System.Threading.Interlocked.Increment(ref stats.CancelledFiles);
+                                System.Threading.Interlocked.Increment(ref totalCancelledFiles);
+                            }
+                            else
+                            {
+                                sawAnyFileResult = true;
+                                itemHasError = true;
+                                System.Threading.Interlocked.Increment(ref stats.FailedFiles);
+                                System.Threading.Interlocked.Increment(ref totalFailedFiles);
+                                AddErrorType(errorTypes, result.Error);
+
+                                var errors = System.Threading.Interlocked.Increment(ref consecutiveErrors);
+                                if (errors >= 5)
+                                {
+                                    // Solo intenta bajar a concurrencia 1 una vez (con CompareExchange)
+                                    if (System.Threading.Interlocked.CompareExchange(ref currentConcurrency, 1, 3) == 3)
+                                    {
+                                        // Drena 2 slots del semáforo (3 -> 1)
+                                        // Pero lo hace con try/catch para evitar race conditions
+                                        try
+                                        {
+                                            await concSem.WaitAsync(TimeSpan.FromSeconds(5), ct).ConfigureAwait(false);
+                                            await concSem.WaitAsync(TimeSpan.FromSeconds(5), ct).ConfigureAwait(false);
+                                        }
+                                        catch
+                                        {
+                                            // Si falla el drenaje, continuamos de todas formas
+                                            // (el error de concurrencia es menos crítico que el timeout)
+                                        }
+                                        progress.Report("⚠️ Errores repetidos: reduciendo a 1 descarga simultánea");
+                                        await Task.Delay(3000, ct).ConfigureAwait(false);
+                                    }
+                                }
+                            }
                         }
                         catch (OperationCanceledException) { throw; }
-                        catch
+                        catch (Exception ex)
                         {
+                            sawAnyFileResult = true;
+                            itemHasError = true;
+                            System.Threading.Interlocked.Increment(ref stats.FailedFiles);
+                            System.Threading.Interlocked.Increment(ref totalFailedFiles);
+                            AddErrorType(errorTypes, ex.GetType().Name);
+
                             // Reducir concurrencia si acumulamos errores seguidos (posible 429)
                             var errors = System.Threading.Interlocked.Increment(ref consecutiveErrors);
                             if (errors >= 5)
@@ -922,9 +1023,29 @@ public partial class MainWindow : Window, IAsyncDisposable
                         }
                     }
 
-                    var done = System.Threading.Interlocked.Increment(ref totalDone);
-                    if (done % 50 == 0)
-                        progress.Report($"📥 {done} obras descargadas...");
+                    // Clasifica resultado por obra para no confundirlo con métricas por archivo.
+                    if (itemHasError)
+                    {
+                        System.Threading.Interlocked.Increment(ref stats.ErroredItems);
+                        System.Threading.Interlocked.Increment(ref totalErroredItems);
+                    }
+                    else if (itemCancelled)
+                    {
+                        System.Threading.Interlocked.Increment(ref stats.CancelledItems);
+                        System.Threading.Interlocked.Increment(ref totalCancelledItems);
+                    }
+                    else if (itemDownloaded)
+                    {
+                        System.Threading.Interlocked.Increment(ref stats.DownloadedItems);
+                        System.Threading.Interlocked.Increment(ref totalDownloadedItems);
+                    }
+                    else if (itemSkippedOnly || sawAnyFileResult)
+                    {
+                        System.Threading.Interlocked.Increment(ref stats.ExistingItems);
+                        System.Threading.Interlocked.Increment(ref totalExistingItems);
+                    }
+
+                    ReportProgressEvery50();
                 }
                 finally
                 {
@@ -934,8 +1055,25 @@ public partial class MainWindow : Window, IAsyncDisposable
 
             await Task.WhenAll(downloadTasks).ConfigureAwait(false);
 
-            progress.Report($"✅ Completado: {totalDone} obras descargadas");
-            ShowToast("ScoreDown", $"Catálogo completo: {totalDone} obras descargadas");
+            Log("📊 Resumen por fuente:");
+            foreach (var kv in sourceStats.OrderBy(k => k.Key, StringComparer.OrdinalIgnoreCase))
+            {
+                var s = kv.Value;
+                Log($"   {kv.Key}: vistas={s.ItemsSeen} obras ✅nuevas={s.DownloadedItems} ⏭️previas={s.ExistingItems} 🚫sin-archivos={s.RejectedItems} ❌error={s.ErroredItems} 🛑canceladas={s.CancelledItems} · archivos ✅{s.DownloadedFiles} ⏭️{s.SkippedFiles} ❌{s.FailedFiles}");
+            }
+
+            if (!errorTypes.IsEmpty)
+            {
+                Log("📉 Tipos de error:");
+                foreach (var kv in errorTypes.OrderByDescending(k => k.Value).Take(8))
+                    Log($"   {kv.Key}: {kv.Value}");
+            }
+
+            Log($"📌 Totales obras: Nuevas={totalDownloadedItems} | Ya en carpeta={totalExistingItems} | Sin archivos detectados={totalRejectedItems} | Error={totalErroredItems} | Canceladas={totalCancelledItems}");
+            Log($"📌 Totales archivos: Nuevos={totalDownloadedFiles} | Ya en carpeta={totalSkippedFiles} | Error={totalFailedFiles} | Cancelados={totalCancelledFiles}");
+
+            progress.Report($"✅ Completado: obras {totalProcessedItems}/{downloadable.Count} · nuevas={totalDownloadedItems} previas={totalExistingItems} sin-archivos={totalRejectedItems} error={totalErroredItems} · archivos ✅{totalDownloadedFiles} ⏭️{totalSkippedFiles} ❌{totalFailedFiles}");
+            ShowToast("ScoreDown", $"Catálogo completo: obras nuevas {totalDownloadedItems} · previas {totalExistingItems}");
             _circuitBreaker?.RecordSuccess();
         }
         catch (OperationCanceledException)
@@ -954,8 +1092,49 @@ public partial class MainWindow : Window, IAsyncDisposable
             btnFetchCatalog.IsEnabled = true;
             btnDownloadAll.IsEnabled = true;
             btnCancelCatalog.IsEnabled = false;
+            btnCancelAllDownloads.IsEnabled = false;
         }
     }
+
+    private void BtnCancelAllDownloads_Click(object sender, RoutedEventArgs e)
+    {
+        _catalogCts?.Cancel();
+        _downloadCts?.Cancel();
+        Log("⏹ Descargas canceladas por el usuario");
+    }
+
+    private void BtnCpdlSession_Click(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            var dlg = new CpdlSessionDialog { Owner = this };
+            var ok = dlg.ShowDialog();
+            if (ok == true && !string.IsNullOrWhiteSpace(dlg.CookieHeader))
+            {
+                _cpdl.SetManualSession(dlg.CookieHeader, dlg.UserAgent);
+                Log("🔐 CPDL sesión interactiva guardada. Reintenta catálogo/descarga CPDL.");
+                txtStatus.Text = "CPDL sesión activa";
+            }
+            else
+            {
+                Log("ℹ️ CPDL sesión cancelada o sin cookies válidas.");
+            }
+        }
+        catch (Exception ex)
+        {
+            Log($"❌ Error en sesión CPDL: {ex.Message}");
+        }
+    }
+
+    private void BtnExit_Click(object sender, RoutedEventArgs e) => System.Windows.Application.Current.Shutdown();
+
+    private void BtnCopyLog_Click(object sender, RoutedEventArgs e)
+    {
+        if (!string.IsNullOrEmpty(txtLog.Text))
+            System.Windows.Clipboard.SetText(txtLog.Text);
+    }
+
+    private void BtnClearLog_Click(object sender, RoutedEventArgs e) => txtLog.Clear();
 
     private static string BuildDestSubFolder(string destFolder, PartituraItem item) =>
         Path.Combine(destFolder,
@@ -1144,7 +1323,6 @@ public partial class MainWindow : Window, IAsyncDisposable
     {
         bool onlyPdf = chkOnlyPdf.IsChecked == true;
         bool onlyMidi = chkOnlyMidi.IsChecked == true;
-        bool onlyFavorites = chkOnlyFavorites.IsChecked == true;
         var tagFilter = txtTagFilter.Text?.Trim() ?? string.Empty;
         var titleQuery = txtTitleSearch.Text?.Trim() ?? string.Empty;
         var composerQuery = txtComposerSearch.Text?.Trim() ?? string.Empty;
@@ -1156,7 +1334,6 @@ public partial class MainWindow : Window, IAsyncDisposable
             if (obj is not PartituraItem item) return false;
             if (!string.Equals(sourceFilter, "Todas", StringComparison.OrdinalIgnoreCase)
                 && !string.Equals(item.Source, sourceFilter, StringComparison.OrdinalIgnoreCase)) return false;
-            if (onlyFavorites && !item.IsFavorite) return false;
             if (!string.IsNullOrWhiteSpace(tagFilter) && !item.UserTag.Contains(tagFilter, StringComparison.OrdinalIgnoreCase)) return false;
             if (!string.IsNullOrWhiteSpace(titleQuery) && !item.Title.Contains(titleQuery, StringComparison.OrdinalIgnoreCase)) return false;
             if (!string.IsNullOrWhiteSpace(composerQuery) && !item.Composer.Contains(composerQuery, StringComparison.OrdinalIgnoreCase)) return false;
@@ -1595,7 +1772,6 @@ public partial class MainWindow : Window, IAsyncDisposable
     {
         var key = BuildDedupKey(item);
         item.UserTag = _savedTags.TryGetValue(key, out var tag) ? tag : string.Empty;
-        item.IsFavorite = _savedFavorites.Contains(key);
     }
 
     private void LoadDownloadHistory()
@@ -1624,16 +1800,6 @@ public partial class MainWindow : Window, IAsyncDisposable
     private void SaveTags()
         => JsonStore.Save(_tagsPath, _savedTags);
 
-    private void LoadFavorites()
-    {
-        var items = JsonStore.Load<List<string>>(_favoritesPath, []);
-        _savedFavorites.Clear();
-        foreach (var item in items) _savedFavorites.Add(item);
-    }
-
-    private void SaveFavorites()
-        => JsonStore.Save(_favoritesPath, _savedFavorites.OrderBy(x => x).ToList());
-
     private void BtnExportLibrary_Click(object sender, RoutedEventArgs e)
     {
         var outputPath = DarkDialogService.PromptSaveFile(
@@ -1646,7 +1812,6 @@ public partial class MainWindow : Window, IAsyncDisposable
         var payload = new LibraryData
         {
             Tags = new Dictionary<string, string>(_savedTags),
-            Favorites = _savedFavorites.OrderBy(x => x).ToList(),
             Items = CloneItems(_allResults.Any() ? _allResults : _offlineLibraryItems)
         };
         File.WriteAllText(outputPath, JsonSerializer.Serialize(payload, ScoreDownJsonContext.Default.LibraryData));
@@ -1703,13 +1868,9 @@ public partial class MainWindow : Window, IAsyncDisposable
             _savedTags.Clear();
             foreach (var kv in data.Tags)
                 _savedTags[kv.Key] = kv.Value;
-            _savedFavorites.Clear();
-            foreach (var key in data.Favorites)
-                _savedFavorites.Add(key);
             _offlineLibraryItems = CloneItems(data.Items);
 
             SaveTags();
-            SaveFavorites();
             SaveOfflineLibrary();
             foreach (var item in _allResults)
                 ApplySavedTag(item);
@@ -1851,7 +2012,6 @@ public partial class MainWindow : Window, IAsyncDisposable
             IsSelected = i.IsSelected,
             Source = i.Source,
             UserTag = i.UserTag,
-            IsFavorite = i.IsFavorite,
             Files = i.Files.Select(f => new PartituraFile
             {
                 Format = f.Format,

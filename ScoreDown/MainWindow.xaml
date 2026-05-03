@@ -38,6 +38,55 @@
                 </Trigger>
             </Style.Triggers>
         </Style>
+        <Style x:Key="LogActionButtonStyle" TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
+            <Setter Property="RenderTransformOrigin" Value="0.5,0.5"/>
+            <Setter Property="RenderTransform">
+                <Setter.Value>
+                    <TransformGroup>
+                        <ScaleTransform ScaleX="1" ScaleY="1"/>
+                        <TranslateTransform X="0" Y="0"/>
+                    </TransformGroup>
+                </Setter.Value>
+            </Setter>
+            <Style.Triggers>
+                <EventTrigger RoutedEvent="PreviewMouseLeftButtonDown">
+                    <BeginStoryboard>
+                        <Storyboard>
+                            <DoubleAnimation Storyboard.TargetProperty="(UIElement.RenderTransform).(TransformGroup.Children)[0].(ScaleTransform.ScaleX)"
+                                             To="0.96" Duration="0:0:0.08"/>
+                            <DoubleAnimation Storyboard.TargetProperty="(UIElement.RenderTransform).(TransformGroup.Children)[0].(ScaleTransform.ScaleY)"
+                                             To="0.96" Duration="0:0:0.08"/>
+                            <DoubleAnimation Storyboard.TargetProperty="(UIElement.RenderTransform).(TransformGroup.Children)[1].(TranslateTransform.Y)"
+                                             To="1.5" Duration="0:0:0.08"/>
+                        </Storyboard>
+                    </BeginStoryboard>
+                </EventTrigger>
+                <EventTrigger RoutedEvent="PreviewMouseLeftButtonUp">
+                    <BeginStoryboard>
+                        <Storyboard>
+                            <DoubleAnimation Storyboard.TargetProperty="(UIElement.RenderTransform).(TransformGroup.Children)[0].(ScaleTransform.ScaleX)"
+                                             To="1" Duration="0:0:0.12"/>
+                            <DoubleAnimation Storyboard.TargetProperty="(UIElement.RenderTransform).(TransformGroup.Children)[0].(ScaleTransform.ScaleY)"
+                                             To="1" Duration="0:0:0.12"/>
+                            <DoubleAnimation Storyboard.TargetProperty="(UIElement.RenderTransform).(TransformGroup.Children)[1].(TranslateTransform.Y)"
+                                             To="0" Duration="0:0:0.12"/>
+                        </Storyboard>
+                    </BeginStoryboard>
+                </EventTrigger>
+                <EventTrigger RoutedEvent="MouseLeave">
+                    <BeginStoryboard>
+                        <Storyboard>
+                            <DoubleAnimation Storyboard.TargetProperty="(UIElement.RenderTransform).(TransformGroup.Children)[0].(ScaleTransform.ScaleX)"
+                                             To="1" Duration="0:0:0.12"/>
+                            <DoubleAnimation Storyboard.TargetProperty="(UIElement.RenderTransform).(TransformGroup.Children)[0].(ScaleTransform.ScaleY)"
+                                             To="1" Duration="0:0:0.12"/>
+                            <DoubleAnimation Storyboard.TargetProperty="(UIElement.RenderTransform).(TransformGroup.Children)[1].(TranslateTransform.Y)"
+                                             To="0" Duration="0:0:0.12"/>
+                        </Storyboard>
+                    </BeginStoryboard>
+                </EventTrigger>
+            </Style.Triggers>
+        </Style>
         <Style TargetType="TextBox">
             <Setter Property="Background" Value="#2D2D44"/>
             <Setter Property="Foreground" Value="White"/>
@@ -201,9 +250,9 @@
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="Auto"/>
-            <RowDefinition Height="*"/>
+            <RowDefinition Height="0"/>
             <RowDefinition Height="Auto"/>
-            <RowDefinition Height="120"/>
+            <RowDefinition Height="*"/>
         </Grid.RowDefinitions>
 
         <!-- Título -->
@@ -211,7 +260,7 @@
                    Foreground="#A78BFA" Margin="0,0,0,12"/>
 
         <!-- Barra de búsqueda -->
-        <Grid Grid.Row="1" Margin="0,0,0,10">
+        <Grid Grid.Row="1" Margin="0,0,0,10" Visibility="Collapsed">
             <Grid.RowDefinitions>
                 <RowDefinition Height="Auto"/>
                 <RowDefinition Height="Auto"/>
@@ -253,10 +302,10 @@
                 <ComboBoxItem>Todas</ComboBoxItem>
             </ComboBox>
             <Button x:Name="btnSearch" Grid.Row="0" Grid.Column="2" Content="🔍 Buscar"
-                    Margin="8,0,0,0" Click="BtnSearch_Click"/>
+                    Margin="8,0,0,0" Click="BtnSearch_Click" Visibility="Collapsed"/>
             <Button x:Name="btnCancelSearch" Grid.Row="0" Grid.Column="3" Content="✖ Cancelar"
                     Margin="6,0,0,0" Click="BtnCancelSearch_Click" IsEnabled="False"
-                    Background="#991B1B"/>
+                    Background="#991B1B" Visibility="Collapsed"/>
 
             <Grid Grid.Row="1" Grid.Column="0" Grid.ColumnSpan="4" Margin="0,6,0,0">
                 <Grid.ColumnDefinitions>
@@ -271,15 +320,15 @@
                           Margin="0,0,8,0"
                           Background="#2D2D44" Foreground="White" BorderBrush="#555"
                           SelectionChanged="CmbHistory_SelectionChanged"
-                          ToolTip="Búsquedas recientes"/>
+                          ToolTip="Búsquedas recientes" Visibility="Collapsed"/>
                 <TextBlock x:Name="txtCacheStats" Grid.Column="1" VerticalAlignment="Center"
-                           Foreground="#A78BFA" Margin="0,0,8,0" Text="Cache H:0 M:0 (0)"/>
+                           Foreground="#A78BFA" Margin="0,0,8,0" Text="Cache H:0 M:0 (0)" Visibility="Collapsed"/>
                 <Button x:Name="btnClearCache" Grid.Column="2" Content="🧹 Limpiar cache"
-                        Padding="10,4" Click="BtnClearCache_Click" Background="#374151"/>
+                        Padding="10,4" Click="BtnClearCache_Click" Background="#374151" Visibility="Collapsed"/>
                 <Button x:Name="btnFetchCatalog" Grid.Column="3" Content="📥 Catálogo"
                         Padding="10,4" Margin="8,0,0,0" Background="#0F766E"
                         Click="BtnFetchCatalog_Click"
-                        ToolTip="Descarga el catálogo completo de la fuente seleccionada"/>
+                    ToolTip="Descarga el catálogo completo de la fuente seleccionada" Visibility="Collapsed"/>
                 <Button x:Name="btnDownloadAll" Grid.Column="4" Content="🚀 Descargar todo"
                     Padding="10,4" Margin="4,0,0,0" Background="#7C3AED"
                     Click="BtnDownloadAll_Click"
@@ -287,7 +336,7 @@
                 <Button x:Name="btnCancelCatalog" Grid.Column="5" Content="⏹ Detener"
                         Padding="10,4" Margin="4,0,0,0" Background="#991B1B" IsEnabled="False"
                         Click="BtnCancelCatalog_Click"
-                        ToolTip="Detener descarga de catálogo"/>
+                        ToolTip="Detener descarga de catálogo" Visibility="Collapsed"/>
             </Grid>
 
             <Grid Grid.Row="2" Grid.Column="0" Grid.ColumnSpan="4" Margin="0,6,0,0">
@@ -303,15 +352,15 @@
                 </Grid.ColumnDefinitions>
                 <TextBox x:Name="txtTitleSearch" Grid.Column="0" Margin="0,0,8,0"
                          KeyDown="TxtSearch_KeyDown"
-                         ToolTip="Búsqueda avanzada por título"/>
+                         ToolTip="Búsqueda avanzada por título" Visibility="Collapsed"/>
                 <TextBox x:Name="txtComposerSearch" Grid.Column="1" Margin="0,0,8,0"
                          KeyDown="TxtSearch_KeyDown"
-                         ToolTip="Búsqueda avanzada por compositor"/>
+                         ToolTip="Búsqueda avanzada por compositor" Visibility="Collapsed"/>
                 <TextBox x:Name="txtTagFilter" Grid.Column="2" Margin="0,0,8,0"
                      TextChanged="TxtTagFilter_TextChanged"
                      ToolTip="Filtrar por tag"/>
                 <Button Grid.Column="3" Content="🏷 Lote" Padding="10,6" Margin="0,0,4,0"
-                    Background="#0F766E" Click="BtnBulkTag_Click"/>
+                    Background="#0F766E" Click="BtnBulkTag_Click" Visibility="Collapsed"/>
                 <Button Grid.Column="4" Content="⬆ Biblioteca" Padding="10,6" Margin="0,0,4,0"
                         Background="#1D4ED8" Click="BtnImportLibrary_Click"/>
                 <Button Grid.Column="5" Content="⬇ Biblioteca" Padding="10,6"
@@ -319,19 +368,19 @@
                 <Button Grid.Column="6" Content="🌐 HTML" Padding="10,6" Margin="4,0,0,0"
                     Background="#334155" Click="BtnExportHtml_Click"/>
                 <Button Grid.Column="7" Content="📂 Compositor" Padding="10,6" Margin="4,0,0,0"
-                    Background="#374151" Click="BtnOpenComposerFolder_Click"/>
+                    Background="#374151" Click="BtnOpenComposerFolder_Click" Visibility="Collapsed"/>
             </Grid>
         </Grid>
 
         <!-- Lista de resultados -->
-        <Grid Grid.Row="2">
+        <Grid Grid.Row="2" Visibility="Collapsed">
             <Grid.RowDefinitions>
                 <RowDefinition Height="Auto"/>
                 <RowDefinition Height="*"/>
             </Grid.RowDefinitions>
 
             <!-- Cabecera con selección global -->
-            <Grid Grid.Row="0" Margin="0,0,0,4">
+            <Grid Grid.Row="0" Margin="0,0,0,4" Visibility="Collapsed">
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="Auto"/>
                     <ColumnDefinition Width="*"/>
@@ -360,17 +409,14 @@
                 <CheckBox x:Name="chkOnlyMidi" Grid.Column="4" Content="Solo MIDI"
                           Foreground="#A78BFA"
                           Checked="FilterChanged" Unchecked="FilterChanged"/>
-                <CheckBox x:Name="chkOnlyFavorites" Grid.Column="4" Content="★ Favoritos"
-                          Foreground="#FBBF24" Margin="92,0,0,0"
-                          Checked="FilterChanged" Unchecked="FilterChanged"/>
             </Grid>
 
             <!-- Lista + panel lateral -->
             <Grid Grid.Row="1">
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="*"/>
-                    <ColumnDefinition Width="5"/>
-                    <ColumnDefinition Width="230" MinWidth="140" MaxWidth="340"/>
+                    <ColumnDefinition Width="0"/>
+                    <ColumnDefinition Width="0"/>
                 </Grid.ColumnDefinitions>
 
                 <!-- Listado de obras -->
@@ -401,21 +447,10 @@
                                     </Grid.ColumnDefinitions>
                                     <CheckBox Grid.Column="0" IsChecked="{Binding IsSelected}"
                                               Margin="0,0,8,0" VerticalAlignment="Center"
-                                              Checked="ItemSelectionChanged" Unchecked="ItemSelectionChanged"/>
+                                              Checked="ItemSelectionChanged" Unchecked="ItemSelectionChanged"
+                                              Visibility="Collapsed"/>
                                     <StackPanel Grid.Column="1">
                                         <StackPanel Orientation="Horizontal">
-                                            <TextBlock Text="★" Foreground="#FBBF24" Margin="0,0,6,0">
-                                                <TextBlock.Style>
-                                                    <Style TargetType="TextBlock">
-                                                        <Setter Property="Visibility" Value="Visible"/>
-                                                        <Style.Triggers>
-                                                            <DataTrigger Binding="{Binding IsFavorite}" Value="False">
-                                                                <Setter Property="Visibility" Value="Collapsed"/>
-                                                            </DataTrigger>
-                                                        </Style.Triggers>
-                                                    </Style>
-                                                </TextBlock.Style>
-                                            </TextBlock>
                                             <TextBlock Text="{Binding DisplayName}" FontWeight="SemiBold"
                                                        Foreground="#E2E8F0" TextTrimming="CharacterEllipsis"/>
                                         </StackPanel>
@@ -457,10 +492,10 @@
 
                 <!-- Splitter -->
                 <GridSplitter Grid.Column="1" Width="5" HorizontalAlignment="Stretch"
-                              Background="#3D3D5C" Cursor="SizeWE"/>
+                              Background="#3D3D5C" Cursor="SizeWE" Visibility="Collapsed"/>
 
                 <!-- Panel info obra seleccionada -->
-                <Border Grid.Column="2" Background="#1A1A30" BorderBrush="#3D3D5C" BorderThickness="1,0,0,0">
+                <Border Grid.Column="2" Background="#1A1A30" BorderBrush="#3D3D5C" BorderThickness="1,0,0,0" Visibility="Collapsed">
                     <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
                         <StackPanel Margin="10,8">
                             <TextBlock x:Name="txtInfoHint" Text="← Selecciona una obra"
@@ -493,20 +528,17 @@
                                 <TextBox x:Name="txtTagEditor" TextChanged="TxtTagEditor_TextChanged"/>
                                 <Grid Margin="0,6,0,0">
                                     <Grid.ColumnDefinitions>
-                                        <ColumnDefinition Width="Auto"/>
                                         <ColumnDefinition Width="*"/>
                                         <ColumnDefinition Width="Auto"/>
                                         <ColumnDefinition Width="Auto"/>
                                     </Grid.ColumnDefinitions>
-                                    <ToggleButton x:Name="btnFavorite" Grid.Column="0" Content="☆ Favorito" Padding="10,5" Margin="0,0,8,0"
-                                                  Checked="BtnFavorite_Checked" Unchecked="BtnFavorite_Checked"/>
-                                    <TextBlock x:Name="txtTagStatus" Grid.Column="1" Foreground="#666" FontSize="10" VerticalAlignment="Center"/>
-                                    <Button x:Name="btnSaveTag" Grid.Column="2" Content="Guardar tag" Padding="10,5" Margin="8,0,0,0" Click="BtnSaveTag_Click"/>
-                                    <Button Grid.Column="3" Content="Limpiar" Padding="10,5" Margin="4,0,0,0" Background="#374151" Click="BtnClearTag_Click"/>
+                                    <TextBlock x:Name="txtTagStatus" Grid.Column="0" Foreground="#666" FontSize="10" VerticalAlignment="Center"/>
+                                    <Button x:Name="btnSaveTag" Grid.Column="1" Content="Guardar tag" Padding="10,5" Margin="8,0,0,0" Click="BtnSaveTag_Click"/>
+                                    <Button Grid.Column="2" Content="Limpiar" Padding="10,5" Margin="4,0,0,0" Background="#374151" Click="BtnClearTag_Click"/>
                                 </Grid>
-                                <TextBlock Text="Vista previa:" Foreground="#888" FontSize="11" Margin="0,10,0,4"/>
-                                <TextBlock x:Name="txtPreviewHint" Foreground="#94A3B8" FontSize="10" TextWrapping="Wrap" Margin="0,0,0,4"/>
-                                <Border Background="#0B1020" BorderBrush="#333" BorderThickness="1" Height="220">
+                                <TextBlock Text="Vista previa:" Foreground="#888" FontSize="11" Margin="0,10,0,4" Visibility="Collapsed"/>
+                                <TextBlock x:Name="txtPreviewHint" Foreground="#94A3B8" FontSize="10" TextWrapping="Wrap" Margin="0,0,0,4" Visibility="Collapsed"/>
+                                <Border Background="#0B1020" BorderBrush="#333" BorderThickness="1" Height="220" Visibility="Collapsed">
                                     <Grid>
                                         <WebBrowser x:Name="wbPreview" Visibility="Collapsed"/>
                                         <TextBlock x:Name="txtPreviewFallback" Visibility="Visible"
@@ -531,6 +563,7 @@
                 <ColumnDefinition Width="Auto"/>
                 <ColumnDefinition Width="Auto"/>
                 <ColumnDefinition Width="Auto"/>
+                <ColumnDefinition Width="Auto"/>
             </Grid.ColumnDefinitions>
 
             <TextBlock Grid.Column="0" Text="📁 Destino:" VerticalAlignment="Center" Margin="0,0,8,0"/>
@@ -541,16 +574,30 @@
                     Click="BtnChooseFolder_Click" ToolTip="Seleccionar carpeta"/>
             <Button x:Name="btnDownload" Grid.Column="3" Content="⬇ Descargar seleccionados"
                     Margin="8,0,0,0" Click="BtnDownload_Click" IsEnabled="False"
-                    Background="#065F46" ToolTip="Ctrl+D"/>
+                    Background="#065F46" ToolTip="Ctrl+D" Visibility="Collapsed"/>
             <Button x:Name="btnCancelDownload" Grid.Column="4" Content="✖ Parar"
                     Margin="6,0,0,0" Click="BtnCancelDownload_Click" IsEnabled="False"
-                    Background="#991B1B"/>
-            <Button x:Name="btnExportJson" Grid.Column="5" Content="⬡ JSON"
-                    Margin="8,0,0,0" Padding="10,7" Click="BtnExportJson_Click" IsEnabled="False"
-                    Background="#1D4ED8" ToolTip="Exportar resultados a JSON"/>
-            <Button x:Name="btnExportCsv" Grid.Column="6" Content="📋 CSV"
-                    Margin="4,0,0,0" Padding="10,7" Click="BtnExportCsv_Click" IsEnabled="False"
-                    Background="#065F46" ToolTip="Exportar resultados a CSV"/>
+                    Background="#991B1B" Visibility="Collapsed"/>
+            <Button x:Name="btnExportJson" Grid.Column="5" Visibility="Collapsed"
+                    Click="BtnExportJson_Click"/>
+            <Button x:Name="btnExportCsv" Grid.Column="6" Visibility="Collapsed"
+                    Click="BtnExportCsv_Click"/>
+                <Button x:Name="btnDownloadAllBottom" Grid.Column="3" Content="🚀 Descargar todo"
+                    Margin="8,0,0,0" Padding="10,7" Background="#7C3AED"
+                    Click="BtnDownloadAll_Click"
+                    ToolTip="Un clic: usa fuente Todas, crea carpeta si falta y descarga todo"/>
+                <Button x:Name="btnExportHtmlBottom" Grid.Column="4" Content="🌐 HTML"
+                    Margin="4,0,0,0" Padding="10,7" Background="#334155"
+                    Click="BtnExportHtml_Click" ToolTip="Exportar resultados a HTML"/>
+                <Button x:Name="btnCancelAllDownloads" Grid.Column="5" Content="⏹ Cancelar"
+                    Margin="8,0,0,0" Padding="10,7" Background="#7F1D1D" IsEnabled="False"
+                    Click="BtnCancelAllDownloads_Click" ToolTip="Cancelar descargas en curso"/>
+                <Button x:Name="btnCpdlSession" Grid.Column="6" Content="🔐 CPDL sesión"
+                    Margin="8,0,0,0" Padding="10,7" Background="#1E3A8A"
+                    Click="BtnCpdlSession_Click" ToolTip="Abrir navegador embebido para sesión CPDL"/>
+                <Button Grid.Column="7" Content="🚪 Salir"
+                    Margin="8,0,0,0" Padding="10,7" Background="#374151"
+                    Click="BtnExit_Click" ToolTip="Cerrar la aplicación"/>
         </Grid>
 
         <!-- Área de log y progreso -->
@@ -589,11 +636,11 @@
             </Grid>
             <Grid Grid.Row="1">
                 <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="260"/>
-                    <ColumnDefinition Width="8"/>
+                    <ColumnDefinition Width="0"/>
+                    <ColumnDefinition Width="0"/>
                     <ColumnDefinition Width="*"/>
                 </Grid.ColumnDefinitions>
-                <Border Grid.Column="0" BorderBrush="#333" BorderThickness="1" Background="#111827">
+                <Border Grid.Column="0" BorderBrush="#333" BorderThickness="1" Background="#111827" Visibility="Collapsed">
                     <Grid>
                         <Grid.RowDefinitions>
                             <RowDefinition Height="Auto"/>
@@ -641,13 +688,28 @@
                         </ListBox>
                     </Grid>
                 </Border>
-                <TextBox x:Name="txtLog" Grid.Column="2"
-                         IsReadOnly="True" TextWrapping="Wrap"
-                         VerticalScrollBarVisibility="Auto"
-                         Background="#13131F" Foreground="#94A3B8"
-                         FontFamily="Consolas" FontSize="11"
-                         BorderBrush="#333" Padding="6"
-                         ToolTip="Ctrl+K: limpiar log"/>
+                <Grid Grid.Column="2">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="*"/>
+                    </Grid.RowDefinitions>
+                    <StackPanel Grid.Row="0" Orientation="Horizontal" Margin="0,0,0,4">
+                        <TextBlock Text="📝 Log" Foreground="#A78BFA" VerticalAlignment="Center" Margin="2,0,8,0" FontWeight="SemiBold"/>
+                        <Button Content="📋 Copiar" Padding="8,4" Margin="0,0,4,0"
+                            Style="{StaticResource LogActionButtonStyle}"
+                                Background="#1E293B" Click="BtnCopyLog_Click" ToolTip="Copiar log al portapapeles"/>
+                        <Button Content="🗑 Borrar" Padding="8,4"
+                            Style="{StaticResource LogActionButtonStyle}"
+                                Background="#1E293B" Click="BtnClearLog_Click" ToolTip="Limpiar log"/>
+                    </StackPanel>
+                    <TextBox x:Name="txtLog" Grid.Row="1"
+                             IsReadOnly="True" TextWrapping="Wrap"
+                             VerticalScrollBarVisibility="Visible"
+                             Background="#13131F" Foreground="#94A3B8"
+                             FontFamily="Consolas" FontSize="11"
+                             BorderBrush="#333" Padding="6"
+                             ToolTip="Ctrl+K: limpiar log"/>
+                </Grid>
             </Grid>
         </Grid>
     </Grid>
