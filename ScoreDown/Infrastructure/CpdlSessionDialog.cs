@@ -1,4 +1,5 @@
 using Microsoft.Web.WebView2.Wpf;
+using Microsoft.Web.WebView2.Core;
 using System.Text.Json;
 using System.Windows;
 using System.Windows.Controls;
@@ -11,13 +12,31 @@ public sealed class CpdlSessionDialog : Window
     private readonly WebView2 _webView;
     private readonly WpfButton _btnUseSession;
     private readonly TextBlock _txtStatus;
+    private readonly string _siteLabel;
+    private readonly string _startUrl;
+    private readonly IReadOnlyList<string> _cookieScopeUrls;
+    private readonly HashSet<string> _requiredCookieNames;
 
     public string? CookieHeader { get; private set; }
     public string? UserAgent { get; private set; }
 
     public CpdlSessionDialog()
+        : this("CPDL", "https://www.cpdl.org/wiki/index.php/Main_Page", ["https://www.cpdl.org/"], ["cf_clearance"])
     {
-        Title = "CPDL sesión interactiva";
+    }
+
+    public CpdlSessionDialog(
+        string siteLabel,
+        string startUrl,
+        IReadOnlyList<string> cookieScopeUrls,
+        IReadOnlyList<string>? requiredCookieNames = null)
+    {
+        _siteLabel = string.IsNullOrWhiteSpace(siteLabel) ? "Sitio" : siteLabel.Trim();
+        _startUrl = startUrl;
+        _cookieScopeUrls = cookieScopeUrls?.Count > 0 ? cookieScopeUrls : [startUrl];
+        _requiredCookieNames = new HashSet<string>(requiredCookieNames ?? [], StringComparer.OrdinalIgnoreCase);
+
+        Title = $"{_siteLabel} sesión interactiva";
         Width = 1024;
         Height = 720;
         MinWidth = 860;
@@ -33,7 +52,7 @@ public sealed class CpdlSessionDialog : Window
         {
             Margin = new Thickness(10, 8, 10, 6),
             TextWrapping = TextWrapping.Wrap,
-            Text = "1) Completa el challenge/login en CPDL. 2) Pulsa 'Usar esta sesión'."
+            Text = $"1) Completa el challenge/login en {_siteLabel}. 2) Pulsa 'Usar esta sesión'."
         };
         Grid.SetRow(header, 0);
         root.Children.Add(header);
@@ -46,7 +65,7 @@ public sealed class CpdlSessionDialog : Window
         _txtStatus = new TextBlock
         {
             VerticalAlignment = VerticalAlignment.Center,
-            Text = "Abriendo CPDL..."
+            Text = $"Abriendo {_siteLabel}..."
         };
         DockPanel.SetDock(_txtStatus, Dock.Left);
         footer.Children.Add(_txtStatus);
@@ -89,9 +108,14 @@ public sealed class CpdlSessionDialog : Window
         try
         {
             await _webView.EnsureCoreWebView2Async();
-            _webView.Source = new Uri("https://www.cpdl.org/wiki/index.php/Main_Page");
+
+            // Suplantar UA de Chrome para evitar detección de WebView2 por Cloudflare
+            const string chromeUA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36";
+            _webView.CoreWebView2.Settings.UserAgent = chromeUA;
+
+            _webView.Source = new Uri(_startUrl);
             _btnUseSession.IsEnabled = true;
-            _txtStatus.Text = "Completa challenge/login en la web y pulsa 'Usar esta sesión'.";
+            _txtStatus.Text = "Completa el challenge/login en la web y pulsa 'Usar esta sesión'.";
         }
         catch (Exception ex)
         {
@@ -110,17 +134,45 @@ public sealed class CpdlSessionDialog : Window
                 return;
             }
 
-            var cookies = await _webView.CoreWebView2.CookieManager.GetCookiesAsync("https://www.cpdl.org/");
-            var pairs = cookies
+            var allCookies = new List<CoreWebView2Cookie>();
+            foreach (var scope in _cookieScopeUrls)
+            {
+                try
+                {
+                    var scoped = await _webView.CoreWebView2.CookieManager.GetCookiesAsync(scope);
+                    allCookies.AddRange(scoped);
+                }
+                catch
+                {
+                    // Ignorar scope inválido y continuar con los demás.
+                }
+            }
+
+            var cookies = allCookies
                 .Where(c => !string.IsNullOrWhiteSpace(c.Name) && !string.IsNullOrWhiteSpace(c.Value))
+                .GroupBy(c => c.Name, StringComparer.OrdinalIgnoreCase)
+                .Select(g => g.First())
+                .ToList();
+
+            var pairs = cookies
                 .Select(c => $"{c.Name}={c.Value}")
-                .Distinct(StringComparer.Ordinal)
                 .ToList();
 
             if (pairs.Count == 0)
             {
                 _txtStatus.Text = "Sin cookies de sesión aún. Completa challenge y reintenta.";
                 return;
+            }
+
+            if (_requiredCookieNames.Count > 0)
+            {
+                var names = cookies.Select(c => c.Name).ToHashSet(StringComparer.OrdinalIgnoreCase);
+                var hasRequired = _requiredCookieNames.Any(names.Contains);
+                if (!hasRequired)
+                {
+                    _txtStatus.Text = $"Sesión incompleta: falta cookie requerida ({string.Join(", ", _requiredCookieNames)}). Completa challenge y reintenta.";
+                    return;
+                }
             }
 
             CookieHeader = string.Join("; ", pairs);

@@ -47,6 +47,20 @@ public class CpdlService
         LoadNoFilesBlacklist();
     }
 
+    /// <summary>
+    /// Optional callback invoked automatically when CPDL is blocked (Cloudflare).
+    /// Should open an interactive session dialog and call <see cref="SetManualSession"/>.
+    /// Return <c>true</c> if a session was established (triggers one retry).
+    /// </summary>
+    public Func<Task<bool>>? RequestInteractiveSessionAsync { get; set; }
+
+    /// <summary>
+    /// When set, all CPDL HTML page fetches are routed through this delegate instead of
+    /// <see cref="HttpClient"/>. Use a WebView2-based fetcher to preserve the TLS fingerprint
+    /// that matched the Cloudflare challenge (cf_clearance is bound to the browser's TLS stack).
+    /// </summary>
+    public Func<string, CancellationToken, Task<string?>>? WebViewFetchAsync { get; set; }
+
     public bool HasManualSession => !string.IsNullOrWhiteSpace(_manualCookieHeader);
 
     public (string? Cookie, string? UserAgent) GetSessionHeaders() =>
@@ -281,6 +295,9 @@ public class CpdlService
         CancellationToken ct = default)
     {
         progress?.Report("📋 Listando páginas de CPDL via API...");
+        bool retriedAfterSession = false;
+
+    retryFetch:
         string? continueToken = null;
         int total = 0;
         int filteredOut = 0;
@@ -393,7 +410,19 @@ public class CpdlService
         while (continueToken != null);
 
         if (total == 0 && blockedOrUnavailable)
-            progress?.Report("⚠️ CPDL no disponible: protección anti-bot del sitio (Cloudflare). Pulsa '🔐 CPDL sesión' para modo interactivo y reintenta.");
+        {
+            if (!retriedAfterSession && RequestInteractiveSessionAsync is { } ask)
+            {
+                progress?.Report("⚠️ CPDL bloqueado (Cloudflare). Abriendo sesión interactiva automáticamente...");
+                var sessionOk = await ask().ConfigureAwait(false);
+                if (sessionOk)
+                {
+                    retriedAfterSession = true;
+                    goto retryFetch;
+                }
+            }
+            progress?.Report("⚠️ CPDL no disponible: protección anti-bot del sitio (Cloudflare). Sin sesión activa.");
+        }
         else
             progress?.Report($"✅ CPDL: {total} obras en catálogo ({filteredOut} páginas sin adjuntos probables omitidas)");
     }
@@ -479,25 +508,82 @@ public class CpdlService
 
     private async Task<string?> FetchJsonAsync(string url, CancellationToken ct)
     {
-        try
+        for (int attempt = 0; attempt < 3; attempt++)
         {
-            using var request = new HttpRequestMessage(HttpMethod.Get, url);
-            if (!string.IsNullOrWhiteSpace(_manualCookieHeader))
-                request.Headers.TryAddWithoutValidation("Cookie", _manualCookieHeader);
-            if (!string.IsNullOrWhiteSpace(_manualUserAgent))
-                request.Headers.TryAddWithoutValidation("User-Agent", _manualUserAgent);
+            ct.ThrowIfCancellationRequested();
+            try
+            {
+                using var request = new HttpRequestMessage(HttpMethod.Get, url);
+                if (!string.IsNullOrWhiteSpace(_manualCookieHeader))
+                    request.Headers.TryAddWithoutValidation("Cookie", _manualCookieHeader);
+                if (!string.IsNullOrWhiteSpace(_manualUserAgent))
+                    request.Headers.TryAddWithoutValidation("User-Agent", _manualUserAgent);
 
-            using var response = await _http.SendAsync(request, ct).ConfigureAwait(false);
-            return response.IsSuccessStatusCode
-                ? await response.Content.ReadAsStringAsync(ct).ConfigureAwait(false)
-                : null;
+                using var response = await _http.SendAsync(request, ct).ConfigureAwait(false);
+                if (!response.IsSuccessStatusCode)
+                {
+                    var code = (int)response.StatusCode;
+                    if ((code == 429 || code >= 500) && attempt < 2)
+                    {
+                        var delay = code == 429 ? 2000 * (attempt + 1) : 300 * (attempt + 1);
+                        await Task.Delay(delay, ct).ConfigureAwait(false);
+                        continue;
+                    }
+                    return null;
+                }
+
+                return await response.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) { throw; }
+            catch (HttpRequestException) when (attempt < 2)
+            {
+                await Task.Delay(300 * (attempt + 1), ct).ConfigureAwait(false);
+            }
+            catch { return null; }
         }
-        catch (OperationCanceledException) { throw; }
-        catch { return null; }
+        return null;
     }
 
     private async Task<string?> FetchHtmlAsync(string url, CancellationToken ct)
     {
+        // When a WebView2-based fetcher is available (session mode), always use it.
+        // This is required because cf_clearance is bound to the TLS fingerprint of the browser
+        // that solved the challenge. .NET HttpClient has a different TLS fingerprint → 403.
+        if (WebViewFetchAsync is { } wvFetch && HasManualSession)
+        {
+            try
+            {
+                var html = await wvFetch(url, ct).ConfigureAwait(false);
+                if (html is not null)
+                {
+                    if (IsCloudflareChallengePage(html))
+                    {
+                        // Challenge page returned even through WebView2 — session expired.
+                        // Re-trigger interactive session if a handler is registered.
+                        if (RequestInteractiveSessionAsync is { } ask)
+                        {
+                            var ok = await ask().ConfigureAwait(false);
+                            if (ok)
+                            {
+                                // One retry after fresh session.
+                                html = await wvFetch(url, ct).ConfigureAwait(false);
+                                if (html is not null && !IsCloudflareChallengePage(html))
+                                    return html;
+                            }
+                        }
+                        return null;
+                    }
+                    return html;
+                }
+            }
+            catch (OperationCanceledException) { throw; }
+            catch { }
+            // WebView fetch failed — do NOT fall through to sessionless HttpClient;
+            // a sessionless request will also be blocked by Cloudflare.
+            return null;
+        }
+
+        // No session: try with stored cookie header (legacy path, may fail with Cloudflare).
         if (!string.IsNullOrWhiteSpace(_manualCookieHeader))
         {
             try
@@ -509,7 +595,13 @@ public class CpdlService
 
                 using var response = await _http.SendAsync(request, ct).ConfigureAwait(false);
                 if (response.IsSuccessStatusCode)
-                    return await response.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
+                {
+                    var html = await response.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
+                    if (!IsCloudflareChallengePage(html))
+                        return html;
+                    // Got a challenge page — DO NOT fall through to unauthenticated request.
+                    return null;
+                }
             }
             catch (OperationCanceledException) { throw; }
             catch { }
@@ -517,6 +609,12 @@ public class CpdlService
 
         return await HttpHelper.FetchHtmlAsync(_http, url, maxRetries: 3, ct).ConfigureAwait(false);
     }
+
+    private static bool IsCloudflareChallengePage(string html) =>
+        html.Contains("cf-challenge-running", StringComparison.OrdinalIgnoreCase) ||
+        html.Contains("Just a moment", StringComparison.Ordinal) ||
+        html.Contains("cf_chl_opt", StringComparison.OrdinalIgnoreCase) ||
+        html.Contains("Checking your browser", StringComparison.OrdinalIgnoreCase);
 
     private sealed class CpdlPageFilterResult
     {

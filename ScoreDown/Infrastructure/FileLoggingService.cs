@@ -1,6 +1,7 @@
 using System;
 using System.IO;
 using System.Text;
+using System.Threading;
 
 namespace ScoreDown.Infrastructure;
 
@@ -34,7 +35,21 @@ public class FileLoggingService
 
             try
             {
-                File.AppendAllText(_currentLogFile, line + Environment.NewLine, Encoding.UTF8);
+                for (var attempt = 0; attempt < 3; attempt++)
+                {
+                    try
+                    {
+                        using var fs = new FileStream(_currentLogFile, FileMode.Append, FileAccess.Write, FileShare.Read);
+                        using var sw = new StreamWriter(fs, Encoding.UTF8);
+                        sw.WriteLine(line);
+                        break;
+                    }
+                    catch (IOException) when (attempt < 2)
+                    {
+                        // Otra instancia puede tener lock temporal; reintento breve.
+                        Thread.Sleep(10);
+                    }
+                }
             }
             catch
             {

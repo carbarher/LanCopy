@@ -42,9 +42,15 @@ public static class HttpHelper
                 if (!isTransient || attempt == maxRetries - 1)
                     return null;
 
-                // Backoff before retry
-                if (attempt < DefaultRetryDelays.Length)
-                    await Task.Delay(DefaultRetryDelays[attempt], ct).ConfigureAwait(false);
+                // Respect Retry-After header if present (cap at 60s to avoid blocking too long)
+                var retryAfter = response.Headers.RetryAfter;
+                var candidate = retryAfter?.Delta
+                    ?? (retryAfter?.Date.HasValue == true ? retryAfter.Date.Value - DateTimeOffset.UtcNow : (TimeSpan?)null);
+                var delay = candidate.HasValue && candidate.Value > TimeSpan.Zero && candidate.Value <= TimeSpan.FromSeconds(60)
+                    ? candidate.Value
+                    : (attempt < DefaultRetryDelays.Length ? DefaultRetryDelays[attempt] : DefaultRetryDelays[^1]);
+
+                await Task.Delay(delay, ct).ConfigureAwait(false);
             }
             catch (OperationCanceledException)
             {

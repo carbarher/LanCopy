@@ -52,7 +52,8 @@ internal static class JsonStore
     }
 
     /// <summary>
-    /// Save <paramref name="value"/> as pretty-printed JSON. Silently ignores errors.
+    /// Save <paramref name="value"/> as pretty-printed JSON. Uses atomic write (temp+move) to avoid corruption.
+    /// Silently ignores errors.
     /// </summary>
     public static void Save<T>(string path, T value)
     {
@@ -64,7 +65,9 @@ internal static class JsonStore
             var json = typeInfo is not null
                 ? JsonSerializer.Serialize(value, typeInfo)
                 : JsonSerializer.Serialize(value, s_pretty);
-            File.WriteAllText(path, json, System.Text.Encoding.UTF8);
+            var tmp = path + ".tmp";
+            File.WriteAllText(tmp, json, System.Text.Encoding.UTF8);
+            File.Move(tmp, path, overwrite: true);
         }
         catch { }
     }

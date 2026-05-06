@@ -554,51 +554,100 @@
         </Grid>
 
         <!-- Controles de descarga -->
-        <Grid Grid.Row="3" Margin="0,10,0,8">
-            <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="Auto"/>
-                <ColumnDefinition Width="*"/>
-                <ColumnDefinition Width="Auto"/>
-                <ColumnDefinition Width="Auto"/>
-                <ColumnDefinition Width="Auto"/>
-                <ColumnDefinition Width="Auto"/>
-                <ColumnDefinition Width="Auto"/>
-                <ColumnDefinition Width="Auto"/>
-            </Grid.ColumnDefinitions>
-
-            <TextBlock Grid.Column="0" Text="📁 Destino:" VerticalAlignment="Center" Margin="0,0,8,0"/>
-            <TextBox x:Name="txtDestFolder" Grid.Column="1" Text="D:\partituras"
-                     ToolTip="Carpeta donde se guardarán los archivos. También puedes arrastrar una carpeta aquí."
-                     AllowDrop="True" Drop="TxtDestFolder_Drop" DragOver="TxtDestFolder_DragOver"/>
-            <Button Grid.Column="2" Content="📂" Margin="6,0,0,0" Padding="10,7"
-                    Click="BtnChooseFolder_Click" ToolTip="Seleccionar carpeta"/>
-            <Button x:Name="btnDownload" Grid.Column="3" Content="⬇ Descargar seleccionados"
-                    Margin="8,0,0,0" Click="BtnDownload_Click" IsEnabled="False"
-                    Background="#065F46" ToolTip="Ctrl+D" Visibility="Collapsed"/>
-            <Button x:Name="btnCancelDownload" Grid.Column="4" Content="✖ Parar"
-                    Margin="6,0,0,0" Click="BtnCancelDownload_Click" IsEnabled="False"
-                    Background="#991B1B" Visibility="Collapsed"/>
-            <Button x:Name="btnExportJson" Grid.Column="5" Visibility="Collapsed"
-                    Click="BtnExportJson_Click"/>
-            <Button x:Name="btnExportCsv" Grid.Column="6" Visibility="Collapsed"
-                    Click="BtnExportCsv_Click"/>
-                <Button x:Name="btnDownloadAllBottom" Grid.Column="3" Content="🚀 Descargar todo"
-                    Margin="8,0,0,0" Padding="10,7" Background="#7C3AED"
+        <StackPanel Grid.Row="3" Margin="0,10,0,8">
+            <!-- Fila 1: Destino -->
+            <Grid Margin="0,0,0,6">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+                <TextBlock Grid.Column="0" Text="📁 Destino:" VerticalAlignment="Center" Margin="0,0,8,0"/>
+                <TextBox x:Name="txtDestFolder" Grid.Column="1" Text="D:\partituras"
+                         ToolTip="Carpeta donde se guardarán los archivos. También puedes arrastrar una carpeta aquí."
+                         AllowDrop="True" Drop="TxtDestFolder_Drop" DragOver="TxtDestFolder_DragOver"/>
+                <Button Grid.Column="2" Content="📂" Margin="6,0,0,0" Padding="10,7"
+                        Click="BtnChooseFolder_Click" ToolTip="Seleccionar carpeta"/>
+            </Grid>
+            <!-- Fila 2: Acciones -->
+            <WrapPanel>
+                <Button x:Name="btnDownloadAllBottom" Content="🚀 Descargar todo"
+                    Margin="0,0,4,0" Padding="10,7" Background="#7C3AED"
                     Click="BtnDownloadAll_Click"
                     ToolTip="Un clic: usa fuente Todas, crea carpeta si falta y descarga todo"/>
-                <Button x:Name="btnExportHtmlBottom" Grid.Column="4" Content="🌐 HTML"
-                    Margin="4,0,0,0" Padding="10,7" Background="#334155"
+                <CheckBox x:Name="chkEnableImlsp" Content="IMSLP"
+                    Margin="0,0,8,0" VerticalAlignment="Center"
+                    IsChecked="True" Checked="SourceToggle_Changed" Unchecked="SourceToggle_Changed"
+                    ToolTip="Habilitar IMSLP en catálogo/descarga"/>
+                <CheckBox x:Name="chkEnableMutopia" Content="Mutopia"
+                    Margin="0,0,8,0" VerticalAlignment="Center"
+                    IsChecked="True" Checked="SourceToggle_Changed" Unchecked="SourceToggle_Changed"
+                    ToolTip="Habilitar Mutopia en catálogo/descarga"/>
+                <CheckBox x:Name="chkEnableCpdl" Content="CPDL"
+                    Margin="0,0,8,0" VerticalAlignment="Center"
+                    IsChecked="False" Checked="SourceToggle_Changed" Unchecked="SourceToggle_Changed"
+                    ToolTip="Habilitar CPDL en catálogo/descarga"/>
+                <Button x:Name="btnExportHtmlBottom" Content="🌐 HTML"
+                    Margin="0,0,4,0" Padding="10,7" Background="#334155"
                     Click="BtnExportHtml_Click" ToolTip="Exportar resultados a HTML"/>
-                <Button x:Name="btnCancelAllDownloads" Grid.Column="5" Content="⏹ Cancelar"
-                    Margin="8,0,0,0" Padding="10,7" Background="#7F1D1D" IsEnabled="False"
+                <Button x:Name="btnRetryImlspPending" Content="♻ IMSLP pendientes"
+                    Margin="0,0,4,0" Padding="10,7" Background="#0F766E"
+                    Click="BtnRetryImlspPending_Click"
+                    ToolTip="Reintentar descargas IMSLP pendientes guardadas en auto-stop"/>
+                <CheckBox x:Name="chkAutoResumeImlspPending" Content="Auto-resume"
+                    Margin="0,0,8,0" VerticalAlignment="Center"
+                    IsChecked="False" Checked="PendingOptions_Changed" Unchecked="PendingOptions_Changed"
+                    ToolTip="Reanudar lote de pendientes IMSLP al iniciar la app"/>
+                <CheckBox x:Name="chkAutoContinuePendingBatches" Content="Auto-lotes"
+                    Margin="0,0,8,0" VerticalAlignment="Center"
+                    IsChecked="False" Checked="PendingOptions_Changed" Unchecked="PendingOptions_Changed"
+                    ToolTip="Encadenar automáticamente lotes IMSLP pendientes"/>
+                <Button x:Name="btnPauseBatchChain" Content="⏸ Pausar lotes"
+                    Margin="0,0,4,0" Padding="10,7" Background="#78350F" IsEnabled="False"
+                    Click="BtnPauseBatchChain_Click"
+                    ToolTip="Pausar/reanudar la cadena automática de lotes IMSLP pendientes"/>
+                <TextBlock VerticalAlignment="Center" Margin="0,0,4,0"
+                           Foreground="#9CA3AF" FontSize="11" Text="Máx.lotes:"/>
+                <TextBox x:Name="txtBatchLimit" Width="38" Padding="4,5" FontSize="11"
+                         Text="0" VerticalAlignment="Center" Margin="0,0,8,0"
+                         ToolTip="Número máximo de lotes IMSLP encadenados (0 = ilimitado)"
+                         TextChanged="TxtBatchLimit_TextChanged"/>
+                <Button x:Name="btnCancelAllDownloads" Content="⏹ Cancelar"
+                    Margin="0,0,4,0" Padding="10,7" Background="#7F1D1D" IsEnabled="False"
                     Click="BtnCancelAllDownloads_Click" ToolTip="Cancelar descargas en curso"/>
-                <Button x:Name="btnCpdlSession" Grid.Column="6" Content="🔐 CPDL sesión"
-                    Margin="8,0,0,0" Padding="10,7" Background="#1E3A8A"
+                <Button x:Name="btnCpdlSession" Content="🔐 CPDL sesión"
+                    Margin="0,0,4,0" Padding="10,7" Background="#1E3A8A"
                     Click="BtnCpdlSession_Click" ToolTip="Abrir navegador embebido para sesión CPDL"/>
-                <Button Grid.Column="7" Content="🚪 Salir"
-                    Margin="8,0,0,0" Padding="10,7" Background="#374151"
+                <Button x:Name="btnConvertAudiveris" Content="🎼 Audiveris"
+                    Margin="0,0,4,0" Padding="10,7" Background="#14532D"
+                    Click="BtnConvertAudiveris_Click"
+                    ToolTip="Convertir PDF/imagen de carpeta destino a MusicXML/MXL (solo los no convertidos)"/>
+                <CheckBox x:Name="chkAutoConvertAudiveris"
+                    Content="🔄 Auto-convertir" Margin="0,0,8,0" VerticalAlignment="Center"
+                    IsChecked="True"
+                    ToolTip="Lanzar Audiveris automáticamente al finalizar cada lote de descargas"/>
+                <Button x:Name="btnDeleteAndRedownload" Content="🗑️ Re-descargar"
+                    Margin="0,0,4,0" Padding="10,7" Background="#7F1D1D"
+                    Click="BtnDeleteAndRedownload_Click"
+                    ToolTip="Borra todos los archivos de la carpeta destino y vuelve a descargar todo"/>
+                <Button x:Name="btnGenerateVideo" Content="🎥 Video"
+                    Margin="0,0,4,0" Padding="10,7" Background="#7C2D12"
+                    Click="BtnGenerateVideo_Click"
+                    ToolTip="Generar vídeo MP4 animado de partituras MSCZ/MXL/XML con score-util (requiere Node.js)"/>
+                <Button Content="🚪 Salir"
+                    Padding="10,7" Background="#374151"
                     Click="BtnExit_Click" ToolTip="Cerrar la aplicación"/>
-        </Grid>
+            </WrapPanel>
+            <!-- Botones ocultos usados por code-behind -->
+            <StackPanel Visibility="Collapsed">
+                <Button x:Name="btnDownload" Content="⬇ Descargar seleccionados"
+                        Click="BtnDownload_Click" IsEnabled="False" Background="#065F46" ToolTip="Ctrl+D"/>
+                <Button x:Name="btnCancelDownload" Content="✖ Parar"
+                        Click="BtnCancelDownload_Click" IsEnabled="False" Background="#991B1B"/>
+                <Button x:Name="btnExportJson" Click="BtnExportJson_Click"/>
+                <Button x:Name="btnExportCsv" Click="BtnExportCsv_Click"/>
+            </StackPanel>
+        </StackPanel>
 
         <!-- Área de log y progreso -->
         <Grid Grid.Row="4">
@@ -626,6 +675,14 @@
                 <TextBlock x:Name="txtFileProgress" Grid.Row="1" Grid.Column="0"
                            Foreground="#666" FontSize="10" Visibility="Collapsed"
                            TextTrimming="CharacterEllipsis" VerticalAlignment="Center"/>
+                <TextBlock x:Name="txtSourceStatus" Grid.Row="1" Grid.Column="0"
+                           HorizontalAlignment="Right" Margin="0,2,8,0"
+                           Foreground="#7DD3FC" FontSize="10"
+                           Text="Fuentes I:ON M:ON C:OFF · Pend IMSLP:0 · Preflight:n/a"/>
+                <TextBlock x:Name="txtErrorMiniTable" Grid.Row="1" Grid.Column="0"
+                           HorizontalAlignment="Left" Margin="0,2,0,0"
+                           Foreground="#F87171" FontSize="10" Text=""
+                           ToolTip="Errores por tipo en sesión actual"/>
                 <ProgressBar x:Name="pbFileProgress" Grid.Row="1" Grid.Column="1"
                              Height="5" Minimum="0" Maximum="100" Margin="0,2,0,0"
                              Foreground="#A78BFA" Background="#2D2D44" BorderThickness="0"
@@ -636,19 +693,21 @@
             </Grid>
             <Grid Grid.Row="1">
                 <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="0"/>
-                    <ColumnDefinition Width="0"/>
+                    <ColumnDefinition Width="220" MinWidth="150" MaxWidth="340"/>
+                    <ColumnDefinition Width="5"/>
                     <ColumnDefinition Width="*"/>
                 </Grid.ColumnDefinitions>
-                <Border Grid.Column="0" BorderBrush="#333" BorderThickness="1" Background="#111827" Visibility="Collapsed">
+                <Border Grid.Column="0" BorderBrush="#333" BorderThickness="0,0,1,0" Background="#111827">
                     <Grid>
                         <Grid.RowDefinitions>
                             <RowDefinition Height="Auto"/>
-                            <RowDefinition Height="*"/>
+                            <RowDefinition Height="*" MinHeight="60"/>
                             <RowDefinition Height="Auto"/>
-                            <RowDefinition Height="110"/>
+                            <RowDefinition Height="90"/>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="*" MinHeight="60"/>
                         </Grid.RowDefinitions>
-                        <TextBlock Grid.Row="0" Text="Cola de descarga" Foreground="#A78BFA" Margin="8,6,8,4" FontWeight="SemiBold"/>
+                        <TextBlock Grid.Row="0" Text="📥 Cola de descarga" Foreground="#A78BFA" Margin="8,6,8,4" FontWeight="SemiBold"/>
                         <ListBox x:Name="lstQueue" Grid.Row="1" Margin="6,0,6,6" BorderThickness="0">
                             <ListBox.ContextMenu>
                                 <ContextMenu>
@@ -660,7 +719,7 @@
                             <ListBox.ItemTemplate>
                                 <DataTemplate>
                                     <StackPanel Margin="2,3">
-                                        <TextBlock Text="{Binding FileName}" Foreground="#E5E7EB" TextTrimming="CharacterEllipsis"/>
+                                        <TextBlock Text="{Binding FileName}" Foreground="#E5E7EB" TextTrimming="CharacterEllipsis" FontSize="11"/>
                                         <TextBlock Text="{Binding Status}" Foreground="#94A3B8" FontSize="10" TextTrimming="CharacterEllipsis"/>
                                         <ProgressBar Value="{Binding Percent}" Minimum="0" Maximum="100" Height="4" Margin="0,3,0,0"
                                                      Foreground="#0EA5E9" Background="#1F2937" BorderThickness="0"/>
@@ -668,7 +727,7 @@
                                 </DataTemplate>
                             </ListBox.ItemTemplate>
                         </ListBox>
-                        <TextBlock Grid.Row="2" Text="Historial reciente" Foreground="#A78BFA" Margin="8,0,8,4" FontWeight="SemiBold"/>
+                        <TextBlock Grid.Row="2" Text="📄 Historial reciente" Foreground="#A78BFA" Margin="8,0,8,4" FontWeight="SemiBold"/>
                         <ListBox x:Name="lstDownloadHistory" Grid.Row="3" Margin="6,0,6,6" BorderThickness="0"
                                  MouseDoubleClick="LstDownloadHistory_MouseDoubleClick">
                             <ListBox.ContextMenu>
@@ -680,14 +739,27 @@
                             <ListBox.ItemTemplate>
                                 <DataTemplate>
                                     <StackPanel Margin="2,2">
-                                        <TextBlock Text="{Binding FileName}" Foreground="#E5E7EB" TextTrimming="CharacterEllipsis"/>
+                                        <TextBlock Text="{Binding FileName}" Foreground="#E5E7EB" TextTrimming="CharacterEllipsis" FontSize="11"/>
                                         <TextBlock Text="{Binding Summary}" Foreground="#94A3B8" FontSize="10" TextTrimming="CharacterEllipsis"/>
+                                    </StackPanel>
+                                </DataTemplate>
+                            </ListBox.ItemTemplate>
+                        </ListBox>
+                        <TextBlock Grid.Row="4" Text="🎼 Audiveris procesados" Foreground="#34D399" Margin="8,0,8,4" FontWeight="SemiBold"/>
+                        <ListBox x:Name="lstAudiverisLog" Grid.Row="5" Margin="6,0,6,6" BorderThickness="0">
+                            <ListBox.ItemTemplate>
+                                <DataTemplate>
+                                    <StackPanel Margin="2,2">
+                                        <TextBlock Text="{Binding FileName}" Foreground="#E5E7EB" TextTrimming="CharacterEllipsis" FontSize="11"/>
+                                        <TextBlock Text="{Binding Status}" Foreground="#6EE7B7" FontSize="10" TextTrimming="CharacterEllipsis"/>
                                     </StackPanel>
                                 </DataTemplate>
                             </ListBox.ItemTemplate>
                         </ListBox>
                     </Grid>
                 </Border>
+                <GridSplitter Grid.Column="1" Width="5" HorizontalAlignment="Stretch"
+                              Background="#2D2D44" Cursor="SizeWE"/>
                 <Grid Grid.Column="2">
                     <Grid.RowDefinitions>
                         <RowDefinition Height="Auto"/>

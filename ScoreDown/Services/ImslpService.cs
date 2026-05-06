@@ -1,7 +1,9 @@
 using HtmlAgilityPack;
 using ScoreDown.Infrastructure;
 using ScoreDown.Models;
+using System.Collections.Concurrent;
 using System.IO;
+using System.Net.Http.Headers;
 using System.Net.Http;
 using System.Text;
 using System.Text.Json;
@@ -15,11 +17,82 @@ public class ImslpService
 {
     private readonly HttpClient _http;
     private const string BaseUrl = "https://imslp.org";
+    private const string DefaultUserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120 Safari/537.36";
     private static readonly string[] AllowedFormats = ["PDF", "MIDI", "XML", "MXL", "MSCZ", "MSCX"];
+    private readonly Dictionary<string, string> _cookieJar = new(StringComparer.OrdinalIgnoreCase);
+    private readonly object _cookieLock = new();
+    private readonly ConcurrentDictionary<string, byte> _warmedPages = new(StringComparer.OrdinalIgnoreCase);
+    private string _sessionUserAgent = DefaultUserAgent;
 
     public ImslpService()
     {
         _http = HttpClientProvider.GetDefault();
+    }
+
+    public (string? CookieHeader, string? UserAgent) GetSessionHeaders()
+    {
+        lock (_cookieLock)
+        {
+            if (_cookieJar.Count == 0)
+                return (null, _sessionUserAgent);
+
+            var cookieHeader = string.Join("; ", _cookieJar.Select(kv => $"{kv.Key}={kv.Value}"));
+            return (cookieHeader, _sessionUserAgent);
+        }
+    }
+
+    public void SetManualSession(string? cookieHeader, string? userAgent = null)
+    {
+        lock (_cookieLock)
+        {
+            if (!string.IsNullOrWhiteSpace(userAgent))
+                _sessionUserAgent = userAgent.Trim();
+
+            if (string.IsNullOrWhiteSpace(cookieHeader))
+                return;
+
+            var pairs = cookieHeader.Split(';', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
+            foreach (var pair in pairs)
+            {
+                var eq = pair.IndexOf('=');
+                if (eq <= 0 || eq >= pair.Length - 1)
+                    continue;
+
+                var name = pair[..eq].Trim();
+                var value = pair[(eq + 1)..].Trim();
+                if (string.IsNullOrWhiteSpace(name) || string.IsNullOrWhiteSpace(value))
+                    continue;
+
+                _cookieJar[name] = value;
+            }
+        }
+    }
+
+    public async Task WarmupPageAsync(string? pageUrl, CancellationToken ct = default)
+    {
+        if (string.IsNullOrWhiteSpace(pageUrl))
+            return;
+        if (!Uri.TryCreate(pageUrl, UriKind.Absolute, out var uri))
+            return;
+        if (!string.Equals(uri.Host, "imslp.org", StringComparison.OrdinalIgnoreCase))
+            return;
+        if (_warmedPages.ContainsKey(pageUrl))
+            return;
+
+        using var warmupCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        warmupCts.CancelAfter(TimeSpan.FromSeconds(10));
+        try
+        {
+            using var response = await SendGetWithSessionAsync(pageUrl, warmupCts.Token).ConfigureAwait(false);
+            _ = response.StatusCode;
+            _warmedPages.TryAdd(pageUrl, 1);
+        }
+        catch (OperationCanceledException) when (!ct.IsCancellationRequested) { /* timeout: best effort */ }
+        catch (OperationCanceledException) { throw; }
+        catch
+        {
+            // Warm-up best effort: si falla, flujo normal de descarga seguirá intentando.
+        }
     }
 
     public async Task<List<PartituraItem>> SearchAsync(
@@ -98,7 +171,7 @@ public class ImslpService
             var composer = ExtractComposer(doc, title);
 
             // Buscar enlaces de descarga en tablas de archivos
-            var files = ExtractFiles(doc, title);
+            var files = ExtractFiles(doc, title, pageUrl);
 
             return new PartituraItem
             {
@@ -135,7 +208,7 @@ public class ImslpService
         return string.Empty;
     }
 
-    private static List<PartituraFile> ExtractFiles(HtmlDoc doc, string baseTitle)
+    private static List<PartituraFile> ExtractFiles(HtmlDoc doc, string baseTitle, string pageUrl)
     {
         var files = new List<PartituraFile>();
 
@@ -162,7 +235,8 @@ public class ImslpService
                 {
                     Format = ext,
                     DownloadUrl = href.StartsWith("http") ? href : "https://imslp.org" + href,
-                    FileName = SanitizeFileName(fileName)
+                    FileName = SanitizeFileName(fileName),
+                    SourcePageUrl = pageUrl
                 });
             }
             return files;
@@ -181,7 +255,8 @@ public class ImslpService
             {
                 Format = ext,
                 DownloadUrl = href.StartsWith("http") ? href : "https://imslp.org" + href,
-                FileName = SanitizeFileName(fileName)
+                FileName = SanitizeFileName(fileName),
+                SourcePageUrl = pageUrl
             });
         }
 
@@ -222,6 +297,18 @@ public class ImslpService
     private static readonly Regex s_composerSuffix =
         new(@"\s*\([^,)]+,\s*[^)]+\)\s*$", RegexOptions.Compiled);
     private const int MaxCatalogItems = 5000;
+    // Páginas del namespace 0 de IMSLP que no son obras musicales (páginas de compositor, listas, etc.)
+    // Formato compositor IMSLP: "Apellido, Nombre" sin paréntesis adicionales — se distinguen de obras
+    // porque no tienen el sufijo "(Compositor, Apellido)" al final.
+    private static bool IsLikelyNonWorkPage(string title)
+    {
+        // Páginas de compositor: "Apellido, Nombre" — tienen coma pero NO terminan en "(...)"
+        // Las obras tienen formato "Título (Apellido, Nombre)"
+        if (title.EndsWith(')')) return false;  // tiene sufijo de compositor → es obra
+        // Título con coma pero sin paréntesis al final → probable página de compositor
+        if (title.Contains(',') && !title.Contains('(')) return true;
+        return false;
+    }
 
     /// <summary>
     /// Streams the full IMSLP catalog via MediaWiki allpages API.
@@ -262,6 +349,7 @@ public class ImslpService
                 var rawTitle = page.GetProperty("title").GetString() ?? "";
                 batchLastTitle = rawTitle;
                 if (string.IsNullOrEmpty(rawTitle) || rawTitle.Contains(':')) continue;
+                if (IsLikelyNonWorkPage(rawTitle)) continue;
                 if (!seenTitles.Add(rawTitle)) continue;
 
                 var m = s_composerInTitle.Match(rawTitle);
@@ -330,17 +418,127 @@ public class ImslpService
 
     private async Task<string?> FetchJsonAsync(string url, CancellationToken ct)
     {
-        try
+        for (int attempt = 0; attempt < 3; attempt++)
         {
-            using var response = await _http.GetAsync(url, ct).ConfigureAwait(false);
-            return response.IsSuccessStatusCode
-                ? await response.Content.ReadAsStringAsync(ct).ConfigureAwait(false)
-                : null;
+            ct.ThrowIfCancellationRequested();
+            try
+            {
+                using var response = await SendGetWithSessionAsync(url, ct).ConfigureAwait(false);
+                if (!response.IsSuccessStatusCode)
+                {
+                    var code = (int)response.StatusCode;
+                    if ((code == 429 || code >= 500) && attempt < 2)
+                    {
+                        var retryAfter = response.Headers.RetryAfter;
+                        var candidate = retryAfter?.Delta
+                            ?? (retryAfter?.Date.HasValue == true ? retryAfter.Date.Value - DateTimeOffset.UtcNow : (TimeSpan?)null);
+                        var delay = candidate.HasValue && candidate.Value > TimeSpan.Zero && candidate.Value <= TimeSpan.FromSeconds(60)
+                            ? (int)candidate.Value.TotalMilliseconds
+                            : (code == 429 ? 2000 * (attempt + 1) : 300 * (attempt + 1));
+                        await Task.Delay(delay, ct).ConfigureAwait(false);
+                        continue;
+                    }
+                    return null;
+                }
+
+                return await response.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) { throw; }
+            catch (HttpRequestException) when (attempt < 2)
+            {
+                await Task.Delay(300 * (attempt + 1), ct).ConfigureAwait(false);
+            }
+            catch { return null; }
         }
-        catch (OperationCanceledException) { throw; }
-        catch { return null; }
+        return null;
     }
 
-    private Task<string?> FetchHtmlAsync(string url, CancellationToken ct)
-        => HttpHelper.FetchHtmlAsync(_http, url, maxRetries: 3, ct);
+    private async Task<string?> FetchHtmlAsync(string url, CancellationToken ct)
+    {
+        for (int attempt = 0; attempt < 3; attempt++)
+        {
+            ct.ThrowIfCancellationRequested();
+            try
+            {
+                using var response = await SendGetWithSessionAsync(url, ct).ConfigureAwait(false);
+                if (!response.IsSuccessStatusCode)
+                {
+                    var code = (int)response.StatusCode;
+                    if ((code == 429 || code >= 500) && attempt < 2)
+                    {
+                        var retryAfter = response.Headers.RetryAfter;
+                        var candidate = retryAfter?.Delta
+                            ?? (retryAfter?.Date.HasValue == true ? retryAfter.Date.Value - DateTimeOffset.UtcNow : (TimeSpan?)null);
+                        var delay = candidate.HasValue && candidate.Value > TimeSpan.Zero && candidate.Value <= TimeSpan.FromSeconds(60)
+                            ? (int)candidate.Value.TotalMilliseconds
+                            : (code == 429 ? 2000 * (attempt + 1) : 300 * (attempt + 1));
+                        await Task.Delay(delay, ct).ConfigureAwait(false);
+                        continue;
+                    }
+                    return null;
+                }
+
+                return await response.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) { throw; }
+            catch (HttpRequestException) when (attempt < 2)
+            {
+                await Task.Delay(300 * (attempt + 1), ct).ConfigureAwait(false);
+            }
+        }
+
+        return null;
+    }
+
+    private async Task<HttpResponseMessage> SendGetWithSessionAsync(string url, CancellationToken ct)
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Get, url);
+        request.Headers.TryAddWithoutValidation("User-Agent", _sessionUserAgent);
+        request.Headers.TryAddWithoutValidation("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8");
+        request.Headers.TryAddWithoutValidation("Accept-Language", "es-ES,es;q=0.9,en;q=0.8");
+
+        var cookieHeader = GetCookieHeader();
+        if (!string.IsNullOrWhiteSpace(cookieHeader))
+            request.Headers.TryAddWithoutValidation("Cookie", cookieHeader);
+
+        var response = await _http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, ct).ConfigureAwait(false);
+        CaptureSetCookieHeaders(response.Headers);
+        if (response.Content?.Headers != null)
+            CaptureSetCookieHeaders(response.Content.Headers);
+        return response;
+    }
+
+    private string? GetCookieHeader()
+    {
+        lock (_cookieLock)
+            return _cookieJar.Count == 0
+                ? null
+                : string.Join("; ", _cookieJar.Select(kv => $"{kv.Key}={kv.Value}"));
+    }
+
+    private void CaptureSetCookieHeaders(HttpHeaders headers)
+    {
+        if (!headers.TryGetValues("Set-Cookie", out var setCookies))
+            return;
+
+        lock (_cookieLock)
+        {
+            foreach (var raw in setCookies)
+            {
+                var first = raw.Split(';', 2, StringSplitOptions.TrimEntries)[0];
+                var eq = first.IndexOf('=');
+                if (eq <= 0 || eq >= first.Length - 1)
+                    continue;
+
+                var name = first[..eq].Trim();
+                var value = first[(eq + 1)..].Trim();
+                if (string.IsNullOrWhiteSpace(name) || string.IsNullOrWhiteSpace(value))
+                    continue;
+                if (string.Equals(value, "deleted", StringComparison.OrdinalIgnoreCase))
+                    continue;
+
+                _cookieJar[name] = value;
+            }
+        }
+    }
 }

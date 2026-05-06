@@ -21,6 +21,8 @@ public class PartituraItem : INotifyPropertyChanged
     private string _source = "IMSLP";
     private string _userTag = string.Empty;
     private int _sourcePageId;
+    private string _genre = string.Empty;
+    private string _instrument = string.Empty;
 
     public string Title { get => _title; set => Set(ref _title, value); }
     public string Composer { get => _composer; set => Set(ref _composer, value); }
@@ -29,6 +31,8 @@ public class PartituraItem : INotifyPropertyChanged
     public string Source { get => _source; set => Set(ref _source, value); }
     public string UserTag { get => _userTag; set => Set(ref _userTag, value); }
     public int SourcePageId { get => _sourcePageId; set => Set(ref _sourcePageId, value); }
+    public string Genre { get => _genre; set => Set(ref _genre, value); }
+    public string Instrument { get => _instrument; set => Set(ref _instrument, value); }
 
     public List<PartituraFile> Files { get; set; } = new();
 
@@ -42,6 +46,8 @@ public class PartituraFile
     public string DownloadUrl { get; set; } = string.Empty;
     public string FileName { get; set; } = string.Empty;
     public long SizeBytes { get; set; }
+    /// <summary>URL de la página de la obra de la que proviene este archivo. Usada como Referer en descargas.</summary>
+    public string? SourcePageUrl { get; set; }
 
     public string SizeDisplay => SizeBytes > 0
         ? SizeBytes >= 1024 * 1024
