@@ -1,5 +1,6 @@
 using ScoreDown.Infrastructure;
 using ScoreDown.Models;
+using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.IO;
 using System.Net;
@@ -13,10 +14,8 @@ public class DownloadService
     private readonly HttpClient _http;
     private readonly HttpClient _httpNoRedirect;
     // Paralelismo para descargas en lote (DownloadAllAsync)
-    // Parallelismo según fuente: IMSLP es restrictivo, Mutopia/CPDL más permisivos
     private static int GetParallelism(string source) => (source ?? string.Empty).Trim().ToUpperInvariant() switch
     {
-        "IMSLP" => 1,
         "CPDL" => 2,
         _ => 4
     };
@@ -40,7 +39,6 @@ public class DownloadService
         };
     }
 
-    public Func<string, string, CancellationToken, Task<(bool success, string? error)>>? ImslpWebViewDownloadAsync { get; set; }
 
     private const int MaxRetries = 3;
     private static readonly TimeSpan[] RetryDelays =
@@ -127,162 +125,6 @@ public class DownloadService
                 else
                     progress?.Report((file, $"retry-{attempt}", 0, 0.0));
 
-                if (IsImslpUrl(file.DownloadUrl) && ImslpWebViewDownloadAsync is not null)
-                {
-                    var webViewTempPath = Path.Combine(destFolder, file.FileName) + ".wv.tmp";
-                    try
-                    {
-                        var (webViewOk, webViewError) = await ImslpWebViewDownloadAsync(
-                            file.DownloadUrl,
-                            webViewTempPath,
-                            ct).ConfigureAwait(false);
-
-                        if (webViewOk && File.Exists(webViewTempPath))
-                        {
-                            var webViewLen = new FileInfo(webViewTempPath).Length;
-                            var webViewExt = Path.GetExtension(file.FileName).ToLowerInvariant();
-                            var webViewValidErr = ValidateDownloadedFile(webViewTempPath, webViewExt, webViewLen);
-                            if (webViewValidErr is null)
-                            {
-                                File.Move(webViewTempPath, destPath, overwrite: true);
-                                progress?.Report((file, "success", 100, 0.0));
-                                return new DownloadResult { Success = true, FilePath = destPath, BytesDownloaded = webViewLen };
-                            }
-
-                            progress?.Report((file, "error: [diag] wv-invalid: " + webViewValidErr, 0, 0.0));
-                        }
-                        else if (!string.IsNullOrWhiteSpace(webViewError))
-                        {
-                            progress?.Report((file, "error: [diag] wv-err: " + webViewError, 0, 0.0));
-                        }
-                    }
-                    finally
-                    {
-                        if (File.Exists(webViewTempPath))
-                            try { File.Delete(webViewTempPath); } catch { }
-                    }
-                }
-
-                // IMSLP: HttpClient es bloqueado por Cloudflare TLS fingerprint aunque las cookies sean válidas.
-                // Usar curl.exe (Windows built-in, Schannel/WinSSL) que tiene fingerprint más cercano al navegador.
-                if (IsImslpUrl(file.DownloadUrl) && !string.IsNullOrWhiteSpace(cookieHeader))
-                {
-                    var curlTempPath = Path.Combine(destFolder, file.FileName) + ".curl.tmp";
-                    try
-                    {
-                        var (curlOk, curlError) = await TryDownloadWithCurlAsync(
-                            file.DownloadUrl, curlTempPath, cookieHeader, userAgent,
-                            file.SourcePageUrl, ct).ConfigureAwait(false);
-
-                        if (curlOk && File.Exists(curlTempPath))
-                        {
-                            var curlLen = new FileInfo(curlTempPath).Length;
-                            var ext2 = Path.GetExtension(file.FileName).ToLowerInvariant();
-                            var validErr2 = ValidateDownloadedFile(curlTempPath, ext2, curlLen);
-                            if (validErr2 is null)
-                            {
-                                File.Move(curlTempPath, destPath, overwrite: true);
-                                progress?.Report((file, "success", 100, 0.0));
-                                return new DownloadResult { Success = true, FilePath = destPath, BytesDownloaded = curlLen };
-                            }
-
-                            // Si curl devolvió HTML/interstitial, intentar extraer URL real y reintentar por curl.
-                            var html = SafeReadTextFile(curlTempPath);
-                            var recoveredUrl = TryExtractRecoveryDownloadUrl(html, file.DownloadUrl);
-                            if (!string.IsNullOrWhiteSpace(recoveredUrl)
-                                && !string.Equals(recoveredUrl, file.DownloadUrl, StringComparison.OrdinalIgnoreCase))
-                            {
-                                var recTempPath = Path.Combine(destFolder, file.FileName) + ".rec.tmp";
-                                try
-                                {
-                                    var (recOk, recErr) = await TryDownloadWithCurlAsync(
-                                        recoveredUrl, recTempPath, cookieHeader, userAgent,
-                                        file.SourcePageUrl, ct).ConfigureAwait(false);
-
-                                    if (recOk && File.Exists(recTempPath))
-                                    {
-                                        var recLen = new FileInfo(recTempPath).Length;
-                                        var recErr2 = ValidateDownloadedFile(recTempPath, ext2, recLen);
-                                        if (recErr2 is null)
-                                        {
-                                            File.Move(recTempPath, destPath, overwrite: true);
-                                            progress?.Report((file, "success", 100, 0.0));
-                                            return new DownloadResult { Success = true, FilePath = destPath, BytesDownloaded = recLen };
-                                        }
-                                    }
-                                    else if (!string.IsNullOrWhiteSpace(recErr))
-                                    {
-                                        progress?.Report((file, "error: [diag] curl-recovery-err: " + recErr, 0, 0.0));
-                                    }
-                                }
-                                finally
-                                {
-                                    if (File.Exists(recTempPath))
-                                        try { File.Delete(recTempPath); } catch { }
-                                }
-                            }
-
-                            // Hacer visible en log principal (MainWindow sólo imprime estados con prefijo "error:").
-                            progress?.Report((file, "error: [diag] curl-html: " + file.DownloadUrl, 0, 0.0));
-                        }
-                        else if (!string.IsNullOrWhiteSpace(curlError))
-                        {
-                            progress?.Report((file, "error: [diag] curl-err: " + curlError, 0, 0.0));
-                        }
-                    }
-                    finally
-                    {
-                        if (File.Exists(curlTempPath))
-                            try { File.Delete(curlTempPath); } catch { }
-                    }
-
-                    // Intento 2: CDN alternativa imglnks.usimg.net (CDN sin Cloudflare WAF)
-                    var altUrl = TryBuildImslpCdnUrl(file.DownloadUrl);
-                    if (altUrl is not null && !string.Equals(altUrl, file.DownloadUrl, StringComparison.OrdinalIgnoreCase))
-                    {
-                        progress?.Report((file, "error: [diag] cdn-try: " + altUrl, 0, 0.0));
-                        var cdnTempPath = Path.Combine(destFolder, file.FileName) + ".cdn.tmp";
-                        try
-                        {
-                            // Primer intento: sin cookies (CDN abierto)
-                            var (cdnOk, cdnErr) = await TryDownloadWithCurlAsync(
-                                altUrl, cdnTempPath, null, userAgent, file.SourcePageUrl, ct).ConfigureAwait(false);
-
-                            // Segundo intento: con cookies (por si CDN requiere autenticación)
-                            if (!cdnOk && !string.IsNullOrWhiteSpace(cdnErr))
-                            {
-                                if (File.Exists(cdnTempPath)) try { File.Delete(cdnTempPath); } catch { }
-                                (cdnOk, cdnErr) = await TryDownloadWithCurlAsync(
-                                    altUrl, cdnTempPath, cookieHeader, userAgent, file.SourcePageUrl, ct).ConfigureAwait(false);
-                            }
-
-                            if (cdnOk && File.Exists(cdnTempPath))
-                            {
-                                var cdnLen = new FileInfo(cdnTempPath).Length;
-                                var ext3 = Path.GetExtension(file.FileName).ToLowerInvariant();
-                                var validErr3 = ValidateDownloadedFile(cdnTempPath, ext3, cdnLen);
-                                if (validErr3 is null)
-                                {
-                                    File.Move(cdnTempPath, destPath, overwrite: true);
-                                    progress?.Report((file, "success", 100, 0.0));
-                                    return new DownloadResult { Success = true, FilePath = destPath, BytesDownloaded = cdnLen };
-                                }
-                                progress?.Report((file, "error: [diag] cdn-html: " + altUrl, 0, 0.0));
-                            }
-                            else if (!string.IsNullOrWhiteSpace(cdnErr))
-                            {
-                                progress?.Report((file, "error: [diag] cdn-err: " + cdnErr, 0, 0.0));
-                            }
-                        }
-                        finally
-                        {
-                            if (File.Exists(cdnTempPath))
-                                try { File.Delete(cdnTempPath); } catch { }
-                        }
-                    }
-                    // continuar con HttpClient + interstitial recovery como último recurso
-                }
-
                 HttpResponseMessage? response = null;
                 for (int htmlHop = 0; htmlHop < 2; htmlHop++)
                 {
@@ -306,7 +148,7 @@ public class DownloadService
 
                     htmlRecoveryUsed = true;
                     requestUrl = recoveredUrl;
-                    progress?.Report((file, "resolviendo interstitial IMSLP", 0, 0.0));
+                    progress?.Report((file, "resolviendo interstitial", 0, 0.0));
                 }
 
                 using (response)
@@ -493,8 +335,6 @@ public class DownloadService
         var jobList = jobs.ToList();
         int done = 0, ok = 0, failed = 0, skipped = 0, cancelled = 0;
         long bytesDownloaded = 0;
-        // Parallelismo adaptado a la fuente más restrictiva del lote (IMSLP=1, CPDL=2, resto=4).
-        // En lotes mixtos usar el mínimo evita rate-limit en IMSLP cuando aparece con Mutopia/CPDL.
         var parallelism = jobList.Count == 0 ? 1
             : jobList.Min(j => GetParallelism(j.item?.Source ?? "Other"));
         var sem = new SemaphoreSlim(parallelism);
@@ -676,11 +516,6 @@ public class DownloadService
         }
     }
 
-    private static bool IsImslpUrl(string url) =>
-        url.Contains("imslp.org", StringComparison.OrdinalIgnoreCase) ||
-        url.Contains("imslp.eu", StringComparison.OrdinalIgnoreCase) ||
-        url.Contains("imglnks.usimg.net", StringComparison.OrdinalIgnoreCase);
-
     // Capacidades curl detectadas una sola vez al arranque (thread-safe double-check).
     private static CurlCapabilities? _curlCaps;
     private static readonly object _curlCapsLock = new();
@@ -733,7 +568,8 @@ public class DownloadService
     /// </summary>
     private static async Task<(bool success, string? error)> TryDownloadWithCurlAsync(
         string url, string outputPath, string? cookieHeader, string? userAgent, string? referer,
-        CancellationToken ct)
+        CancellationToken ct,
+        string? cookieJarPath = null)
     {
         var caps = GetCurlCapabilities();
 
@@ -754,7 +590,23 @@ public class DownloadService
         psi.ArgumentList.Add("--max-time"); psi.ArgumentList.Add("300");
         psi.ArgumentList.Add("--max-redirs"); psi.ArgumentList.Add("10");
 
-        if (!string.IsNullOrWhiteSpace(cookieHeader))
+        if (!string.IsNullOrWhiteSpace(cookieJarPath))
+        {
+            if (File.Exists(cookieJarPath))
+            {
+                psi.ArgumentList.Add("-b");
+                psi.ArgumentList.Add(cookieJarPath);
+            }
+            else if (!string.IsNullOrWhiteSpace(cookieHeader))
+            {
+                psi.ArgumentList.Add("-b");
+                psi.ArgumentList.Add(SanitizeHeaderValue(cookieHeader));
+            }
+
+            psi.ArgumentList.Add("-c");
+            psi.ArgumentList.Add(cookieJarPath);
+        }
+        else if (!string.IsNullOrWhiteSpace(cookieHeader))
         {
             psi.ArgumentList.Add("-H");
             psi.ArgumentList.Add($"Cookie: {SanitizeHeaderValue(cookieHeader)}");
@@ -763,6 +615,11 @@ public class DownloadService
         var ua = string.IsNullOrWhiteSpace(userAgent)
             ? "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
             : userAgent;
+
+        var safeReferer = string.IsNullOrWhiteSpace(referer) ? null : SanitizeHeaderValue(referer);
+        var fetchSite = ResolveSecFetchSite(url, safeReferer);
+        var origin = ResolveOrigin(url, safeReferer);
+
         psi.ArgumentList.Add("-H"); psi.ArgumentList.Add($"User-Agent: {SanitizeHeaderValue(ua)}");
         psi.ArgumentList.Add("-H"); psi.ArgumentList.Add("Accept: application/pdf,application/octet-stream,application/zip,*/*;q=0.8");
         psi.ArgumentList.Add("-H"); psi.ArgumentList.Add("Accept-Language: en-US,en;q=0.9");
@@ -771,14 +628,20 @@ public class DownloadService
         psi.ArgumentList.Add("-H"); psi.ArgumentList.Add(@"sec-ch-ua-platform: ""Windows""");
         psi.ArgumentList.Add("-H"); psi.ArgumentList.Add("sec-fetch-dest: document");
         psi.ArgumentList.Add("-H"); psi.ArgumentList.Add("sec-fetch-mode: navigate");
-        psi.ArgumentList.Add("-H"); psi.ArgumentList.Add("sec-fetch-site: none");
+        psi.ArgumentList.Add("-H"); psi.ArgumentList.Add($"sec-fetch-site: {fetchSite}");
         psi.ArgumentList.Add("-H"); psi.ArgumentList.Add("sec-fetch-user: ?1");
         psi.ArgumentList.Add("-H"); psi.ArgumentList.Add("Upgrade-Insecure-Requests: 1");
 
-        if (!string.IsNullOrWhiteSpace(referer))
+        if (!string.IsNullOrWhiteSpace(safeReferer))
         {
             psi.ArgumentList.Add("-H");
-            psi.ArgumentList.Add($"Referer: {SanitizeHeaderValue(referer)}");
+            psi.ArgumentList.Add($"Referer: {safeReferer}");
+        }
+
+        if (!string.IsNullOrWhiteSpace(origin))
+        {
+            psi.ArgumentList.Add("-H");
+            psi.ArgumentList.Add($"Origin: {origin}");
         }
 
         psi.ArgumentList.Add("-o"); psi.ArgumentList.Add(outputPath);
@@ -806,36 +669,37 @@ public class DownloadService
         }
     }
 
-    /// <summary>
-    /// Para URLs IMSLP tipo /images/imglnks/usimg/... construye la URL alternativa del CDN
-    /// imglnks.usimg.net que puede no estar protegida por Cloudflare.
-    /// </summary>
-    private static string? TryBuildImslpCdnUrl(string url)
+    private static string ResolveSecFetchSite(string url, string? referer)
     {
-        // Patrón 1: /images/imglnks/usimg/X/XX/file.pdf → imglnks.usimg.net/usimg/X/XX/file.pdf
-        const string pat1 = "/images/imglnks/";
-        var idx1 = url.IndexOf(pat1, StringComparison.OrdinalIgnoreCase);
-        if (idx1 >= 0)
+        if (string.IsNullOrWhiteSpace(referer))
+            return "none";
+
+        if (!Uri.TryCreate(url, UriKind.Absolute, out var targetUri)
+            || !Uri.TryCreate(referer, UriKind.Absolute, out var refererUri))
         {
-            var rest = url[(idx1 + pat1.Length)..]; // "usimg/X/XX/file.pdf"
-            return "https://imglnks.usimg.net/" + rest;
+            return "none";
         }
 
-        // Patrón 2: imslp.org/images/X/XX/file.pdf → imglnks.usimg.net/usimg/X/XX/file.pdf
-        // (MediaWiki hash path estándar: /images/[hex]/[hex2]/filename)
-        const string pat2 = "/images/";
-        var idx2 = url.IndexOf(pat2, StringComparison.OrdinalIgnoreCase);
-        if (idx2 >= 0 && (url.Contains("imslp.org", StringComparison.OrdinalIgnoreCase)
-                       || url.Contains("imslp.eu", StringComparison.OrdinalIgnoreCase)))
+        if (string.Equals(targetUri.Host, refererUri.Host, StringComparison.OrdinalIgnoreCase))
+            return "same-origin";
+
+        return "cross-site";
+    }
+
+    private static string? ResolveOrigin(string url, string? referer)
+    {
+        if (!Uri.TryCreate(url, UriKind.Absolute, out var targetUri))
+            return null;
+
+        if (Uri.TryCreate(referer, UriKind.Absolute, out var refererUri))
         {
-            var rest = url[(idx2 + pat2.Length)..]; // "X/XX/file.pdf"
-            // Verificar que parece un hash path (1 char / 2 chars / filename)
-            var segs = rest.Split('/');
-            if (segs.Length >= 3 && segs[0].Length == 1 && segs[1].Length == 2)
-                return "https://imglnks.usimg.net/usimg/" + rest;
+            if (string.Equals(targetUri.Host, refererUri.Host, StringComparison.OrdinalIgnoreCase))
+                return $"{refererUri.Scheme}://{refererUri.Host}";
+
+            return $"{targetUri.Scheme}://{targetUri.Host}";
         }
 
-        return null;
+        return $"{targetUri.Scheme}://{targetUri.Host}";
     }
 
     private static string SafeReadTextFile(string path)
@@ -869,7 +733,7 @@ public class DownloadService
         if (js.Success)
             return MakeAbsoluteUrl(WebUtility.HtmlDecode(js.Groups[1].Value), baseUrl);
 
-        // Fallback: primer href que apunte a PDF o endpoints de archivo IMSLP.
+        // Fallback: primer href que apunte a PDF o endpoints de descarga directa.
         var hrefs = Regex.Matches(html, "href=[\"']([^\"']+)[\"']", RegexOptions.IgnoreCase);
         foreach (Match m in hrefs)
         {

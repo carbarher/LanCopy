@@ -1,7 +1,7 @@
 <Window x:Class="ScoreDown.MainWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="🎵 Partitura Downloader — IMSLP + Mutopia + CPDL"
+        Title="🎵 Partitura Downloader — Mutopia + CPDL"
         Height="720" Width="1000" MinHeight="600" MinWidth="800"
         Background="#1E1E2E" Foreground="White" FontFamily="Segoe UI" FontSize="13"
     PreviewKeyDown="Window_PreviewKeyDown"
@@ -295,9 +295,9 @@
                       SelectionChanged="CmbSource_SelectionChanged"
                       Background="#2D2D44" Foreground="White" BorderBrush="#555"
                       ToolTip="Fuente de búsqueda">
-                <ComboBoxItem>IMSLP</ComboBoxItem>
                 <ComboBoxItem>Mutopia</ComboBoxItem>
                 <ComboBoxItem>CPDL</ComboBoxItem>
+                <ComboBoxItem>Musopen</ComboBoxItem>
                 <ComboBoxItem>Offline</ComboBoxItem>
                 <ComboBoxItem>Todas</ComboBoxItem>
             </ComboBox>
@@ -398,7 +398,6 @@
                           Background="#2D2D44" Foreground="White" BorderBrush="#555"
                           ToolTip="Filtrar por fuente">
                     <ComboBoxItem>Todas</ComboBoxItem>
-                    <ComboBoxItem>IMSLP</ComboBoxItem>
                     <ComboBoxItem>Mutopia</ComboBoxItem>
                     <ComboBoxItem>CPDL</ComboBoxItem>
                     <ComboBoxItem>Offline</ComboBoxItem>
@@ -575,10 +574,6 @@
                     Margin="0,0,4,0" Padding="10,7" Background="#7C3AED"
                     Click="BtnDownloadAll_Click"
                     ToolTip="Un clic: usa fuente Todas, crea carpeta si falta y descarga todo"/>
-                <CheckBox x:Name="chkEnableImlsp" Content="IMSLP"
-                    Margin="0,0,8,0" VerticalAlignment="Center"
-                    IsChecked="True" Checked="SourceToggle_Changed" Unchecked="SourceToggle_Changed"
-                    ToolTip="Habilitar IMSLP en catálogo/descarga"/>
                 <CheckBox x:Name="chkEnableMutopia" Content="Mutopia"
                     Margin="0,0,8,0" VerticalAlignment="Center"
                     IsChecked="True" Checked="SourceToggle_Changed" Unchecked="SourceToggle_Changed"
@@ -587,37 +582,22 @@
                     Margin="0,0,8,0" VerticalAlignment="Center"
                     IsChecked="False" Checked="SourceToggle_Changed" Unchecked="SourceToggle_Changed"
                     ToolTip="Habilitar CPDL en catálogo/descarga"/>
+                <CheckBox x:Name="chkEnableMusopen" Content="Musopen"
+                    Margin="0,0,8,0" VerticalAlignment="Center"
+                    IsChecked="True" Checked="SourceToggle_Changed" Unchecked="SourceToggle_Changed"
+                    ToolTip="Habilitar Musopen en catálogo/descarga"/>
                 <Button x:Name="btnExportHtmlBottom" Content="🌐 HTML"
                     Margin="0,0,4,0" Padding="10,7" Background="#334155"
                     Click="BtnExportHtml_Click" ToolTip="Exportar resultados a HTML"/>
-                <Button x:Name="btnRetryImlspPending" Content="♻ IMSLP pendientes"
-                    Margin="0,0,4,0" Padding="10,7" Background="#0F766E"
-                    Click="BtnRetryImlspPending_Click"
-                    ToolTip="Reintentar descargas IMSLP pendientes guardadas en auto-stop"/>
-                <CheckBox x:Name="chkAutoResumeImlspPending" Content="Auto-resume"
-                    Margin="0,0,8,0" VerticalAlignment="Center"
-                    IsChecked="False" Checked="PendingOptions_Changed" Unchecked="PendingOptions_Changed"
-                    ToolTip="Reanudar lote de pendientes IMSLP al iniciar la app"/>
-                <CheckBox x:Name="chkAutoContinuePendingBatches" Content="Auto-lotes"
-                    Margin="0,0,8,0" VerticalAlignment="Center"
-                    IsChecked="False" Checked="PendingOptions_Changed" Unchecked="PendingOptions_Changed"
-                    ToolTip="Encadenar automáticamente lotes IMSLP pendientes"/>
-                <Button x:Name="btnPauseBatchChain" Content="⏸ Pausar lotes"
-                    Margin="0,0,4,0" Padding="10,7" Background="#78350F" IsEnabled="False"
-                    Click="BtnPauseBatchChain_Click"
-                    ToolTip="Pausar/reanudar la cadena automática de lotes IMSLP pendientes"/>
-                <TextBlock VerticalAlignment="Center" Margin="0,0,4,0"
-                           Foreground="#9CA3AF" FontSize="11" Text="Máx.lotes:"/>
-                <TextBox x:Name="txtBatchLimit" Width="38" Padding="4,5" FontSize="11"
-                         Text="0" VerticalAlignment="Center" Margin="0,0,8,0"
-                         ToolTip="Número máximo de lotes IMSLP encadenados (0 = ilimitado)"
-                         TextChanged="TxtBatchLimit_TextChanged"/>
                 <Button x:Name="btnCancelAllDownloads" Content="⏹ Cancelar"
                     Margin="0,0,4,0" Padding="10,7" Background="#7F1D1D" IsEnabled="False"
                     Click="BtnCancelAllDownloads_Click" ToolTip="Cancelar descargas en curso"/>
                 <Button x:Name="btnCpdlSession" Content="🔐 CPDL sesión"
                     Margin="0,0,4,0" Padding="10,7" Background="#1E3A8A"
                     Click="BtnCpdlSession_Click" ToolTip="Abrir navegador embebido para sesión CPDL"/>
+                <Button x:Name="btnMusopenSession" Content="🔐 Musopen sesión"
+                    Margin="0,0,4,0" Padding="10,7" Background="#1E3A8A"
+                    Click="BtnMusopenSession_Click" ToolTip="Iniciar sesión en Musopen para poder descargar partituras"/>
                 <Button x:Name="btnConvertAudiveris" Content="🎼 Audiveris"
                     Margin="0,0,4,0" Padding="10,7" Background="#14532D"
                     Click="BtnConvertAudiveris_Click"
@@ -678,7 +658,7 @@
                 <TextBlock x:Name="txtSourceStatus" Grid.Row="1" Grid.Column="0"
                            HorizontalAlignment="Right" Margin="0,2,8,0"
                            Foreground="#7DD3FC" FontSize="10"
-                           Text="Fuentes I:ON M:ON C:OFF · Pend IMSLP:0 · Preflight:n/a"/>
+                           Text="Fuentes M:ON C:OFF"/>
                 <TextBlock x:Name="txtErrorMiniTable" Grid.Row="1" Grid.Column="0"
                            HorizontalAlignment="Left" Margin="0,2,0,0"
                            Foreground="#F87171" FontSize="10" Text=""
@@ -704,6 +684,7 @@
                             <RowDefinition Height="*" MinHeight="60"/>
                             <RowDefinition Height="Auto"/>
                             <RowDefinition Height="90"/>
+                            <RowDefinition Height="Auto"/>
                             <RowDefinition Height="Auto"/>
                             <RowDefinition Height="*" MinHeight="60"/>
                         </Grid.RowDefinitions>
@@ -745,8 +726,16 @@
                                 </DataTemplate>
                             </ListBox.ItemTemplate>
                         </ListBox>
-                        <TextBlock Grid.Row="4" Text="🎼 Audiveris procesados" Foreground="#34D399" Margin="8,0,8,4" FontWeight="SemiBold"/>
-                        <ListBox x:Name="lstAudiverisLog" Grid.Row="5" Margin="6,0,6,6" BorderThickness="0">
+                        <DockPanel Grid.Row="4" Margin="8,0,8,4">
+                            <Button x:Name="btnResetAudiverisCooldown" DockPanel.Dock="Right"
+                                    Content="🔄" FontSize="9" Padding="4,1" Background="Transparent"
+                                    Foreground="#6B7280" BorderThickness="0" Cursor="Hand"
+                                    ToolTip="Limpiar cooldown y strikes de Audiveris"
+                                    Click="BtnResetAudiverisCooldown_Click"/>
+                            <TextBlock Text="🎼 Audiveris procesados" Foreground="#34D399" FontWeight="SemiBold" VerticalAlignment="Center"/>
+                        </DockPanel>
+                        <TextBlock x:Name="txtAudiverisStatus" Grid.Row="5" Foreground="#6B7280" FontSize="9" Margin="8,0,8,2" TextTrimming="CharacterEllipsis"/>
+                        <ListBox x:Name="lstAudiverisLog" Grid.Row="6" Margin="6,0,6,6" BorderThickness="0">
                             <ListBox.ItemTemplate>
                                 <DataTemplate>
                                     <StackPanel Margin="2,2">
@@ -780,7 +769,7 @@
                              Background="#13131F" Foreground="#94A3B8"
                              FontFamily="Consolas" FontSize="11"
                              BorderBrush="#333" Padding="6"
-                             ToolTip="Ctrl+K: limpiar log"/>
+                             />
                 </Grid>
             </Grid>
         </Grid>

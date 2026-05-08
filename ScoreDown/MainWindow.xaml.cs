@@ -39,9 +39,9 @@ public partial class MainWindow : Window, IAsyncDisposable
         public int CancelledFiles;
     }
 
-    private readonly ImslpService _imslp = new();
     private readonly MutopiaService _mutopia = new();
     private readonly CpdlService _cpdl = new();
+    private readonly MusopenService _musopen = new();
     private readonly DownloadService _downloader = new();
 
     private readonly ObservableCollection<PartituraItem> _allResults = new();
@@ -83,25 +83,19 @@ public partial class MainWindow : Window, IAsyncDisposable
     private readonly string _offlineLibraryPath = Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
         "ScoreDown", "offline-library.json");
-    private readonly string _imslpPendingPath = Path.Combine(
+    private readonly string _audiverisPageFailuresPath = Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-        "ScoreDown", "imslp-pending.json");
-    private readonly string _imslpPendingActivePath = Path.Combine(
+        "ScoreDown", "audiveris-page-failures.json");
+    private readonly string _audiverisTimeoutFamiliesPath = Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-        "ScoreDown", "imslp-pending-active.json");
+        "ScoreDown", "audiveris-timeout-families.json");
+    private readonly string _audiverisTimeoutStrikesPath = Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+        "ScoreDown", "audiveris-timeout-strikes.json");
     private bool _enableMutopia = ReadFeatureFlag("SCOREDOWN_ENABLE_MUTOPIA", true);
-    private bool _enableImlsp = ReadFeatureFlag("SCOREDOWN_ENABLE_IMSLP", true);
     private bool _enableCpdl = ReadFeatureFlag("SCOREDOWN_ENABLE_CPDL", false);
-    private readonly int _imslpPendingBatchSize = ReadFeatureFlagInt("SCOREDOWN_IMSLP_PENDING_BATCH", 200, 1, 5000);
-    private readonly int _imslpPendingBatchDelaySeconds = ReadFeatureFlagInt("SCOREDOWN_IMSLP_PENDING_DELAY", 8, 0, 600);
-    private bool _autoResumeImlspPending = ReadFeatureFlag("SCOREDOWN_AUTO_RESUME_PENDING", false);
-    private bool _autoContinuePendingBatches = ReadFeatureFlag("SCOREDOWN_AUTO_CONTINUE_PENDING", false);
-    private int _pendingBatchChainCount;
-    private int _autoBatchPaused; // 0=normal 1=pausado (Interlocked)
-    private int _autoBatchLimit = ReadFeatureFlagInt("SCOREDOWN_IMSLP_BATCH_LIMIT", 0, 0, 9999);
+    private bool _enableMusopen = ReadFeatureFlag("SCOREDOWN_ENABLE_MUSOPEN", true);
     private readonly ConcurrentDictionary<string, int> _liveErrorTypes = new(StringComparer.OrdinalIgnoreCase);
-    private string _lastImlspBinaryPreflight = "n/a";
-    private string _lastImlspSessionValidatedAt = "n/a";
     private int _cacheHits;
     private int _cacheMisses;
     private int _sessionSearches;
@@ -114,7 +108,6 @@ public partial class MainWindow : Window, IAsyncDisposable
     private CancellationTokenSource? _catalogCts;
     // Sesión WebView2 para CPDL — rutar peticiones por WebView2 preserva TLS fingerprint de Cloudflare
     private Infrastructure.CpdlWebSession? _cpdlWebSession;
-    private Infrastructure.CpdlWebSession? _imslpWebSession;
     // Dedup set para catálogo — O(1) lookup vs O(N²) .Any()
     private readonly HashSet<string> _catalogSeenKeys = new(StringComparer.OrdinalIgnoreCase);
     // Cache de compositores conocidos en resultados actuales — evita iterar _allResults por tecla
@@ -124,10 +117,22 @@ public partial class MainWindow : Window, IAsyncDisposable
     private int _composerPoolVersion;  // inc al añadir a _knownComposersCache
     private static readonly string[] AudiverisInputExtensions = [".pdf", ".png", ".jpg", ".jpeg", ".tif", ".tiff", ".bmp"];
     private static readonly string[] AudiverisOutputExtensions = [".mxl", ".xml", ".mscz", ".mscx"];
-    private bool _audiverisRunning;
+    private readonly int _audiverisBatchSize = ReadFeatureFlagInt("SCOREDOWN_AUDIVERIS_BATCH", 100, 1, 10000);
+    private readonly int _audiverisTimeoutSeconds = ReadFeatureFlagInt("SCOREDOWN_AUDIVERIS_TIMEOUT_SEC", 300, 30, 7200);
+    private readonly int _audiverisParallel = ReadFeatureFlagInt("SCOREDOWN_AUDIVERIS_PARALLEL", 2, 1, 8);
+    private readonly int _audiverisPdfTimeoutMinSeconds = ReadFeatureFlagInt("SCOREDOWN_AUDIVERIS_TIMEOUT_PDF_MIN_SEC", 420, 60, 7200);
+    private readonly int _audiverisPdfTimeoutPerMbSeconds = ReadFeatureFlagInt("SCOREDOWN_AUDIVERIS_TIMEOUT_PDF_PER_MB_SEC", 12, 0, 300);
+    private readonly int _audiverisPdfTimeoutMaxSeconds = ReadFeatureFlagInt("SCOREDOWN_AUDIVERIS_TIMEOUT_PDF_MAX_SEC", 1800, 120, 10800);
+    private readonly int _audiverisTimeoutStrikeBoostSeconds = ReadFeatureFlagInt("SCOREDOWN_AUDIVERIS_TIMEOUT_STRIKE_BOOST_SEC", 60, 0, 600);
+    private readonly int _audiverisTimeoutCooldownMinutes = ReadFeatureFlagInt("SCOREDOWN_AUDIVERIS_TIMEOUT_COOLDOWN_MIN", 720, 10, 10080);
+    private readonly int _audiverisStrikeDecayHours = ReadFeatureFlagInt("SCOREDOWN_AUDIVERIS_STRIKE_DECAY_HOURS", 48, 1, 8760);
+    private readonly HashSet<string> _audiverisKnownPageFailures = new(StringComparer.OrdinalIgnoreCase);
+    private readonly ConcurrentDictionary<string, DateTime> _audiverisTimeoutFamilies = new(StringComparer.OrdinalIgnoreCase);
+    private readonly ConcurrentDictionary<string, int> _audiverisTimeoutStrikes = new(StringComparer.OrdinalIgnoreCase);
+    private readonly ConcurrentDictionary<string, DateTime> _audiverisStrikeLastUtc = new(StringComparer.OrdinalIgnoreCase);
+    private volatile bool _audiverisRunning;
 
     private PartituraItem? _contextItem;  // item bajo clic derecho
-    private bool _suppressTagUiEvents;
     private readonly ConcurrentDictionary<string, byte> _pausedQueueFiles = new(StringComparer.OrdinalIgnoreCase);
 
     // Production features: file logging + circuit breaker
@@ -173,20 +178,19 @@ public partial class MainWindow : Window, IAsyncDisposable
 
         _cpdl.RequestInteractiveSessionAsync = OpenCpdlSessionAsync;
 
-        chkEnableImlsp.IsChecked = _enableImlsp;
         chkEnableMutopia.IsChecked = _enableMutopia;
         chkEnableCpdl.IsChecked = _enableCpdl;
-        chkAutoResumeImlspPending.IsChecked = _autoResumeImlspPending;
-        chkAutoContinuePendingBatches.IsChecked = _autoContinuePendingBatches;
-        txtBatchLimit.Text = _autoBatchLimit.ToString();
-
-        RecoverActivePendingBatchIfAny();
+        chkEnableMusopen.IsChecked = _enableMusopen;
 
         _currentDestFolder = txtDestFolder.Text?.Trim() ?? string.Empty;
         LoadSearchHistory();
         LoadTags();
         LoadDownloadHistory();
         LoadOfflineLibrary();
+        LoadAudiverisPageFailures();
+        LoadAudiverisTimeoutFamilies();
+        LoadAudiverisTimeoutStrikes();
+        UpdateAudiverisStatus();
         RefreshHistoryCombo();
         UpdateCacheStats();
         lstQueue.ItemsSource = _downloadQueue;
@@ -194,11 +198,6 @@ public partial class MainWindow : Window, IAsyncDisposable
         lstAudiverisLog.ItemsSource = _audiverisLog;
         UpdateSessionStats();
         UpdateSourceDashboard();
-
-        if (_autoResumeImlspPending && GetImlspPendingCount() > 0)
-        {
-            Log("ℹ️ Pendientes IMSLP detectados al iniciar. Pulsa 'Reintentar pendientes IMSLP' para ejecutar.");
-        }
     }
 
     private void Window_PreviewKeyDown(object sender, WinInput.KeyEventArgs e)
@@ -243,6 +242,9 @@ public partial class MainWindow : Window, IAsyncDisposable
         SaveTags();
         SaveDownloadHistory();
         SaveOfflineLibrary();
+        SaveAudiverisPageFailures();
+        SaveAudiverisTimeoutFamilies();
+        SaveAudiverisTimeoutStrikes();
 
         // Production cleanup: close marker + retention cleanup
         _fileLogger?.Log("=== ScoreDown Closed ===");
@@ -291,9 +293,6 @@ public partial class MainWindow : Window, IAsyncDisposable
         try { _cpdlWebSession?.Dispose(); } catch { }
         _cpdlWebSession = null;
         _cpdl.WebViewFetchAsync = null;
-        try { _imslpWebSession?.Dispose(); } catch { }
-        _imslpWebSession = null;
-        _downloader.ImslpWebViewDownloadAsync = null;
 
         try
         {
@@ -394,9 +393,7 @@ public partial class MainWindow : Window, IAsyncDisposable
         {
             txtInfoHint.Visibility = Visibility.Visible;
             pnlInfoContent.Visibility = Visibility.Collapsed;
-            _suppressTagUiEvents = true;
             txtTagEditor.Text = string.Empty;
-            _suppressTagUiEvents = false;
             txtTagStatus.Text = string.Empty;
             UpdatePreview(null);
             return;
@@ -409,9 +406,7 @@ public partial class MainWindow : Window, IAsyncDisposable
         txtInfoUrl.Text = string.IsNullOrWhiteSpace(item.PageUrl) ? "(sin URL)" : item.PageUrl;
         txtInfoUrl.Tag = item.PageUrl;
         icInfoFiles.ItemsSource = item.Files;
-        _suppressTagUiEvents = true;
         txtTagEditor.Text = item.UserTag;
-        _suppressTagUiEvents = false;
         txtTagStatus.Text = string.IsNullOrWhiteSpace(item.UserTag) ? "Sin tag" : "Tag cargado";
         UpdatePreview(item);
     }
@@ -773,7 +768,7 @@ public partial class MainWindow : Window, IAsyncDisposable
         if (allItem is not null)
             cmbSource.SelectedItem = allItem;
 
-        _ = DoFetchCatalogAsync(forceAllSources: true, includeImlspWhenAll: true);
+        _ = DoFetchCatalogAsync(forceAllSources: true);
     }
 
     private void BtnCancelCatalog_Click(object sender, RoutedEventArgs e) => _catalogCts?.Cancel();
@@ -821,11 +816,9 @@ public partial class MainWindow : Window, IAsyncDisposable
     /// Fase 1: cataloga metadatos de la fuente seleccionada (sin añadir a _allResults para evitar
     ///         O(N²) y freezes de UI con 150k+ items).
     /// Fase 2: descarga automáticamente todos los archivos, saltando los ya existentes en disco.
-    ///         IMSLP: solo descarga si se seleccionó explícitamente (cada obra requiere una petición
-    ///         adicional para obtener los enlaces; a 150k obras = horas). Se avisa al usuario.
     ///         Mutopia / CPDL: descarga completa automática.
     /// </summary>
-    private async Task DoFetchCatalogAsync(bool forceAllSources = false, bool includeImlspWhenAll = false)
+    private async Task DoFetchCatalogAsync(bool forceAllSources = false)
     {
         var destFolder = txtDestFolder.Text?.Trim();
         if (string.IsNullOrWhiteSpace(destFolder))
@@ -842,31 +835,25 @@ public partial class MainWindow : Window, IAsyncDisposable
             return;
         }
 
-        var source = (cmbSource.SelectedItem as System.Windows.Controls.ComboBoxItem)?.Content?.ToString() ?? "IMSLP";
+        var source = (cmbSource.SelectedItem as System.Windows.Controls.ComboBoxItem)?.Content?.ToString() ?? "Mutopia";
         if (forceAllSources)
             source = "Todas";
         if (source == "Offline")
         {
-            Log("⚠️ Selecciona IMSLP, Mutopia, CPDL o Todas para descargar catálogo");
+            Log("⚠️ Selecciona Mutopia, CPDL, Musopen o Todas para descargar catálogo");
             return;
         }
 
         if (!_enableCpdl && source == "CPDL")
         {
-            Log("⏸️ CPDL está desactivado temporalmente (Cloudflare). Usa IMSLP, Mutopia o Todas.");
-            return;
-        }
-        if (!_enableImlsp && source == "IMSLP")
-        {
-            Log("⏸️ IMSLP está desactivado por configuración. Usa Mutopia o Todas.");
+            Log("⏸️ CPDL está desactivado temporalmente (Cloudflare). Usa Mutopia o Todas.");
             return;
         }
         if (!_enableMutopia && source == "Mutopia")
         {
-            Log("⏸️ Mutopia está desactivado por configuración. Usa IMSLP o Todas.");
+            Log("⏸️ Mutopia está desactivado por configuración. Usa CPDL o Todas.");
             return;
         }
-
         _catalogCts?.Cancel();
         _catalogCts?.Dispose();
         _catalogCts = new CancellationTokenSource();
@@ -925,15 +912,14 @@ public partial class MainWindow : Window, IAsyncDisposable
                 fetchTasks.Add(GuardedFetch("Mutopia", _mutopia.FetchAllAsync(OnItem, progress, ct), progress));
             if (_enableCpdl && (source is "CPDL" or "Todas"))
                 fetchTasks.Add(GuardedFetch("CPDL", _cpdl.FetchAllAsync(OnItem, progress, ct), progress));
-            if (_enableImlsp && (source is "IMSLP" or "Todas"))
-                fetchTasks.Add(GuardedFetch("IMSLP", _imslp.FetchAllAsync(OnItem, progress, ct), progress));
-
+            if (_enableMusopen && _musopen.HasApiKey && (source is "Musopen" or "Todas"))
+                fetchTasks.Add(GuardedFetch("Musopen", _musopen.FetchAllAsync(OnItem, progress, ct), progress));
             if (source == "Todas")
             {
                 var disabled = new List<string>();
                 if (!_enableCpdl) disabled.Add("CPDL");
-                if (!_enableImlsp) disabled.Add("IMSLP");
                 if (!_enableMutopia) disabled.Add("Mutopia");
+                if (!_enableMusopen) disabled.Add("Musopen");
                 if (disabled.Count > 0)
                     Log($"ℹ️ Fuentes desactivadas por configuración: {string.Join(", ", disabled)}");
             }
@@ -961,18 +947,13 @@ public partial class MainWindow : Window, IAsyncDisposable
             Log($"✅ Fase 1: {catalogItems.Count} obras catalogadas y guardadas");
 
             // ── Fase 2: descargar archivos ───────────────────────────────
-            // IMSLP requiere una petición HTTP por obra para obtener links de descarga.
-            // Con 150k+ obras eso son horas. Solo descargamos si fue seleccionada explícitamente
-            // Y se excluye de descarga automática en modo "Todas".
-            var downloadable = source == "Todas" && !includeImlspWhenAll
-                ? catalogItems.Where(i => i.Source != "IMSLP").ToList()
-                : catalogItems.ToList();
+            var downloadable = catalogItems.ToList();
 
             downloadable = downloadable
                 .Where(i =>
-                    (_enableImlsp || !string.Equals(i.Source, "IMSLP", StringComparison.OrdinalIgnoreCase))
-                    && (_enableMutopia || !string.Equals(i.Source, "Mutopia", StringComparison.OrdinalIgnoreCase))
-                    && (_enableCpdl || !string.Equals(i.Source, "CPDL", StringComparison.OrdinalIgnoreCase)))
+                    (_enableMutopia || !string.Equals(i.Source, "Mutopia", StringComparison.OrdinalIgnoreCase))
+                    && (_enableCpdl || !string.Equals(i.Source, "CPDL", StringComparison.OrdinalIgnoreCase))
+                    && (_enableMusopen || !string.Equals(i.Source, "Musopen", StringComparison.OrdinalIgnoreCase)))
                 .ToList();
 
             var bySource = downloadable
@@ -981,17 +962,6 @@ public partial class MainWindow : Window, IAsyncDisposable
                 .Select(g => $"{g.Key}:{g.Count()}")
                 .ToArray();
             Log($"📦 Obras para descarga por fuente: {(bySource.Length == 0 ? "ninguna" : string.Join(" | ", bySource))}");
-
-            int imslpCount = 0;
-            if (source == "Todas" && !includeImlspWhenAll)
-            {
-                imslpCount = catalogItems.Count(i => i.Source == "IMSLP");
-                Log($"ℹ️ IMSLP: {imslpCount} obras catalogadas sin descarga automática (usa búsqueda manual)");
-            }
-            else if (source == "Todas" && includeImlspWhenAll)
-            {
-                Log("ℹ️ Modo Descargar todo: IMSLP incluido en descarga automática (puede tardar bastante)");
-            }
 
             downloadable = await ApplyBulkPreflightAsync(downloadable, progress, ct).ConfigureAwait(false);
             if (downloadable.Count == 0)
@@ -1012,7 +982,6 @@ public partial class MainWindow : Window, IAsyncDisposable
             int totalCancelledFiles = 0;
             int totalAutoStoppedItems = 0;
             int consecutiveErrors = 0;
-            var imslpDeferred = new ConcurrentBag<PartituraItem>();
             var sourceStats = new ConcurrentDictionary<string, SourceStats>(StringComparer.OrdinalIgnoreCase);
             var errorTypes = new ConcurrentDictionary<string, int>(StringComparer.OrdinalIgnoreCase);
             var cpdlWindow = new Queue<bool>();
@@ -1026,37 +995,6 @@ public partial class MainWindow : Window, IAsyncDisposable
             const double cpdlNoFilesStopRatio = 0.80;  // #9: ratio (bajado para compensar ventana mayor)
             const int cpdlNoFilesStopAbsMin = 200;     // #9: mínimo sin-archivos absolutos en ventana
 
-            var imslpWindow = new Queue<bool>();
-            var imslpWindowLock = new object();
-            int imslpNoFilesInWindow = 0;
-            int imslpTotalProcessed = 0;
-            long imslpLastGlobalCooldownTicks = 0;
-            const int imslpWindowSize = 120;
-            const int imslpWindowMin = 50;
-            const int imslpGracePeriod = 30;
-            const double imslpNoFilesPressureRatio = 0.65;
-            const int imslpNoFilesPressureAbsMin = 30;
-            const int imslpCooldownSeconds = 20;
-
-            // Ventana de fallos de descarga de archivo IMSLP (distinto de sin-archivos)
-            var imslpDlWindow = new Queue<bool>();
-            var imslpDlWindowLock = new object();
-            int imslpDlFailsInWindow = 0;
-            long imslpLastDlCooldownTicks = 0;
-            int imslpAutoStopActive = 0;
-            int imslpEarlyHtmlFailures = 0;
-            int imslpEarlyThrottleApplied = 0;
-            const int imslpDlWindowSize = 60;
-            const int imslpDlWindowMin = 20;
-            const double imslpDlFailRatio = 0.50;
-            const int imslpDlFailAbsMin = 12;
-            const int imslpDlCooldownSeconds = 30;
-            const int imslpPerItemFailFastLimit = 1;
-            const int imslpEarlyFailureWindow = 10;
-            const int imslpPageHtmlBlacklistThreshold = 3;
-            var imslpHtmlFailsByPage = new ConcurrentDictionary<string, int>(StringComparer.OrdinalIgnoreCase);
-            var imslpHtmlPageBlacklist = new ConcurrentDictionary<string, byte>(StringComparer.OrdinalIgnoreCase);
-
             static SourceStats GetStats(ConcurrentDictionary<string, SourceStats> map, string source)
                 => map.GetOrAdd(string.IsNullOrWhiteSpace(source) ? "Desconocida" : source, _ => new SourceStats());
 
@@ -1067,26 +1005,6 @@ public partial class MainWindow : Window, IAsyncDisposable
                 map.AddOrUpdate(key, 1, (_, n) => n + 1);
                 _liveErrorTypes.AddOrUpdate(key, 1, (_, n) => n + 1);
             }
-
-            static PartituraItem ClonePendingItem(PartituraItem item) => new()
-            {
-                Title = item.Title,
-                Composer = item.Composer,
-                PageUrl = item.PageUrl,
-                Source = item.Source,
-                SourcePageId = item.SourcePageId,
-                UserTag = item.UserTag,
-                Genre = item.Genre,
-                Instrument = item.Instrument,
-                Files = item.Files.Select(f => new PartituraFile
-                {
-                    Format = f.Format,
-                    DownloadUrl = f.DownloadUrl,
-                    FileName = f.FileName,
-                    SizeBytes = f.SizeBytes,
-                    SourcePageUrl = f.SourcePageUrl
-                }).ToList()
-            };
 
             string BuildLiveSourceMetrics()
             {
@@ -1102,16 +1020,7 @@ public partial class MainWindow : Window, IAsyncDisposable
                     var worksPerMin = s.ItemsSeen / elapsedMin;
                     var mbPerSec = (s.DownloadedBytes / (1024.0 * 1024.0)) / elapsedSec;
                     var noFilesRatio = s.ItemsSeen > 0 ? (double)s.RejectedItems / s.ItemsSeen : 0;
-                    var extra = string.Empty;
-                    if (string.Equals(kv.Key, "IMSLP", StringComparison.OrdinalIgnoreCase) && s.TotalItems > 0)
-                    {
-                        var remaining = Math.Max(0, s.TotalItems - s.ItemsSeen);
-                        var etaMin = worksPerMin > 0.01 ? remaining / worksPerMin : double.PositiveInfinity;
-                        extra = double.IsInfinity(etaMin)
-                            ? $" · rest={remaining} · eta=--"
-                            : $" · rest={remaining} · eta~{Math.Max(1, (int)Math.Ceiling(etaMin))}m";
-                    }
-                    parts.Add($"{kv.Key}: {worksPerMin:F1} ob/min · {mbPerSec:F2} MB/s · sin={noFilesRatio:P0} · p={Math.Max(1, s.CurrentParallelism)}{extra}");
+                    parts.Add($"{kv.Key}: {worksPerMin:F1} ob/min · {mbPerSec:F2} MB/s · sin={noFilesRatio:P0} · p={Math.Max(1, s.CurrentParallelism)}");
                 }
 
                 return string.Join(" | ", parts);
@@ -1123,7 +1032,7 @@ public partial class MainWindow : Window, IAsyncDisposable
                 if (silent)
                     return;
 
-                if (processed % 50 == 0)
+                if (processed % 10 == 0)
                 {
                     progress.Report($"📥 {processed}/{downloadable.Count} obras · nuevas={totalDownloadedItems} previas={totalExistingItems} sin-archivos={totalRejectedItems} error={totalErroredItems} · archivos ✅{totalDownloadedFiles} ⏭️{totalSkippedFiles} ❌{totalFailedFiles}");
                     Dispatcher.BeginInvoke(() => UpdateLiveErrorTable(), DispatcherPriority.Background);
@@ -1165,55 +1074,12 @@ public partial class MainWindow : Window, IAsyncDisposable
                 }
             }
 
-            bool RegisterImslpLoadOutcome(bool hasFiles, out double currentRatio, out int currentNoFiles)
-            {
-                var total = System.Threading.Interlocked.Increment(ref imslpTotalProcessed);
-                lock (imslpWindowLock)
-                {
-                    if (!hasFiles) imslpNoFilesInWindow++;
-                    imslpWindow.Enqueue(hasFiles);
-                    if (imslpWindow.Count > imslpWindowSize)
-                    {
-                        var evicted = imslpWindow.Dequeue();
-                        if (!evicted) imslpNoFilesInWindow--;
-                    }
-
-                    currentNoFiles = imslpNoFilesInWindow;
-                    currentRatio = imslpWindow.Count > 0 ? (double)currentNoFiles / imslpWindow.Count : 0;
-
-                    if (total < imslpGracePeriod)
-                        return false;
-
-                    if (imslpWindow.Count < imslpWindowMin)
-                        return false;
-
-                    return currentRatio >= imslpNoFilesPressureRatio && currentNoFiles >= imslpNoFilesPressureAbsMin;
-                }
-            }
-
             static int GetSourceParallelism(string src) => src switch
             {
-                "IMSLP" => 4,
                 "Mutopia" => 6,
                 "CPDL" => 2,    // #5: reducido para menos 403/bloqueos
                 _ => 4
             };
-
-            var mixedImlspMutopia = downloadable.Any(i => string.Equals(i.Source, "IMSLP", StringComparison.OrdinalIgnoreCase))
-                                    && downloadable.Any(i => string.Equals(i.Source, "Mutopia", StringComparison.OrdinalIgnoreCase));
-
-            static bool IsLikelyDirectImslpBinaryUrl(string? url)
-            {
-                if (string.IsNullOrWhiteSpace(url)) return false;
-                if (url.Contains("/wiki/File:", StringComparison.OrdinalIgnoreCase)) return false;
-                if (url.Contains("/wiki/Special:", StringComparison.OrdinalIgnoreCase)) return false;
-                if (url.Contains("/images/", StringComparison.OrdinalIgnoreCase)) return true;
-                return url.EndsWith(".pdf", StringComparison.OrdinalIgnoreCase)
-                    || url.EndsWith(".midi", StringComparison.OrdinalIgnoreCase)
-                    || url.EndsWith(".mid", StringComparison.OrdinalIgnoreCase)
-                    || url.EndsWith(".xml", StringComparison.OrdinalIgnoreCase)
-                    || url.EndsWith(".mxl", StringComparison.OrdinalIgnoreCase);
-            }
 
             static string NormalizeUrlForSort(string? url) =>
                 string.IsNullOrWhiteSpace(url)
@@ -1226,18 +1092,8 @@ public partial class MainWindow : Window, IAsyncDisposable
                 if (materialized.Count == 0)
                     return materialized;
 
-                if (string.Equals(source, "IMSLP", StringComparison.OrdinalIgnoreCase))
-                {
-                    var direct = materialized
-                        .Where(f => IsLikelyDirectImslpBinaryUrl(f.DownloadUrl))
-                        .ToList();
-                    if (direct.Count > 0)
-                        materialized = direct;
-                }
-
                 return materialized
                     .OrderByDescending(f => string.Equals(f.Format, "PDF", StringComparison.OrdinalIgnoreCase))
-                    .ThenByDescending(f => IsLikelyDirectImslpBinaryUrl(f.DownloadUrl))
                     .ThenBy(f => f.Format, StringComparer.OrdinalIgnoreCase)
                     .GroupBy(f => NormalizeUrlForSort(f.DownloadUrl), StringComparer.Ordinal)
                     .Select(g => g.First());
@@ -1258,11 +1114,8 @@ public partial class MainWindow : Window, IAsyncDisposable
                     var sourceName = group.Key;
                     var sourceItems = group.ToList();
                     var maxParallel = GetSourceParallelism(sourceName);
-                    if (mixedImlspMutopia && string.Equals(sourceName, "IMSLP", StringComparison.OrdinalIgnoreCase))
-                        maxParallel = Math.Min(maxParallel, 2); // presupuesto: bajar presión IMSLP cuando Mutopia está activa
-                    var minParallel = sourceName == "CPDL" || sourceName == "IMSLP" ? 1 : 2;
+                    var minParallel = sourceName == "CPDL" ? 1 : 2;
                     var currentParallel = maxParallel;
-                    int imslpForcedSingleParallel = 0;
 
                     var sourceStatsEntry = GetStats(sourceStats, sourceName);
                     sourceStatsEntry.CurrentParallelism = currentParallel;
@@ -1271,13 +1124,6 @@ public partial class MainWindow : Window, IAsyncDisposable
                     for (int offset = 0; offset < sourceItems.Count;)
                     {
                         ct.ThrowIfCancellationRequested();
-
-                        if (string.Equals(sourceName, "IMSLP", StringComparison.OrdinalIgnoreCase)
-                            && System.Threading.Volatile.Read(ref imslpForcedSingleParallel) == 1)
-                        {
-                            currentParallel = 1;
-                            maxParallel = 1;
-                        }
 
                         var batchSize = Math.Min(sourceItems.Count - offset, Math.Max(currentParallel * 24, currentParallel));
                         var batch = sourceItems.GetRange(offset, batchSize);
@@ -1311,29 +1157,6 @@ public partial class MainWindow : Window, IAsyncDisposable
                                 return;
                             }
 
-                            if (item.Source == "IMSLP" && System.Threading.Volatile.Read(ref imslpAutoStopActive) == 1)
-                            {
-                                imslpDeferred.Add(ClonePendingItem(item));
-                                System.Threading.Interlocked.Increment(ref stats.CancelledItems);
-                                System.Threading.Interlocked.Increment(ref totalCancelledItems);
-                                System.Threading.Interlocked.Increment(ref totalAutoStoppedItems);
-                                System.Threading.Interlocked.Increment(ref batchProcessed);
-                                ReportProgressEvery50(silent: true);
-                                return;
-                            }
-
-                            if (item.Source == "IMSLP"
-                                && !string.IsNullOrWhiteSpace(item.PageUrl)
-                                && imslpHtmlPageBlacklist.ContainsKey(item.PageUrl))
-                            {
-                                imslpDeferred.Add(ClonePendingItem(item));
-                                System.Threading.Interlocked.Increment(ref stats.CancelledItems);
-                                System.Threading.Interlocked.Increment(ref totalCancelledItems);
-                                System.Threading.Interlocked.Increment(ref batchProcessed);
-                                ReportProgressEvery50(silent: true);
-                                return;
-                            }
-
                             if (item.Files.Count == 0)
                             {
                                 bool loaded = false;
@@ -1344,12 +1167,18 @@ public partial class MainWindow : Window, IAsyncDisposable
                                 {
                                     try
                                     {
-                                        loaded = item.Source == "IMSLP"
-                                            ? await _imslp.LoadFilesAsync(item, itemCt).ConfigureAwait(false)
-                                            : await _cpdl.LoadFilesAsync(item, itemCt).ConfigureAwait(false);
+                                        using var loadCts = CancellationTokenSource.CreateLinkedTokenSource(itemCt);
+                                        loadCts.CancelAfter(TimeSpan.FromSeconds(25));
+
+                                        loaded = await _cpdl.LoadFilesAsync(item, loadCts.Token).ConfigureAwait(false);
 
                                         if (loaded)
                                             System.Threading.Volatile.Write(ref consecutiveErrors, 0);
+                                    }
+                                    catch (OperationCanceledException) when (!itemCt.IsCancellationRequested)
+                                    {
+                                        // Timeout por obra: seguir con siguiente elemento para que el lote avance.
+                                        loaded = false;
                                     }
                                     catch (OperationCanceledException) { throw; }
                                     catch { }
@@ -1372,39 +1201,12 @@ public partial class MainWindow : Window, IAsyncDisposable
                                         progress.Report($"⚠️ CPDL auto-stop: ratio={cRatio:P0} sin-archivos={cNoFiles}/{cpdlWindowSize} en ventana; se omiten pendientes CPDL");
                                 }
 
-                                if (item.Source == "IMSLP")
-                                {
-                                    var pressure = RegisterImslpLoadOutcome(loaded, out var iRatio, out var iNoFiles);
-                                    if (pressure)
-                                    {
-                                        var nowTicks = DateTime.UtcNow.Ticks;
-                                        var prevTicks = System.Threading.Interlocked.Read(ref imslpLastGlobalCooldownTicks);
-                                        var cooloffTicks = TimeSpan.FromSeconds(imslpCooldownSeconds).Ticks;
-                                        if (nowTicks - prevTicks >= cooloffTicks
-                                            && System.Threading.Interlocked.CompareExchange(ref imslpLastGlobalCooldownTicks, nowTicks, prevTicks) == prevTicks)
-                                        {
-                                            progress.Report($"⏸️ IMSLP bajo presión: sin-archivos={iRatio:P0} ({iNoFiles}/{imslpWindowSize}); enfriando 25s");
-                                            await Task.Delay(TimeSpan.FromSeconds(25), itemCt).ConfigureAwait(false);
-                                        }
-                                    }
-                                }
-
                                 if (!loaded)
                                 {
                                     System.Threading.Interlocked.Increment(ref consecutiveErrors);
-                                    if (item.Source == "IMSLP")
-                                    {
-                                        System.Threading.Interlocked.Increment(ref stats.ErroredItems);
-                                        System.Threading.Interlocked.Increment(ref totalErroredItems);
-                                        System.Threading.Interlocked.Increment(ref batchHardErrors);
-                                        AddErrorType(errorTypes, "IMSLP bloqueado/rate-limit (sin archivos)");
-                                    }
-                                    else
-                                    {
-                                        System.Threading.Interlocked.Increment(ref stats.RejectedItems);
-                                        System.Threading.Interlocked.Increment(ref totalRejectedItems);
-                                        AddErrorType(errorTypes, "Sin archivos detectados en la página");
-                                    }
+                                    System.Threading.Interlocked.Increment(ref stats.RejectedItems);
+                                    System.Threading.Interlocked.Increment(ref totalRejectedItems);
+                                    AddErrorType(errorTypes, "Sin archivos detectados en la página");
                                     System.Threading.Interlocked.Increment(ref batchProcessed);
                                     ReportProgressEvery50();
                                     return;
@@ -1417,44 +1219,18 @@ public partial class MainWindow : Window, IAsyncDisposable
                             bool itemHasError = false;
                             bool itemCancelled = false;
                             bool sawAnyFileResult = false;
-                            int itemImlspFailures = 0;
-
-                            if (item.Source == "IMSLP")
-                            {
-                                var warmupUrl = item.Files.FirstOrDefault()?.SourcePageUrl ?? item.PageUrl;
-                                if (!string.IsNullOrWhiteSpace(warmupUrl))
-                                    await _imslp.WarmupPageAsync(warmupUrl, itemCt).ConfigureAwait(false);
-                            }
 
                             foreach (var file in OrderFilesForSpeed(item.Source, item.Files))
                             {
                                 itemCt.ThrowIfCancellationRequested();
-
-                                if (item.Source == "IMSLP")
-                                {
-                                    bool globalDlPressure;
-                                    lock (imslpDlWindowLock)
-                                    {
-                                        var failsNow = imslpDlFailsInWindow;
-                                        var ratioNow = imslpDlWindow.Count > 0 ? (double)failsNow / imslpDlWindow.Count : 0;
-                                        globalDlPressure = imslpDlWindow.Count >= imslpDlWindowMin
-                                            && ratioNow >= imslpDlFailRatio
-                                            && failsNow >= imslpDlFailAbsMin;
-                                    }
-
-                                    // Si IMSLP está bajo presión, no probar múltiples archivos por obra.
-                                    // Se evita atasco por cascadas de 403/reintentos en una sola obra.
-                                    if (globalDlPressure && itemImlspFailures >= imslpPerItemFailFastLimit)
-                                        break;
-                                }
 
                                 try
                                 {
                                     var (cookieHeader, userAgent) = item.Source switch
                                     {
                                         "CPDL" => _cpdl.GetSessionHeaders(),
-                                        "IMSLP" => _imslp.GetSessionHeaders(),
-                                        _ => ((string?, string?))(null, null)
+                                        "Musopen" => _musopen.GetSessionHeaders(),
+                                        _ => ((string?)null, (string?)null)
                                     };
                                     var result = await _downloader.DownloadFileAsync(file, subFolder, null, null, itemCt, cookieHeader, userAgent).ConfigureAwait(false);
                                     if (result.Success)
@@ -1475,16 +1251,6 @@ public partial class MainWindow : Window, IAsyncDisposable
                                             System.Threading.Interlocked.Increment(ref totalDownloadedFiles);
                                         }
                                         System.Threading.Volatile.Write(ref consecutiveErrors, 0);
-                                        if (item.Source == "IMSLP")
-                                            lock (imslpDlWindowLock)
-                                            {
-                                                imslpDlWindow.Enqueue(true);
-                                                if (imslpDlWindow.Count > imslpDlWindowSize)
-                                                {
-                                                    var evicted = imslpDlWindow.Dequeue();
-                                                    if (!evicted) imslpDlFailsInWindow--;
-                                                }
-                                            }
                                     }
                                     else if (result.Cancelled)
                                     {
@@ -1503,83 +1269,6 @@ public partial class MainWindow : Window, IAsyncDisposable
                                         var errors = System.Threading.Interlocked.Increment(ref consecutiveErrors);
                                         if (errors >= 5)
                                             await Task.Delay(1200, itemCt).ConfigureAwait(false);
-
-                                        if (item.Source == "IMSLP")
-                                        {
-                                            itemImlspFailures++;
-
-                                            var isHtmlBlock = !string.IsNullOrWhiteSpace(result.Error)
-                                                && result.Error.Contains("Servidor devolvió HTML", StringComparison.OrdinalIgnoreCase);
-                                            if (isHtmlBlock)
-                                            {
-                                                var key = !string.IsNullOrWhiteSpace(file.SourcePageUrl) ? file.SourcePageUrl : item.PageUrl;
-                                                if (!string.IsNullOrWhiteSpace(key))
-                                                {
-                                                    var n = imslpHtmlFailsByPage.AddOrUpdate(key, 1, (_, prev) => prev + 1);
-                                                    if (n >= imslpPageHtmlBlacklistThreshold && imslpHtmlPageBlacklist.TryAdd(key, 1))
-                                                        progress.Report($"🚫 IMSLP temporal: obra bloqueada por HTML repetido ({n})");
-                                                }
-
-                                                var early = System.Threading.Interlocked.Increment(ref imslpEarlyHtmlFailures);
-                                                if (early <= imslpEarlyFailureWindow
-                                                    && System.Threading.Interlocked.CompareExchange(ref imslpEarlyThrottleApplied, 1, 0) == 0)
-                                                {
-                                                    System.Threading.Volatile.Write(ref imslpForcedSingleParallel, 1);
-                                                    sourceStatsEntry.CurrentParallelism = 1;
-                                                    progress.Report($"⚙️ IMSLP: concurrencia 2 -> 1 (HTML temprano {early}/{imslpEarlyFailureWindow})");
-                                                }
-                                            }
-
-                                            // micro-backoff por fallo IMSLP para bajar cadencia de 403/rate-limit
-                                            await Task.Delay(Random.Shared.Next(500, 1501), itemCt).ConfigureAwait(false);
-
-                                            bool dlPressure;
-                                            double dlRatio; int dlFails;
-                                            lock (imslpDlWindowLock)
-                                            {
-                                                imslpDlFailsInWindow++;
-                                                imslpDlWindow.Enqueue(false);
-                                                if (imslpDlWindow.Count > imslpDlWindowSize)
-                                                {
-                                                    var evicted = imslpDlWindow.Dequeue();
-                                                    if (!evicted) imslpDlFailsInWindow--;
-                                                }
-                                                dlFails = imslpDlFailsInWindow;
-                                                dlRatio = imslpDlWindow.Count > 0 ? (double)dlFails / imslpDlWindow.Count : 0;
-                                                dlPressure = imslpDlWindow.Count >= imslpDlWindowMin
-                                                    && dlRatio >= imslpDlFailRatio
-                                                    && dlFails >= imslpDlFailAbsMin;
-                                            }
-
-                                            var hardStopNow = dlFails >= imslpDlWindowSize && dlRatio >= 0.999;
-                                            if (hardStopNow
-                                                && System.Threading.Interlocked.CompareExchange(ref imslpAutoStopActive, 1, 0) == 0)
-                                            {
-                                                progress.Report($"🛑 IMSLP auto-stop inmediato: {dlFails}/{imslpDlWindowSize} fallos (100%). Se omiten pendientes IMSLP.");
-                                            }
-
-                                            if (dlPressure)
-                                            {
-                                                if (System.Threading.Volatile.Read(ref imslpAutoStopActive) == 1)
-                                                {
-                                                    if (itemImlspFailures >= imslpPerItemFailFastLimit)
-                                                        break;
-                                                    continue;
-                                                }
-
-                                                var nowT = DateTime.UtcNow.Ticks;
-                                                var prevT = System.Threading.Interlocked.Read(ref imslpLastDlCooldownTicks);
-                                                if (nowT - prevT >= TimeSpan.FromSeconds(imslpDlCooldownSeconds).Ticks
-                                                    && System.Threading.Interlocked.CompareExchange(ref imslpLastDlCooldownTicks, nowT, prevT) == prevT)
-                                                {
-                                                    progress.Report($"⏸️ IMSLP descarga bloqueada: {dlRatio:P0} fallos ({dlFails}/{imslpDlWindowSize}); enfriando {imslpDlCooldownSeconds}s");
-                                                    await Task.Delay(TimeSpan.FromSeconds(imslpDlCooldownSeconds), itemCt).ConfigureAwait(false);
-                                                }
-                                            }
-
-                                            if (itemImlspFailures >= imslpPerItemFailFastLimit)
-                                                break;
-                                        }
                                     }
                                 }
                                 catch (OperationCanceledException) { throw; }
@@ -1662,19 +1351,7 @@ public partial class MainWindow : Window, IAsyncDisposable
             Log($"📌 Totales obras: Nuevas={totalDownloadedItems} | Ya en carpeta={totalExistingItems} | Sin archivos detectados={totalRejectedItems} | Error={totalErroredItems} | Canceladas={totalCancelledItems}");
             Log($"📌 Totales archivos: Nuevos={totalDownloadedFiles} | Ya en carpeta={totalSkippedFiles} | Error={totalFailedFiles} | Cancelados={totalCancelledFiles}");
             if (totalAutoStoppedItems > 0)
-                Log($"🛑 Auto-stop: {totalAutoStoppedItems} obras omitidas por presión sostenida en fuentes protegidas (CPDL/IMSLP)");
-
-            if (!imslpDeferred.IsEmpty)
-            {
-                var pendingNew = imslpDeferred
-                    .GroupBy(i => string.IsNullOrWhiteSpace(i.PageUrl) ? $"{i.Title}|{i.Composer}" : i.PageUrl, StringComparer.OrdinalIgnoreCase)
-                    .Select(g => g.First())
-                    .ToList();
-                var pendingExisting = JsonStore.Load<List<PartituraItem>>(_imslpPendingPath, []);
-                var pendingMerged = MergePendingLists(pendingExisting, pendingNew);
-                JsonStore.Save(_imslpPendingPath, pendingMerged);
-                Log($"🧾 IMSLP pendientes guardados: +{pendingNew.Count} (total {pendingMerged.Count}) -> {_imslpPendingPath}");
-            }
+                Log($"🛑 Auto-stop: {totalAutoStoppedItems} obras omitidas por presión sostenida en fuentes protegidas (CPDL)");
 
             var degraded = totalAutoStoppedItems > 0;
             progress.Report($"{(degraded ? "⚠️ Completado con degradación" : "✅ Completado")}: obras {totalProcessedItems}/{downloadable.Count} · nuevas={totalDownloadedItems} previas={totalExistingItems} sin-archivos={totalRejectedItems} error={totalErroredItems} · archivos ✅{totalDownloadedFiles} ⏭️{totalSkippedFiles} ❌{totalFailedFiles}");
@@ -1724,7 +1401,7 @@ public partial class MainWindow : Window, IAsyncDisposable
 
         var skipSources = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var candidates = downloadable
-            .Where(i => i.Files.Count == 0 && (i.Source == "CPDL" || i.Source == "IMSLP"))
+            .Where(i => i.Files.Count == 0 && i.Source == "CPDL")
             .GroupBy(i => i.Source)
             .ToList();
 
@@ -1748,9 +1425,7 @@ public partial class MainWindow : Window, IAsyncDisposable
                 bool loaded;
                 try
                 {
-                    loaded = source == "CPDL"
-                        ? await _cpdl.LoadFilesAsync(item, ct).ConfigureAwait(false)
-                        : await _imslp.LoadFilesAsync(item, ct).ConfigureAwait(false);
+                    loaded = await _cpdl.LoadFilesAsync(item, ct).ConfigureAwait(false);
                 }
                 catch (OperationCanceledException) { throw; }
                 catch
@@ -1764,90 +1439,8 @@ public partial class MainWindow : Window, IAsyncDisposable
             }
 
             var ratio = tested == 0 ? 0 : (double)withFiles / tested;
-            var threshold = source == "CPDL" ? 0.35 : 0.15;
+            var threshold = 0.35;
             LogDebug($"Preflight {source}: {withFiles}/{tested} con archivos ({ratio:P0})");
-
-            if (source == "IMSLP" && withFiles > 0)
-            {
-                // Preflight real: prueba descargas binarias para detectar bot-check temprano.
-                var probeCandidates = sample
-                    .Where(i => i.Files.Count > 0)
-                    .SelectMany(i =>
-                    {
-                        var direct = i.Files
-                            .Where(f => !string.IsNullOrWhiteSpace(f.DownloadUrl)
-                                     && !f.DownloadUrl.Contains("/wiki/File:", StringComparison.OrdinalIgnoreCase)
-                                     && !f.DownloadUrl.Contains("/wiki/Special:", StringComparison.OrdinalIgnoreCase)
-                                     && (f.DownloadUrl.Contains("/images/", StringComparison.OrdinalIgnoreCase)
-                                         || f.DownloadUrl.EndsWith(".pdf", StringComparison.OrdinalIgnoreCase)
-                                         || f.DownloadUrl.EndsWith(".midi", StringComparison.OrdinalIgnoreCase)
-                                         || f.DownloadUrl.EndsWith(".mid", StringComparison.OrdinalIgnoreCase)
-                                         || f.DownloadUrl.EndsWith(".xml", StringComparison.OrdinalIgnoreCase)
-                                         || f.DownloadUrl.EndsWith(".mxl", StringComparison.OrdinalIgnoreCase)))
-                            .OrderByDescending(f => string.Equals(f.Format, "PDF", StringComparison.OrdinalIgnoreCase))
-                            .Take(2)
-                            .ToList();
-
-                        return direct.Count > 0 ? direct : i.Files.Take(2);
-                    })
-                    .Where(f => string.Equals(f.Format, "PDF", StringComparison.OrdinalIgnoreCase)
-                             || string.Equals(f.Format, "MIDI", StringComparison.OrdinalIgnoreCase)
-                             || string.Equals(f.Format, "MXL", StringComparison.OrdinalIgnoreCase)
-                             || string.Equals(f.Format, "XML", StringComparison.OrdinalIgnoreCase))
-                    .Take(8)
-                    .ToList();
-
-                if (probeCandidates.Count > 0)
-                {
-                    var probeDir = Path.Combine(Path.GetTempPath(), "ScoreDown", "probe", Guid.NewGuid().ToString("N"));
-                    int probeOk = 0;
-                    int probeTried = 0;
-                    progress.Report($"🧪 Preflight {source}: probando {probeCandidates.Count} descargas reales...");
-                    try
-                    {
-                        foreach (var f in probeCandidates)
-                        {
-                            ct.ThrowIfCancellationRequested();
-                            var ext = Path.GetExtension(f.FileName);
-                            if (string.IsNullOrWhiteSpace(ext))
-                                ext = ".bin";
-                            var probe = new PartituraFile
-                            {
-                                Format = f.Format,
-                                DownloadUrl = f.DownloadUrl,
-                                SourcePageUrl = f.SourcePageUrl,
-                                FileName = $"probe_{probeTried:D2}{ext}",
-                                SizeBytes = f.SizeBytes
-                            };
-                            if (!string.IsNullOrWhiteSpace(probe.SourcePageUrl))
-                                await _imslp.WarmupPageAsync(probe.SourcePageUrl, ct).ConfigureAwait(false);
-                            var (imslpCookie, imslpUa) = _imslp.GetSessionHeaders();
-                            var result = await _downloader.DownloadFileAsync(probe, probeDir, null, null, ct, imslpCookie, imslpUa).ConfigureAwait(false);
-                            probeTried++;
-                            if (result.Success || result.Skipped)
-                                probeOk++;
-                        }
-                    }
-                    finally
-                    {
-                        try { if (Directory.Exists(probeDir)) Directory.Delete(probeDir, true); } catch { }
-                    }
-
-                    var probeRatio = probeTried == 0 ? 0 : (double)probeOk / probeTried;
-                    _lastImlspBinaryPreflight = $"{probeOk}/{probeTried} ({probeRatio:P0})";
-                    UpdateSourceDashboard();
-                    LogDebug($"Preflight {source} binario: {probeOk}/{probeTried} OK ({probeRatio:P0})");
-                    // Si binario falla completamente (0%), IMSLP bloquea sin sesión → no hay descarga posible.
-                    // Excluir siempre si probeRatio=0, sin importar el ratio de metadata.
-                    if (probeTried >= 3 && probeRatio < 0.30)
-                    {
-                        skipSources.Add(source);
-                        // Consolidar 1 solo log con ambas métricas
-                        var msg = $"⚠️ Preflight IMSLP excluido: metadata={ratio:P0} ({withFiles}/{tested}), binario={probeRatio:P0} ({probeOk}/{probeTried}) — bloqueado sin sesión";
-                        Log(msg);
-                    }
-                }
-            }
 
             if (tested >= minSample && ratio < threshold)
             {
@@ -1861,37 +1454,61 @@ public partial class MainWindow : Window, IAsyncDisposable
 
         var filtered = downloadable.Where(i => !skipSources.Contains(i.Source)).ToList();
         progress.Report($"⚠️ Preflight activo: fuentes omitidas => {string.Join(", ", skipSources.OrderBy(x => x))}");
-
-        // Guardar obras IMSLP excluidas por preflight en la cola de pendientes para reintento posterior
-        if (skipSources.Contains("IMSLP"))
-        {
-            var imslpSkipped = downloadable
-                .Where(i => string.Equals(i.Source, "IMSLP", StringComparison.OrdinalIgnoreCase))
-                .ToList();
-            if (imslpSkipped.Count > 0)
-            {
-                var existing = JsonStore.Load<List<PartituraItem>>(_imslpPendingPath, []);
-                var merged = MergePendingLists(existing, imslpSkipped);
-                JsonStore.Save(_imslpPendingPath, merged);
-                Log($"📌 Preflight IMSLP bloqueado: {imslpSkipped.Count} obras guardadas en pendientes (total pending={merged.Count})");
-                Dispatcher.BeginInvoke(UpdateSourceDashboard, DispatcherPriority.Background);
-            }
-        }
-
         return filtered;
     }
 
     private void BtnCpdlSession_Click(object sender, RoutedEventArgs e)
     {
-        try
+        Forget(OpenCpdlSessionAsync(), "sesión CPDL");
+    }
+
+    private void BtnMusopenSession_Click(object sender, RoutedEventArgs e)
+    {
+        Forget(OpenMusopenSessionAsync(), "sesión Musopen");
+    }
+
+    private Task<bool> OpenMusopenSessionAsync()
+    {
+        return Dispatcher.InvokeAsync<bool>(() =>
         {
-            var tcs = new TaskCompletionSource<bool>();
-            _ = OpenCpdlSessionAsync();
-        }
-        catch (Exception ex)
-        {
-            Log($"❌ Error en sesión CPDL: {ex.Message}");
-        }
+            try
+            {
+                var dlg = new CpdlSessionDialog(
+                    "Musopen",
+                    "https://musopen.org/accounts/login/",
+                    ["https://musopen.org/", "https://dl.musopen.org/"],
+                    requiredCookieNames: null,
+                    allowFallbackWithoutRequiredCookies: true)
+                { Owner = this };
+
+                var ok = dlg.ShowDialog();
+                if (ok == true && !string.IsNullOrWhiteSpace(dlg.CookieHeader))
+                {
+                    _musopen.SetSession(dlg.CookieHeader, dlg.UserAgent);
+                    SaveUiState();  // persistir sesión para próximo arranque
+                    Log("🔐 Musopen sesión guardada. Las descargas usarán tu cuenta.");
+                    txtStatus.Text = "Musopen: sesión activa";
+                    UpdateSourceDashboard();
+                    return true;
+                }
+                Log("ℹ️ Musopen sesión cancelada.");
+                return false;
+            }
+            catch (Exception ex)
+            {
+                Log($"❌ Error en sesión Musopen: {ex.Message}");
+                return false;
+            }
+        }).Task;
+    }
+
+    private void Forget(Task task, string context)
+    {
+        _ = task.ContinueWith(
+            t => Log($"❌ Error async en {context}: {t.Exception?.GetBaseException().Message}"),
+            CancellationToken.None,
+            TaskContinuationOptions.OnlyOnFaulted,
+            TaskScheduler.FromCurrentSynchronizationContext());
     }
 
     private Task<bool> OpenCpdlSessionAsync()
@@ -1923,99 +1540,6 @@ public partial class MainWindow : Window, IAsyncDisposable
                 return false;
             }
         }).Task;
-    }
-
-    private Task<bool> OpenImlspSessionAsync()
-    {
-        return Dispatcher.InvokeAsync<bool>(() =>
-        {
-            try
-            {
-                var dlg = new CpdlSessionDialog(
-                    "IMSLP",
-                    "https://imslp.org/wiki/Main_Page",
-                    [
-                        "https://imslp.org/",
-                        "https://imslp.eu/",
-                        "https://imslp.org/wiki/Main_Page",
-                        "https://imslp.org/files/imglnks/"
-                    ],
-                    [
-                        // Puede ser challenge de Cloudflare O cookies de login MediaWiki.
-                        "cf_clearance",
-                        "imslp_wikiUserName",
-                        "imslp_wikiUserID",
-                        "imslp_wikiToken"
-                    ])
-                { Owner = this };
-
-                var ok = dlg.ShowDialog();
-                if (ok == true && !string.IsNullOrWhiteSpace(dlg.CookieHeader))
-                {
-                    _imslp.SetManualSession(dlg.CookieHeader, dlg.UserAgent);
-                    _imslpWebSession?.Dispose();
-                    _imslpWebSession = new Infrastructure.CpdlWebSession();
-                    _downloader.ImslpWebViewDownloadAsync = _imslpWebSession.DownloadFileAsync;
-                    Log("🔐 IMSLP sesión interactiva guardada.");
-                    txtStatus.Text = "IMSLP sesión activa";
-                    return true;
-                }
-
-                Log("ℹ️ IMSLP sesión cancelada o sin cookies válidas.");
-                return false;
-            }
-            catch (Exception ex)
-            {
-                Log($"❌ Error en sesión IMSLP: {ex.Message}");
-                return false;
-            }
-        }).Task;
-    }
-
-    private async Task<bool> ValidateImlspSessionWithProbeAsync(List<(PartituraItem item, PartituraFile file)> jobs, CancellationToken ct)
-    {
-        var imslpProbe = jobs
-            .Where(j => string.Equals(j.item.Source, "IMSLP", StringComparison.OrdinalIgnoreCase))
-            .Select(j => j.file)
-            .FirstOrDefault(f => !string.IsNullOrWhiteSpace(f.DownloadUrl)
-                              && !f.DownloadUrl.Contains("/wiki/File:", StringComparison.OrdinalIgnoreCase)
-                              && !f.DownloadUrl.Contains("/wiki/Special:", StringComparison.OrdinalIgnoreCase));
-
-        if (imslpProbe is null)
-            return true;
-
-        var probeDir = Path.Combine(Path.GetTempPath(), "ScoreDown", "probe", "session", Guid.NewGuid().ToString("N"));
-        Directory.CreateDirectory(probeDir);
-        try
-        {
-            var probe = new PartituraFile
-            {
-                Format = string.IsNullOrWhiteSpace(imslpProbe.Format) ? "PDF" : imslpProbe.Format,
-                DownloadUrl = imslpProbe.DownloadUrl,
-                SourcePageUrl = imslpProbe.SourcePageUrl,
-                FileName = "imslp_session_probe.pdf",
-                SizeBytes = imslpProbe.SizeBytes
-            };
-
-            var (cookie, ua) = _imslp.GetSessionHeaders();
-            var result = await _downloader.DownloadFileAsync(probe, probeDir, null, null, ct, cookie, ua).ConfigureAwait(false);
-            var ok = result.Success || result.Skipped;
-            if (ok)
-            {
-                _lastImlspSessionValidatedAt = DateTime.Now.ToString("HH:mm:ss");
-                UpdateSourceDashboard();
-            }
-            return ok;
-        }
-        catch (OperationCanceledException) { throw; }
-        catch
-        {
-            return false;
-        }
-        finally
-        {
-            try { if (Directory.Exists(probeDir)) Directory.Delete(probeDir, true); } catch { }
-        }
     }
 
     private void BtnExit_Click(object sender, RoutedEventArgs e) => RequestAppShutdown();
@@ -2054,18 +1578,13 @@ public partial class MainWindow : Window, IAsyncDisposable
         try
         {
             IProgress<string> progress = new Progress<string>(msg => { txtStatus.Text = msg; Log(msg); });
-            var source = (cmbSource.SelectedItem as System.Windows.Controls.ComboBoxItem)?.Content?.ToString() ?? "IMSLP";
+            var source = (cmbSource.SelectedItem as System.Windows.Controls.ComboBoxItem)?.Content?.ToString() ?? "Mutopia";
 
             PurgeExpiredCache();  // Limpia cache expirado antes de nueva búsqueda
 
             List<PartituraItem> results = [];
 
-            if (source == "IMSLP")
-            {
-                results = await FetchWithCacheAsync("IMSLP", query,
-                    (p, token) => _imslp.SearchAsync(query, p, token), progress, ct);
-            }
-            else if (source == "Mutopia")
+            if (source == "Mutopia")
             {
                 results = await FetchWithCacheAsync("Mutopia", query,
                     (p, token) => _mutopia.SearchAsync(query, p, token), progress, ct);
@@ -2074,6 +1593,11 @@ public partial class MainWindow : Window, IAsyncDisposable
             {
                 results = await FetchWithCacheAsync("CPDL", query,
                     (p, token) => _cpdl.SearchAsync(query, p, token), progress, ct);
+            }
+            else if (source == "Musopen")
+            {
+                results = await FetchWithCacheAsync("Musopen", query,
+                    (p, token) => _musopen.SearchAsync(query, p, token), progress, ct);
             }
             else if (source == "Offline")
             {
@@ -2104,17 +1628,18 @@ public partial class MainWindow : Window, IAsyncDisposable
                     }
                 }
 
-                progress.Report("🔍 Buscando en IMSLP...");
-                var imslpTask = SafeSearchAsync("IMSLP", () =>
-                    FetchWithCacheAsync("IMSLP", query, (p, token) => _imslp.SearchAsync(query, p, token), null, ct));
                 progress.Report("🔍 Buscando en Mutopia Project...");
                 var mutopiaTask = SafeSearchAsync("Mutopia", () =>
                     FetchWithCacheAsync("Mutopia", query, (p, token) => _mutopia.SearchAsync(query, p, token), null, ct));
                 progress.Report("🔍 Buscando en CPDL...");
                 var cpdlTask = SafeSearchAsync("CPDL", () =>
                     FetchWithCacheAsync("CPDL", query, (p, token) => _cpdl.SearchAsync(query, p, token), null, ct));
+                var musopenTask = _enableMusopen && _musopen.HasApiKey
+                    ? SafeSearchAsync("Musopen", () =>
+                        FetchWithCacheAsync("Musopen", query, (p, token) => _musopen.SearchAsync(query, p, token), null, ct))
+                    : Task.FromResult<List<PartituraItem>>([]);
 
-                var all = await Task.WhenAll(imslpTask, mutopiaTask, cpdlTask);
+                var all = await Task.WhenAll(mutopiaTask, cpdlTask, musopenTask);
                 results.AddRange(all[0]);
                 results.AddRange(all[1]);
                 results.AddRange(all[2]);
@@ -2130,7 +1655,6 @@ public partial class MainWindow : Window, IAsyncDisposable
                     .OrderByDescending(i => i.Files.Count)
                     .ThenByDescending(i => i.Files.Sum(f => f.SizeBytes))
                     .ThenByDescending(i => i.Files.Select(f => NormalizeUrl(f.DownloadUrl)).Distinct(StringComparer.OrdinalIgnoreCase).Count())
-                    .ThenByDescending(i => string.Equals(i.Source, "IMSLP", StringComparison.OrdinalIgnoreCase))
                     .First())
                 .ToList();
 
@@ -2203,18 +1727,6 @@ public partial class MainWindow : Window, IAsyncDisposable
         SaveUiState();
     }
 
-    private int GetImlspPendingCount()
-    {
-        var pending = JsonStore.Load<List<PartituraItem>>(_imslpPendingPath, []);
-        return pending.Count;
-    }
-
-    private int GetImlspPendingActiveCount()
-    {
-        var active = JsonStore.Load<List<PartituraItem>>(_imslpPendingActivePath, []);
-        return active.Count;
-    }
-
     private void UpdateSourceDashboard()
     {
         if (!IsInitialized || txtSourceStatus is null) return;
@@ -2223,12 +1735,10 @@ public partial class MainWindow : Window, IAsyncDisposable
             Dispatcher.BeginInvoke(UpdateSourceDashboard, DispatcherPriority.Background);
             return;
         }
-        var i = _enableImlsp ? "ON" : "OFF";
         var m = _enableMutopia ? "ON" : "OFF";
         var c = _enableCpdl ? "ON" : "OFF";
-        var pending = GetImlspPendingCount();
-        var active = GetImlspPendingActiveCount();
-        txtSourceStatus.Text = $"Fuentes I:{i} M:{m} C:{c} · Pend IMSLP:{pending} (act:{active}, total:{pending + active}) · AutoR:{(_autoResumeImlspPending ? "ON" : "OFF")} · AutoL:{(_autoContinuePendingBatches ? "ON" : "OFF")} · Delay:{_imslpPendingBatchDelaySeconds}s · Preflight:{_lastImlspBinaryPreflight} · SessOK:{_lastImlspSessionValidatedAt}";
+        var mu = _enableMusopen ? (_musopen.HasSession ? "ON+🔐" : "ON") : "OFF";
+        txtSourceStatus.Text = $"Fuentes M:{m} C:{c} MO:{mu}";
     }
 
     private static List<PartituraItem> MergePendingLists(IEnumerable<PartituraItem> a, IEnumerable<PartituraItem> b)
@@ -2262,43 +1772,19 @@ public partial class MainWindow : Window, IAsyncDisposable
         }));
     }
 
-    private void RecoverActivePendingBatchIfAny()
-    {
-        try
-        {
-            if (!File.Exists(_imslpPendingActivePath)) return;
-            var active = JsonStore.Load<List<PartituraItem>>(_imslpPendingActivePath, []);
-            if (active.Count == 0)
-            {
-                try { File.Delete(_imslpPendingActivePath); } catch { }
-                return;
-            }
-
-            var pending = JsonStore.Load<List<PartituraItem>>(_imslpPendingPath, []);
-            var merged = MergePendingLists(pending, active);
-            JsonStore.Save(_imslpPendingPath, merged);
-            try { File.Delete(_imslpPendingActivePath); } catch { }
-            Log($"♻ Recuperado lote activo IMSLP: {active.Count} obras devueltas a pendientes");
-        }
-        catch (Exception ex)
-        {
-            Log($"⚠️ Recuperación de lote activo fallida: {ex.Message}");
-        }
-    }
-
     private void SourceToggle_Changed(object sender, RoutedEventArgs e)
     {
         if (!IsInitialized) return;
-        _enableImlsp = chkEnableImlsp.IsChecked == true;
         _enableMutopia = chkEnableMutopia.IsChecked == true;
         _enableCpdl = chkEnableCpdl.IsChecked == true;
+        _enableMusopen = chkEnableMusopen.IsChecked == true;
 
         // Mantener al menos una fuente activa para evitar corridas vacías.
-        if (!_enableImlsp && !_enableMutopia && !_enableCpdl)
+        if (!_enableMutopia && !_enableCpdl && !_enableMusopen)
         {
-            _enableImlsp = true;
-            chkEnableImlsp.IsChecked = true;
-            Log("ℹ️ Debe quedar al menos una fuente activa; IMSLP reactivado.");
+            _enableMutopia = true;
+            chkEnableMutopia.IsChecked = true;
+            Log("ℹ️ Debe quedar al menos una fuente activa; Mutopia reactivado.");
         }
 
         btnCpdlSession.IsEnabled = _enableCpdl;
@@ -2307,99 +1793,6 @@ public partial class MainWindow : Window, IAsyncDisposable
 
         SaveUiState();
         UpdateSourceDashboard();
-    }
-
-    private void PendingOptions_Changed(object sender, RoutedEventArgs e)
-    {
-        if (!IsInitialized) return;
-        _autoResumeImlspPending = chkAutoResumeImlspPending.IsChecked == true;
-        _autoContinuePendingBatches = chkAutoContinuePendingBatches.IsChecked == true;
-        SaveUiState();
-        UpdateSourceDashboard();
-    }
-
-    private async void BtnRetryImlspPending_Click(object sender, RoutedEventArgs e)
-    {
-        // Guard: no lanzar lote si ya hay descarga en curso
-        if (_downloadCts is not null && !_downloadCts.IsCancellationRequested)
-        {
-            Log("⚠️ Descarga ya en curso, reintento de pendientes ignorado");
-            return;
-        }
-
-        var pending = JsonStore.Load<List<PartituraItem>>(_imslpPendingPath, []);
-        if (pending.Count == 0)
-        {
-            _pendingBatchChainCount = 0;
-            Log("ℹ️ No hay pendientes IMSLP para reintentar.");
-            UpdateSourceDashboard();
-            return;
-        }
-
-        var take = Math.Min(_imslpPendingBatchSize, pending.Count);
-        var batch = pending.Take(take).ToList();
-        var remaining = pending.Skip(take).ToList();
-
-        JsonStore.Save(_imslpPendingActivePath, batch);
-        JsonStore.Save(_imslpPendingPath, remaining);
-        Log($"♻ IMSLP pendientes: lote {batch.Count} preparado (restan {remaining.Count})");
-        // Nuevo lote: resetear circuit breaker para que errores del lote anterior no bloqueen
-        _circuitBreaker?.Reset();
-        UpdateSourceDashboard();
-
-        if (string.IsNullOrWhiteSpace(txtDestFolder.Text))
-        {
-            var autoDest = Path.Combine(
-                Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments),
-                "ScoreDown",
-                "Partituras");
-            Directory.CreateDirectory(autoDest);
-            txtDestFolder.Text = autoDest;
-        }
-
-        _allResults.Clear();
-        foreach (var item in batch)
-        {
-            item.Source = "IMSLP";
-            item.IsSelected = true;
-            _allResults.Add(item);
-        }
-
-        ApplyFilter();
-        foreach (var item in _filtered)
-            item.IsSelected = true;
-        UpdateDownloadButton();
-
-        Log($"♻ Reintento IMSLP pendientes: {_filtered.Count} obras cargadas (lote)");
-        _pendingBatchChainCount++;
-        await Dispatcher.InvokeAsync(() => BtnDownload_Click(btnDownload, new RoutedEventArgs()));
-    }
-
-    private void BtnPauseBatchChain_Click(object sender, RoutedEventArgs e)
-    {
-        var wasPaused = System.Threading.Interlocked.CompareExchange(ref _autoBatchPaused, 1, 0) == 1;
-        if (wasPaused)
-        {
-            // era pausado → reanudar
-            System.Threading.Interlocked.Exchange(ref _autoBatchPaused, 0);
-            btnPauseBatchChain.Content = "⏸ Pausar lotes";
-            Log("▶ Cadena auto-lotes IMSLP reanudada.");
-        }
-        else
-        {
-            btnPauseBatchChain.Content = "▶ Reanudar lotes";
-            Log("⏸ Cadena auto-lotes IMSLP pausada.");
-        }
-    }
-
-    private void TxtBatchLimit_TextChanged(object sender, TextChangedEventArgs e)
-    {
-        if (!IsInitialized) return;
-        if (int.TryParse(txtBatchLimit.Text, out var v) && v >= 0)
-        {
-            _autoBatchLimit = v;
-            SaveUiState();
-        }
     }
 
     private void ChkSelectAll_Changed(object sender, RoutedEventArgs e)
@@ -2655,8 +2048,7 @@ public partial class MainWindow : Window, IAsyncDisposable
         var selectedItems = _filtered.Where(i => i.IsSelected).ToList();
         var missingFilesItems = selectedItems
             .Where(i => i.Files.Count == 0
-                     && (string.Equals(i.Source, "IMSLP", StringComparison.OrdinalIgnoreCase)
-                         || string.Equals(i.Source, "CPDL", StringComparison.OrdinalIgnoreCase)))
+                     && string.Equals(i.Source, "CPDL", StringComparison.OrdinalIgnoreCase))
             .ToList();
 
         if (missingFilesItems.Count > 0)
@@ -2674,10 +2066,7 @@ public partial class MainWindow : Window, IAsyncDisposable
                     if (warmupCts.Token.IsCancellationRequested)
                         throw new OperationCanceledException();
 
-                    if (string.Equals(item.Source, "IMSLP", StringComparison.OrdinalIgnoreCase))
-                        await _imslp.LoadFilesAsync(item, warmupCts.Token);
-                    else if (string.Equals(item.Source, "CPDL", StringComparison.OrdinalIgnoreCase))
-                        await _cpdl.LoadFilesAsync(item, warmupCts.Token);
+                    await _cpdl.LoadFilesAsync(item, warmupCts.Token);
 
                     loadedOk++;
                 }
@@ -2698,19 +2087,6 @@ public partial class MainWindow : Window, IAsyncDisposable
                 Log($"⚠️ Carga de metadatos timeout después de {loadedOk}/{missingFilesItems.Count} obras");
         }
 
-        // Rastrear items IMSLP que tienen solo URLs wiki/File: (para diferenciar de "bloqueado")
-        var imslpWikiOnlyItems = new HashSet<PartituraItem>();
-
-        // Eliminar URLs wiki/File: de todos los items (no solo los cargados ahora)
-        foreach (var item in selectedItems.Where(i => string.Equals(i.Source, "IMSLP", StringComparison.OrdinalIgnoreCase)))
-        {
-            var wikiCount = item.Files.Count(f => f.DownloadUrl.Contains("/wiki/File:", StringComparison.OrdinalIgnoreCase));
-            if (wikiCount > 0 && wikiCount == item.Files.Count)
-                imslpWikiOnlyItems.Add(item); // Solo contiene wiki/File:
-
-            item.Files.RemoveAll(f => f.DownloadUrl.Contains("/wiki/File:", StringComparison.OrdinalIgnoreCase));
-        }
-
         var jobs = selectedItems
             .SelectMany(i => i.Files
                 .Where(f =>
@@ -2727,216 +2103,15 @@ public partial class MainWindow : Window, IAsyncDisposable
 
         if (jobs.Count == 0)
         {
-            var imslpSelected = selectedItems.Count(i => string.Equals(i.Source, "IMSLP", StringComparison.OrdinalIgnoreCase));
-
-            if (imslpSelected > 0 && imslpWikiOnlyItems.Count == imslpSelected)
-            {
-                // Todos IMSLP seleccionados solo tienen wiki/File: = metadatos cargados, pero no descargables
-                var msg = "⚠️ IMSLP: metadatos disponibles pero no hay archivos descargables (solo referencias wiki).";
-                Log(msg);
-                DarkDialogService.ShowMessage(this, msg, "Sin archivos descargables", MessageBoxButton.OK, MessageBoxImage.Information);
-                return;
-            }
-            else if (imslpSelected > imslpWikiOnlyItems.Count)
-            {
-                // Algunos IMSLP sin archivos (ni wiki) = IMSLP bloqueado
-                var othersSelected = selectedItems.Count(i => !string.Equals(i.Source, "IMSLP", StringComparison.OrdinalIgnoreCase));
-                var othersJobs = jobs.Select(j => j.item).Distinct().Count(i => !string.Equals(i.Source, "IMSLP", StringComparison.OrdinalIgnoreCase));
-
-                if (othersSelected > 0 && othersJobs > 0)
-                {
-                    // Mix: IMSLP bloqueado pero otros tienen archivos → permitir descarga de otros
-                    var msg = $"⚠️ IMSLP bloqueado (no se pudieron cargar metadatos, posible bot-check/sesión requerida). Continuando con {othersJobs} archivo(s) de otras fuentes.";
-                    Log(msg);
-                    // IMPORTANTE: continuar abajo sin reinsertar ni parar
-                }
-                else
-                {
-                    // Todos IMSLP sin archivos y sin otros sources = parar
-                    var msg = "⛔ IMSLP bloqueado: no se pudieron cargar los metadatos de archivo. Auto-lotes pausados.";
-                    Log(msg);
-                    txtStatus.Text = msg;
-                    // Parar cadena auto-lotes para no desperdiciar peticiones
-                    if (_autoContinuePendingBatches)
-                    {
-                        _autoContinuePendingBatches = false;
-                        chkAutoContinuePendingBatches.IsChecked = false;
-                    }
-                    // Reinsert active batch back to pending (solo si no vino del pending ya)
-                    var isFromPendingBatch = File.Exists(_imslpPendingActivePath);
-                    if (isFromPendingBatch)
-                    {
-                        try { File.Delete(_imslpPendingActivePath); } catch { }
-                        Log($"♻ Lote activo limpiado (items permanecen en pendientes)");
-                    }
-                    else
-                    {
-                        // Vino de selección manual, reinsertar es útil
-                        var manualPending = selectedItems
-                            .Where(i => string.Equals(i.Source, "IMSLP", StringComparison.OrdinalIgnoreCase))
-                            .Select(i => new PartituraItem
-                            {
-                                Title = i.Title,
-                                Composer = i.Composer,
-                                PageUrl = i.PageUrl,
-                                Source = i.Source,
-                                SourcePageId = i.SourcePageId,
-                                UserTag = i.UserTag,
-                                Genre = i.Genre,
-                                Instrument = i.Instrument,
-                                Files = i.Files.Select(f => new PartituraFile
-                                {
-                                    Format = f.Format,
-                                    DownloadUrl = f.DownloadUrl,
-                                    FileName = f.FileName,
-                                    SizeBytes = f.SizeBytes,
-                                    SourcePageUrl = f.SourcePageUrl
-                                }).ToList()
-                            })
-                            .ToList();
-                        var existingPending = JsonStore.Load<List<PartituraItem>>(_imslpPendingPath, []);
-                        var merged = MergePendingLists(existingPending, manualPending);
-                        JsonStore.Save(_imslpPendingPath, merged);
-                        try { File.Delete(_imslpPendingActivePath); } catch { }
-                        Log($"♻ Items reinsertados en pendientes ({manualPending.Count})");
-                    }
-                    UpdateSourceDashboard();
-                    return;
-                }
-            }
-            else
-            {
-                // Caso genérico (no IMSLP o sin selecciones)
-                DarkDialogService.ShowMessage(this, "No hay archivos que descargar con los filtros actuales.", "Sin archivos",
-                    MessageBoxButton.OK, MessageBoxImage.Information);
-                return;
-            }
+            DarkDialogService.ShowMessage(this, "No hay archivos que descargar con los filtros actuales.", "Sin archivos",
+                MessageBoxButton.OK, MessageBoxImage.Information);
+            return;
         }
-
-        // Detectar mix: IMSLP bloqueado pero otros sources OK
-        if (jobs.Count > 0)
-        {
-            var imslpSelected = selectedItems.Count(i => string.Equals(i.Source, "IMSLP", StringComparison.OrdinalIgnoreCase));
-            var imslpInJobs = jobs.Select(j => j.item).Distinct().Count(i => string.Equals(i.Source, "IMSLP", StringComparison.OrdinalIgnoreCase));
-            if (imslpSelected > 0 && imslpInJobs == 0)
-                LogDebug($"Mix sources: IMSLP bloqueado ({imslpSelected} obras), descargando {jobs.Count} de otros (CPDL/etc)");
-        }
-
-        var pendingBatchRun = File.Exists(_imslpPendingActivePath);
 
         _downloadCts?.Cancel();
         _downloadCts?.Dispose();
         _downloadCts = new CancellationTokenSource();
         var ct = _downloadCts.Token;
-
-        // Preflight: si hay trabajos IMSLP sin cookie de sesión, intentar warm-up de una página.
-        if (jobs.Any(j => string.Equals(j.item.Source, "IMSLP", StringComparison.OrdinalIgnoreCase)))
-        {
-            try
-            {
-                var (imslpCookieBefore, _) = _imslp.GetSessionHeaders();
-                if (string.IsNullOrWhiteSpace(imslpCookieBefore))
-                {
-                    var probePage = jobs.FirstOrDefault(j => string.Equals(j.item.Source, "IMSLP", StringComparison.OrdinalIgnoreCase)).item?.PageUrl;
-                    try
-                    {
-                        await _imslp.WarmupPageAsync(probePage, ct);
-                    }
-                    catch (OperationCanceledException) { throw; }
-                    catch (Exception ex)
-                    {
-                        LogDebug($"IMSLP preflight warm-up falló: {ex.Message}");
-                    }
-
-                    var (imslpCookieAfter, _) = _imslp.GetSessionHeaders();
-                    if (string.IsNullOrWhiteSpace(imslpCookieAfter))
-                    {
-                        Log("⚠️ IMSLP: sesión sin cookies activas. Abriendo sesión interactiva...");
-                        await OpenImlspSessionAsync().ConfigureAwait(true);
-                        (imslpCookieAfter, _) = _imslp.GetSessionHeaders();
-                    }
-
-                    if (string.IsNullOrWhiteSpace(imslpCookieAfter))
-                    {
-                        var totalBefore = jobs.Count;
-                        jobs = jobs
-                            .Where(j => !string.Equals(j.item.Source, "IMSLP", StringComparison.OrdinalIgnoreCase))
-                            .ToList();
-
-                        var removed = totalBefore - jobs.Count;
-                        if (removed > 0)
-                            Log($"⛔ IMSLP sin sesión válida: {removed} archivo(s) IMSLP omitidos para evitar fallos masivos.");
-
-                        if (jobs.Count == 0)
-                        {
-                            await Dispatcher.InvokeAsync(() => txtStatus.Text = "IMSLP requiere sesión interactiva (challenge).");
-                            return;
-                        }
-                    }
-                }
-
-                // Cookie no vacía no garantiza sesión válida: comprobar con una descarga real de prueba.
-                // Nota: la probe puede fallar incluso con sesión válida si Cloudflare bloquea el TLS
-                // fingerprint de HttpClient. Si el usuario acaba de autenticar via diálogo, confiar en la sesión.
-                var probeOk = await ValidateImlspSessionWithProbeAsync(jobs, ct);
-                if (!probeOk)
-                {
-                    Log("⚠️ IMSLP sesión caducada/bloqueada detectada en probe. Abriendo sesión interactiva...");
-                    var sessionAuthOk = await OpenImlspSessionAsync().ConfigureAwait(true);
-
-                    if (sessionAuthOk)
-                    {
-                        // Usuario autenticó con éxito en el diálogo: confiar en las cookies.
-                        // No repetir probe (HttpClient puede seguir bloqueado por TLS fingerprint aunque las cookies sean válidas).
-                        probeOk = true;
-                        Log("✅ IMSLP: sesión interactiva aceptada, continuando con las cookies de sesión.");
-                    }
-                    else
-                    {
-                        // Usuario canceló o no completó el challenge.
-                        probeOk = false;
-                    }
-
-                    if (!probeOk)
-                    {
-                        var totalBefore = jobs.Count;
-                        jobs = jobs
-                            .Where(j => !string.Equals(j.item.Source, "IMSLP", StringComparison.OrdinalIgnoreCase))
-                            .ToList();
-
-                        var removed = totalBefore - jobs.Count;
-                        if (removed > 0)
-                            Log($"⛔ IMSLP sin sesión válida (cancelada o challenge no completado): {removed} archivo(s) IMSLP omitidos.");
-
-                        if (jobs.Count == 0)
-                        {
-                            await Dispatcher.InvokeAsync(() => txtStatus.Text = "IMSLP bloqueado: sesión/challenge no válido.");
-                            return;
-                        }
-                    }
-                }
-            }
-            catch (OperationCanceledException) { throw; }
-            catch (Exception ex)
-            {
-                Log($"❌ Error controlado en preflight IMSLP: {ex.Message}");
-
-                var totalBefore = jobs.Count;
-                jobs = jobs
-                    .Where(j => !string.Equals(j.item.Source, "IMSLP", StringComparison.OrdinalIgnoreCase))
-                    .ToList();
-
-                var removed = totalBefore - jobs.Count;
-                if (removed > 0)
-                    Log($"⛔ IMSLP omitido por error de preflight: {removed} archivo(s).");
-
-                if (jobs.Count == 0)
-                {
-                    await Dispatcher.InvokeAsync(() => txtStatus.Text = "IMSLP omitido por error interno de preflight.");
-                    return;
-                }
-            }
-        }
 
         PrepareQueue(jobs);
 
@@ -2978,7 +2153,6 @@ public partial class MainWindow : Window, IAsyncDisposable
                 source => (source ?? string.Empty).Trim().ToUpperInvariant() switch
                 {
                     "CPDL" => _cpdl.GetSessionHeaders(),
-                    "IMSLP" => _imslp.GetSessionHeaders(),
                     _ => (null, null)
                 },
                 ct);
@@ -3009,22 +2183,6 @@ public partial class MainWindow : Window, IAsyncDisposable
                     });
             }
 
-            // Si veníamos de un lote de pendientes IMSLP, reconciliar checkpoint activo.
-            if (pendingBatchRun && File.Exists(_imslpPendingActivePath))
-            {
-                var activeBatch = JsonStore.Load<List<PartituraItem>>(_imslpPendingActivePath, []);
-                if (result.Failed > 0 || result.Cancelled > 0)
-                {
-                    var pending = JsonStore.Load<List<PartituraItem>>(_imslpPendingPath, []);
-                    var merged = MergePendingLists(pending, activeBatch);
-                    JsonStore.Save(_imslpPendingPath, merged);
-                    Log($"♻ Pendientes IMSLP: lote activo reinsertado por fallos/cancelación ({activeBatch.Count})");
-                }
-
-                try { File.Delete(_imslpPendingActivePath); } catch { }
-                UpdateSourceDashboard();
-            }
-
             if (chkAutoConvertAudiveris.IsChecked == true && result.Ok > 0 && !ct.IsCancellationRequested)
                 await AutoConvertWithAudiverisAsync(destFolder);
         }
@@ -3045,38 +2203,6 @@ public partial class MainWindow : Window, IAsyncDisposable
             pbFileProgress.Value = 0;
             pbFileProgress.Visibility = Visibility.Collapsed;
             txtFileProgress.Visibility = Visibility.Collapsed;
-
-            if (pendingBatchRun && _autoContinuePendingBatches && !ct.IsCancellationRequested)
-            {
-                var left = GetImlspPendingCount();
-                var limitReached = _autoBatchLimit > 0 && _pendingBatchChainCount >= _autoBatchLimit;
-                if (left > 0 && !limitReached)
-                {
-                    Log($"⏭️ Auto-lotes IMSLP: esperando {_imslpPendingBatchDelaySeconds}s (restan {left}, lote {_pendingBatchChainCount}/{(_autoBatchLimit > 0 ? _autoBatchLimit.ToString() : "∞")})");
-                    _ = Dispatcher.InvokeAsync(async () =>
-                    {
-                        try
-                        {
-                            await Task.Delay(TimeSpan.FromSeconds(_imslpPendingBatchDelaySeconds));
-                            // esperar si está en pausa
-                            while (System.Threading.Volatile.Read(ref _autoBatchPaused) == 1)
-                                await Task.Delay(1000);
-                            BtnRetryImlspPending_Click(btnRetryImlspPending, new RoutedEventArgs());
-                        }
-                        catch { }
-                    }, DispatcherPriority.Background);
-                }
-                else
-                {
-                    _pendingBatchChainCount = 0;
-                    UpdateSourceDashboard();
-                }
-            }
-            else if (pendingBatchRun)
-            {
-                _pendingBatchChainCount = 0;
-                UpdateSourceDashboard();
-            }
         }
     }
 
@@ -3089,8 +2215,6 @@ public partial class MainWindow : Window, IAsyncDisposable
             btnConvertAudiveris.IsEnabled = !running && !_audiverisRunning;
         if (btnGenerateVideo != null)
             btnGenerateVideo.IsEnabled = !running && !_videoRunning;
-        if (btnPauseBatchChain != null)
-            btnPauseBatchChain.IsEnabled = running && _autoContinuePendingBatches;
     }
 
     private async Task AutoConvertWithAudiverisAsync(string destFolder)
@@ -3104,8 +2228,16 @@ public partial class MainWindow : Window, IAsyncDisposable
             return;
         }
 
-        var pending = SafeEnumerateFiles(destFolder, f => AudiverisInputExtensions.Contains(Path.GetExtension(f), StringComparer.OrdinalIgnoreCase) && !HasMusicScoreSibling(f))
+        var pendingBeforeCooldown = SafeEnumerateFiles(destFolder, f => AudiverisInputExtensions.Contains(Path.GetExtension(f), StringComparer.OrdinalIgnoreCase) && !HasMusicScoreSibling(f))
+            .Where(f => !_audiverisKnownPageFailures.Contains(f))
             .ToList();
+        var pending = pendingBeforeCooldown
+            .Where(f => !IsAudiverisFamilyInTimeoutCooldown(f))
+            .ToList();
+        var skippedCooldownFamilies = pendingBeforeCooldown.Count - pending.Count;
+
+        if (skippedCooldownFamilies > 0)
+            Log($"ℹ️ Auto-Audiveris: {skippedCooldownFamilies} archivo(s) omitidos por cooldown de timeout activo.");
 
         if (pending.Count == 0)
         {
@@ -3113,34 +2245,96 @@ public partial class MainWindow : Window, IAsyncDisposable
             return;
         }
 
-        Log($"🎼 Auto-convertir: procesando {pending.Count} archivo(s) con Audiveris...");
+        var familyPending = SelectFirstPerAudiverisFamily(pending, out var skippedFamilyDuplicates);
+        if (skippedFamilyDuplicates > 0)
+            Log($"ℹ️ Auto-Audiveris: {skippedFamilyDuplicates} archivo(s) omitidos por duplicado de familia (a4/let).");
+
+        Log($"🎼 Auto-convertir: procesando {familyPending.Count} archivo(s) con Audiveris...");
         _audiverisRunning = true;
         if (btnConvertAudiveris != null) btnConvertAudiveris.IsEnabled = false;
 
-        int ok = 0, fail = 0;
+        int ok = 0, partial = 0, fail = 0, skippedByFamilyTimeout = 0, processed = 0;
+        var timeoutFamilies = new System.Collections.Concurrent.ConcurrentDictionary<string, byte>(StringComparer.OrdinalIgnoreCase);
         try
         {
-            for (int i = 0; i < pending.Count; i++)
-            {
-                var input = pending[i];
-                var name = Path.GetFileName(input);
-                txtStatus.Text = $"🎼 Auto-Audiveris [{i + 1}/{pending.Count}] {name}";
-                LogDebug($"Auto-Audiveris [{i + 1}/{pending.Count}] {name}");
-                var converted = await RunAudiverisConversionAsync(audiverisExe, input).ConfigureAwait(true);
-                if (converted)
+            await Parallel.ForEachAsync(
+                familyPending,
+                new ParallelOptions { MaxDegreeOfParallelism = _audiverisParallel },
+                async (input, cancellationToken) =>
                 {
-                    ok++;
-                    _audiverisLog.Add(new AudiverisLogItem { FileName = name, Status = "✅ Convertido" });
-                }
-                else
-                {
-                    fail++;
-                    Log($"⚠️ Sin salida: {name}");
-                    _audiverisLog.Add(new AudiverisLogItem { FileName = name, Status = "⚠️ Sin salida" });
-                }
-            }
+                    var name = Path.GetFileName(input);
+                    var familyKey = NormalizeAudiverisFamilyKey(input);
+                    if (timeoutFamilies.ContainsKey(familyKey))
+                    {
+                        Interlocked.Increment(ref skippedByFamilyTimeout);
+                        await Dispatcher.InvokeAsync(() =>
+                            _audiverisLog.Add(new AudiverisLogItem { FileName = name, Status = "⏭️ Omitido (familia timeout)" }));
+                        return;
+                    }
 
-            var msg = $"🎼 Auto-Audiveris finalizado: {ok} convertidos, {fail} sin convertir";
+                    var idx = Interlocked.Increment(ref processed);
+                    await Dispatcher.InvokeAsync(() =>
+                        txtStatus.Text = $"🎼 Auto-Audiveris [{idx}/{familyPending.Count}] {name}");
+                    LogDebug($"Auto-Audiveris [{idx}/{familyPending.Count}] {name}");
+
+                    (bool Success, bool Partial, bool PageFailure) result;
+                    try
+                    {
+                        result = await RunAudiverisConversionAsync(audiverisExe, input).ConfigureAwait(false);
+                    }
+                    catch (TimeoutException tex)
+                    {
+                        Interlocked.Increment(ref fail);
+                        timeoutFamilies.TryAdd(familyKey, 0);
+                        MarkAudiverisFamilyTimeout(input);
+                        Log($"❌ Auto-Audiveris timeout en {name}: {tex.Message}");
+                        await Dispatcher.InvokeAsync(() =>
+                            _audiverisLog.Add(new AudiverisLogItem { FileName = name, Status = "⏱️ Timeout" }));
+                        return;
+                    }
+
+                    if (result.Success)
+                    {
+                        _audiverisTimeoutStrikes.TryRemove(familyKey, out _);
+                        _audiverisStrikeLastUtc.TryRemove(familyKey, out _);
+                        if (result.Partial)
+                        {
+                            Interlocked.Increment(ref partial);
+                            Log($"⚠️ Conversión parcial: {name} (solo hoja 1)");
+                            await Dispatcher.InvokeAsync(() =>
+                                _audiverisLog.Add(new AudiverisLogItem { FileName = name, Status = "⚠️ Parcial (hoja 1)" }));
+                        }
+                        else
+                        {
+                            Interlocked.Increment(ref ok);
+                            await Dispatcher.InvokeAsync(() =>
+                                _audiverisLog.Add(new AudiverisLogItem { FileName = name, Status = "✅ Convertido" }));
+                        }
+                    }
+                    else
+                    {
+                        Interlocked.Increment(ref fail);
+                        await Dispatcher.InvokeAsync(() =>
+                        {
+                            if (result.PageFailure)
+                            {
+                                _audiverisKnownPageFailures.Add(input);
+                            }
+                            Log($"⚠️ Sin salida: {name}");
+                            _audiverisLog.Add(new AudiverisLogItem { FileName = name, Status = "⚠️ Sin salida" });
+                        });
+                    }
+                }).ConfigureAwait(true);
+
+            if (_audiverisKnownPageFailures.Count > 0)
+                SaveAudiverisPageFailures();
+            if (!_audiverisTimeoutFamilies.IsEmpty)
+                SaveAudiverisTimeoutFamilies();
+            if (!_audiverisTimeoutStrikes.IsEmpty)
+                SaveAudiverisTimeoutStrikes();
+            UpdateAudiverisStatus();
+            var msg = $"🎼 Auto-Audiveris finalizado: {ok} completos, {partial} parciales, {fail} sin convertir" +
+                      (skippedByFamilyTimeout > 0 ? $", {skippedByFamilyTimeout} omitidos por timeout de familia" : string.Empty);
             txtStatus.Text = msg;
             Log(msg);
         }
@@ -3155,28 +2349,50 @@ public partial class MainWindow : Window, IAsyncDisposable
         }
     }
 
+    private void BtnResetAudiverisCooldown_Click(object sender, RoutedEventArgs e)
+    {
+        var cooldownCount = _audiverisTimeoutFamilies.Count;
+        var strikeCount = _audiverisTimeoutStrikes.Count;
+        _audiverisTimeoutFamilies.Clear();
+        _audiverisTimeoutStrikes.Clear();
+        _audiverisStrikeLastUtc.Clear();
+        SaveAudiverisTimeoutFamilies();
+        SaveAudiverisTimeoutStrikes();
+        UpdateAudiverisStatus();
+        Log($"🔄 Audiveris: cooldown y strikes reiniciados ({cooldownCount} familias, {strikeCount} strikes).");
+    }
+
     private async void BtnConvertAudiveris_Click(object sender, RoutedEventArgs e)
     {
+        Log("🎼 Boton Audiveris pulsado.");
         if (_videoRunning) { Log("⚠️ Hay un vídeo en proceso. Espera a que termine."); return; }
 
         var destFolder = txtDestFolder.Text?.Trim();
         if (string.IsNullOrWhiteSpace(destFolder) || !Directory.Exists(destFolder))
         {
+            Log("⚠️ Audiveris: carpeta destino no valida.");
             DarkDialogService.ShowMessage(this, "Selecciona una carpeta de destino valida.", "Audiveris", MessageBoxButton.OK, MessageBoxImage.Warning);
             return;
         }
 
+        LogDebug($"🎼 Audiveris: carpeta destino {destFolder}");
+
         var audiverisExe = ResolveAudiverisExecutable();
         if (string.IsNullOrWhiteSpace(audiverisExe))
         {
+            Log("⚠️ Audiveris no encontrado. Define AUDIVERIS_EXE o instala Audiveris.");
             DarkDialogService.ShowMessage(this,
                 "No se encontro Audiveris. Instala Audiveris o define AUDIVERIS_EXE con la ruta al ejecutable.",
                 "Audiveris no disponible", MessageBoxButton.OK, MessageBoxImage.Warning);
             return;
         }
 
+        LogDebug($"🎼 Audiveris ejecutable: {audiverisExe}");
+
         var inputs = SafeEnumerateFiles(destFolder, f => AudiverisInputExtensions.Contains(Path.GetExtension(f), StringComparer.OrdinalIgnoreCase))
             .ToList();
+
+        LogDebug($"🎼 Audiveris: candidatos detectados {inputs.Count}");
 
         if (inputs.Count == 0)
         {
@@ -3184,52 +2400,143 @@ public partial class MainWindow : Window, IAsyncDisposable
             return;
         }
 
-        var pending = inputs.Where(f => !HasMusicScoreSibling(f)).ToList();
+        var pendingBeforeCooldown = inputs
+            .Where(f => !HasMusicScoreSibling(f))
+            .Where(f => !_audiverisKnownPageFailures.Contains(f))
+            .ToList();
+        var pending = pendingBeforeCooldown
+            .Where(f => !IsAudiverisFamilyInTimeoutCooldown(f))
+            .ToList();
+
+        var skippedKnownPageFails = inputs.Count(f => !HasMusicScoreSibling(f) && _audiverisKnownPageFailures.Contains(f));
+        if (skippedKnownPageFails > 0)
+            Log($"ℹ️ Audiveris: {skippedKnownPageFails} archivo(s) omitidos por PAGE fail previo en esta sesión.");
+        var skippedCooldownFamilies = pendingBeforeCooldown.Count - pending.Count;
+        if (skippedCooldownFamilies > 0)
+            Log($"ℹ️ Audiveris: {skippedCooldownFamilies} archivo(s) omitidos por cooldown de timeout activo.");
+
         if (pending.Count == 0)
         {
             Log("🎼 Audiveris: todo ya estaba convertido (MXL/XML/MSCZ/MSCX).");
             return;
         }
 
+        var familyPending = SelectFirstPerAudiverisFamily(pending, out var skippedFamilyDuplicates);
+        if (skippedFamilyDuplicates > 0)
+            Log($"ℹ️ Audiveris: {skippedFamilyDuplicates} archivo(s) omitidos por duplicado de familia (a4/let) en esta corrida.");
+
+        var batch = familyPending.Take(_audiverisBatchSize).ToList();
+        var deferred = familyPending.Count - batch.Count;
+
         var proceed = DarkDialogService.ShowMessage(
             this,
-            $"Se convertiran {pending.Count} archivo(s) con Audiveris.\n\nSolo se procesan los que aun no tienen salida MusicScore/MusicXML.\n\n¿Continuar?",
+            $"Se convertiran {batch.Count} archivo(s) con Audiveris.\n\nSolo se procesan los que aun no tienen salida MusicScore/MusicXML." +
+            (deferred > 0 ? $"\n\nQuedaran {deferred} pendientes para la siguiente corrida." : string.Empty) +
+            "\n\n¿Continuar?",
             "Convertir con Audiveris", MessageBoxButton.YesNo, MessageBoxImage.Question);
-        if (proceed != MessageBoxResult.Yes) return;
+        if (proceed != MessageBoxResult.Yes)
+        {
+            Log("ℹ️ Audiveris cancelado por usuario.");
+            return;
+        }
+
+        Log($"🎼 Audiveris: inicio conversion de {batch.Count} archivo(s) (paralelo={_audiverisParallel})." + (deferred > 0 ? $" ({deferred} quedan pendientes)" : string.Empty));
 
         _audiverisRunning = true;
         btnConvertAudiveris.IsEnabled = false;
         btnSearch.IsEnabled = false;
         btnDownload.IsEnabled = false;
         txtStatus.Text = "🎼 Convirtiendo con Audiveris...";
+        var capturedDestFolder = txtDestFolder.Text?.Trim() ?? string.Empty;
 
         int ok = 0;
+        int partial = 0;
         int fail = 0;
+        int skippedByFamilyTimeout = 0;
+        int processed = 0;
+        var timeoutFamilies = new System.Collections.Concurrent.ConcurrentDictionary<string, byte>(StringComparer.OrdinalIgnoreCase);
         try
         {
-            for (int i = 0; i < pending.Count; i++)
-            {
-                var input = pending[i];
-                var name = Path.GetFileName(input);
-                txtStatus.Text = $"🎼 Audiveris [{i + 1}/{pending.Count}] {name}";
-                LogDebug($"Audiveris [{i + 1}/{pending.Count}] {name}");
-
-                var converted = await RunAudiverisConversionAsync(audiverisExe, input).ConfigureAwait(true);
-                if (converted)
+            await Parallel.ForEachAsync(
+                batch,
+                new ParallelOptions { MaxDegreeOfParallelism = _audiverisParallel },
+                async (input, cancellationToken) =>
                 {
-                    ok++;
-                    _audiverisLog.Add(new AudiverisLogItem { FileName = name, Status = "✅ Convertido" });
-                }
-                else
-                {
-                    fail++;
-                    Log($"⚠️ Audiveris sin salida detectada: {name}");
-                    _audiverisLog.Add(new AudiverisLogItem { FileName = name, Status = "⚠️ Sin salida" });
-                }
-            }
+                    var name = Path.GetFileName(input);
+                    var familyKey = NormalizeAudiverisFamilyKey(input);
+                    if (timeoutFamilies.ContainsKey(familyKey))
+                    {
+                        Interlocked.Increment(ref skippedByFamilyTimeout);
+                        await Dispatcher.InvokeAsync(() =>
+                            _audiverisLog.Add(new AudiverisLogItem { FileName = name, Status = "⏭️ Omitido (familia timeout)" }));
+                        return;
+                    }
 
-            txtStatus.Text = $"🎼 Conversión finalizada: {ok} OK, {fail} sin convertir";
-            Log($"🎼 Conversión Audiveris completada: {ok} OK, {fail} sin convertir");
+                    var idx = Interlocked.Increment(ref processed);
+                    await Dispatcher.InvokeAsync(() =>
+                        txtStatus.Text = $"🎼 Audiveris [{idx}/{batch.Count}] {name}");
+
+                    (bool Success, bool Partial, bool PageFailure) result;
+                    try
+                    {
+                        result = await RunAudiverisConversionAsync(audiverisExe, input, capturedDestFolder).ConfigureAwait(false);
+                    }
+                    catch (TimeoutException tex)
+                    {
+                        Interlocked.Increment(ref fail);
+                        timeoutFamilies.TryAdd(familyKey, 0);
+                        MarkAudiverisFamilyTimeout(input);
+                        Log($"❌ Audiveris timeout en {name}: {tex.Message}");
+                        await Dispatcher.InvokeAsync(() =>
+                            _audiverisLog.Add(new AudiverisLogItem { FileName = name, Status = "⏱️ Timeout" }));
+                        return;
+                    }
+
+                    if (result.Success)
+                    {
+                        _audiverisTimeoutStrikes.TryRemove(familyKey, out _);
+                        _audiverisStrikeLastUtc.TryRemove(familyKey, out _);
+                        if (result.Partial)
+                        {
+                            Interlocked.Increment(ref partial);
+                            Log($"⚠️ Conversión parcial: {name} (solo hoja 1)");
+                            await Dispatcher.InvokeAsync(() =>
+                                _audiverisLog.Add(new AudiverisLogItem { FileName = name, Status = "⚠️ Parcial (hoja 1)" }));
+                        }
+                        else
+                        {
+                            Interlocked.Increment(ref ok);
+                            await Dispatcher.InvokeAsync(() =>
+                                _audiverisLog.Add(new AudiverisLogItem { FileName = name, Status = "✅ Convertido" }));
+                        }
+                    }
+                    else
+                    {
+                        Interlocked.Increment(ref fail);
+                        await Dispatcher.InvokeAsync(() =>
+                        {
+                            if (result.PageFailure)
+                            {
+                                _audiverisKnownPageFailures.Add(input);
+                            }
+                            Log($"⚠️ Audiveris sin salida detectada: {name}");
+                            _audiverisLog.Add(new AudiverisLogItem { FileName = name, Status = "⚠️ Sin salida" });
+                        });
+                    }
+                }).ConfigureAwait(true);
+
+            if (_audiverisKnownPageFailures.Count > 0)
+                SaveAudiverisPageFailures();
+            if (!_audiverisTimeoutFamilies.IsEmpty)
+                SaveAudiverisTimeoutFamilies();
+            if (!_audiverisTimeoutStrikes.IsEmpty)
+                SaveAudiverisTimeoutStrikes();
+            UpdateAudiverisStatus();
+            txtStatus.Text = $"🎼 Conversión finalizada: {ok} completas, {partial} parciales, {fail} sin convertir" +
+                             (skippedByFamilyTimeout > 0 ? $", {skippedByFamilyTimeout} omitidos por timeout de familia" : string.Empty);
+            Log($"🎼 Conversión Audiveris completada: {ok} completas, {partial} parciales, {fail} sin convertir" +
+                (skippedByFamilyTimeout > 0 ? $", {skippedByFamilyTimeout} omitidos por timeout de familia" : string.Empty) +
+                (deferred > 0 ? $". Pendientes: {deferred}" : string.Empty));
         }
         catch (Exception ex)
         {
@@ -3279,8 +2586,119 @@ public partial class MainWindow : Window, IAsyncDisposable
         {
             var candidate = Path.Combine(dir, stem + ext);
             if (File.Exists(candidate)) return true;
+            // Audiveris puede generar stem/stem.ext en subdirectorio
+            var subCandidate = Path.Combine(dir, stem, stem + ext);
+            if (File.Exists(subCandidate)) return true;
         }
         return false;
+    }
+
+    private static string NormalizeAudiverisFamilyKey(string inputPath)
+    {
+        var dir = Path.GetDirectoryName(inputPath)?.Trim() ?? string.Empty;
+        var stem = Path.GetFileNameWithoutExtension(inputPath)?.Trim() ?? string.Empty;
+        if (stem.EndsWith("-a4", StringComparison.OrdinalIgnoreCase) || stem.EndsWith("_a4", StringComparison.OrdinalIgnoreCase))
+            stem = stem[..^3];
+        else if (stem.EndsWith("-let", StringComparison.OrdinalIgnoreCase) || stem.EndsWith("_let", StringComparison.OrdinalIgnoreCase))
+            stem = stem[..^4];
+
+        string fullDir;
+        try { fullDir = Path.GetFullPath(dir); }
+        catch { fullDir = dir; }
+
+        return fullDir.ToLowerInvariant() + "|" + stem.ToLowerInvariant();
+    }
+
+    private static List<string> SelectFirstPerAudiverisFamily(IEnumerable<string> files, out int skippedDuplicates)
+    {
+        var bestPerFamily = new Dictionary<string, (string Path, long Size)>(StringComparer.OrdinalIgnoreCase);
+        var total = 0;
+        foreach (var file in files)
+        {
+            total++;
+            var family = NormalizeAudiverisFamilyKey(file);
+            long size;
+            try { size = new FileInfo(file).Length; }
+            catch { size = long.MaxValue; }
+
+            if (!bestPerFamily.TryGetValue(family, out var current))
+            {
+                bestPerFamily[family] = (file, size);
+                continue;
+            }
+
+            if (size < current.Size || (size == current.Size && string.Compare(file, current.Path, StringComparison.OrdinalIgnoreCase) < 0))
+                bestPerFamily[family] = (file, size);
+        }
+
+        skippedDuplicates = Math.Max(0, total - bestPerFamily.Count);
+        return bestPerFamily.Values
+            .Select(v => v.Path)
+            .OrderBy(f => f, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+    }
+
+    private int ComputeAudiverisTimeoutSeconds(string inputPath)
+    {
+        var familyKey = NormalizeAudiverisFamilyKey(inputPath);
+        var strike = _audiverisTimeoutStrikes.TryGetValue(familyKey, out var value) ? value : 0;
+
+        var isPdfInput = string.Equals(Path.GetExtension(inputPath), ".pdf", StringComparison.OrdinalIgnoreCase);
+        if (!isPdfInput)
+            return _audiverisTimeoutSeconds + (strike * _audiverisTimeoutStrikeBoostSeconds);
+
+        var baseSeconds = Math.Max(_audiverisTimeoutSeconds, _audiverisPdfTimeoutMinSeconds);
+        long bytes;
+        try { bytes = new FileInfo(inputPath).Length; }
+        catch { bytes = 0; }
+
+        var sizeMb = Math.Max(1, (int)Math.Ceiling(bytes / (1024d * 1024d)));
+        var adaptive = baseSeconds + (sizeMb * _audiverisPdfTimeoutPerMbSeconds) + (strike * _audiverisTimeoutStrikeBoostSeconds);
+        return Math.Clamp(adaptive, _audiverisPdfTimeoutMinSeconds, _audiverisPdfTimeoutMaxSeconds);
+    }
+
+    private static bool TryGetAudiverisSiblingVariant(string inputPath, out string siblingPath)
+    {
+        siblingPath = string.Empty;
+        var dir = Path.GetDirectoryName(inputPath);
+        var stem = Path.GetFileNameWithoutExtension(inputPath);
+        var ext = Path.GetExtension(inputPath);
+        if (string.IsNullOrWhiteSpace(dir) || string.IsNullOrWhiteSpace(stem))
+            return false;
+
+        string? siblingStem = null;
+        if (stem.EndsWith("-a4", StringComparison.OrdinalIgnoreCase)) siblingStem = stem[..^3] + "-let";
+        else if (stem.EndsWith("_a4", StringComparison.OrdinalIgnoreCase)) siblingStem = stem[..^3] + "_let";
+        else if (stem.EndsWith("-let", StringComparison.OrdinalIgnoreCase)) siblingStem = stem[..^4] + "-a4";
+        else if (stem.EndsWith("_let", StringComparison.OrdinalIgnoreCase)) siblingStem = stem[..^4] + "_a4";
+
+        if (string.IsNullOrWhiteSpace(siblingStem))
+            return false;
+
+        var candidate = Path.Combine(dir, siblingStem + ext);
+        if (!File.Exists(candidate))
+            return false;
+
+        siblingPath = candidate;
+        return true;
+    }
+
+    private static void DeleteAudiverisPartialOutputs(string inputPath)
+    {
+        var dir = Path.GetDirectoryName(inputPath);
+        var stem = Path.GetFileNameWithoutExtension(inputPath);
+        if (string.IsNullOrWhiteSpace(dir) || string.IsNullOrWhiteSpace(stem)) return;
+
+        foreach (var ext in AudiverisOutputExtensions.Concat(new[] { ".omr" }))
+        {
+            var candidate = Path.Combine(dir, stem + ext);
+            try
+            {
+                if (File.Exists(candidate))
+                    File.Delete(candidate);
+            }
+            catch { }
+        }
     }
 
     private static string? ResolveAudiverisExecutable()
@@ -3288,14 +2706,6 @@ public partial class MainWindow : Window, IAsyncDisposable
         var env = Environment.GetEnvironmentVariable("AUDIVERIS_EXE");
         if (!string.IsNullOrWhiteSpace(env) && File.Exists(env))
             return env;
-
-        var candidates = new[]
-        {
-            @"C:\Program Files\Audiveris\bin\Audiveris.bat",
-            @"C:\Program Files\Audiveris\bin\audiveris.bat",
-            @"C:\Program Files\Audiveris\Audiveris.bat",
-            @"C:\ProgramData\chocolatey\bin\audiveris.bat"
-        };
 
         // Also search PATH for audiveris executable
         var pathEnv = Environment.GetEnvironmentVariable("PATH") ?? "";
@@ -3342,48 +2752,124 @@ public partial class MainWindow : Window, IAsyncDisposable
         return null;
     }
 
-    private async Task<bool> RunAudiverisConversionAsync(string audiverisExe, string inputPath)
+    private async Task<(bool Success, bool Partial, bool PageFailure)> RunAudiverisConversionAsync(string audiverisExe, string inputPath, string fallbackOutputDir = "", bool allowSiblingFallback = true)
     {
-        var outputDir = Path.GetDirectoryName(inputPath) ?? txtDestFolder.Text?.Trim() ?? string.Empty;
-        var psi = new System.Diagnostics.ProcessStartInfo
+        var outputDir = Path.GetDirectoryName(inputPath) ?? (string.IsNullOrEmpty(fallbackOutputDir) ? string.Empty : fallbackOutputDir);
+        static string Tail(string s) => s.Length > 500 ? "..." + s[^500..] : s;
+
+        async Task<(int exitCode, string stdout, string stderr)> RunAudiverisOnceAsync(string currentInputPath, IEnumerable<string> extraArgs)
         {
-            FileName = audiverisExe,
-            UseShellExecute = false,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            CreateNoWindow = true
-        };
+            var timeoutSeconds = ComputeAudiverisTimeoutSeconds(currentInputPath);
+            var audiverisTimeout = TimeSpan.FromSeconds(timeoutSeconds);
+            var psi = new System.Diagnostics.ProcessStartInfo
+            {
+                FileName = audiverisExe,
+                UseShellExecute = false,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                CreateNoWindow = true
+            };
 
-        psi.ArgumentList.Add("-batch");
-        psi.ArgumentList.Add("-transcribe");
-        psi.ArgumentList.Add("-export");
-        psi.ArgumentList.Add("-output");
-        psi.ArgumentList.Add(outputDir);
-        psi.ArgumentList.Add(inputPath);
+            // Cap JVM heap. PDF rendering DPI (300) is set via Audiveris user config
+            // (run.properties: org.audiveris.omr.image.ImageLoading.pdfResolution=300).
+            // Without this, PDFs without embedded DPI get estimated at ~469 DPI → "Error in reaching step PAGE".
+            psi.EnvironmentVariables["JAVA_OPTS"] = "-Xmx4g";
 
-        using var process = new System.Diagnostics.Process { StartInfo = psi };
-        process.Start();
-        var stdoutTask = process.StandardOutput.ReadToEndAsync();
-        var stderrTask = process.StandardError.ReadToEndAsync();
-        await process.WaitForExitAsync().ConfigureAwait(true);
-        await Task.WhenAll(stdoutTask, stderrTask).ConfigureAwait(true);
+            psi.ArgumentList.Add("-batch");
+            foreach (var arg in extraArgs)
+                psi.ArgumentList.Add(arg);
+            psi.ArgumentList.Add("-transcribe");
+            psi.ArgumentList.Add("-export");
+            psi.ArgumentList.Add("-output");
+            psi.ArgumentList.Add(outputDir);
+            psi.ArgumentList.Add(currentInputPath);
 
-        if (process.ExitCode != 0)
-        {
-            var err = await stderrTask.ConfigureAwait(true);
-            var msg = string.IsNullOrWhiteSpace(err) ? $"exit={process.ExitCode}" : err.Trim();
-            Log($"⚠️ Audiveris fallo ({Path.GetFileName(inputPath)}): {msg}");
-            return false;
+            var argPreview = string.Join(" ", psi.ArgumentList.Cast<string>());
+            LogDebug($"🎼 Audiveris spawn ({Path.GetFileName(currentInputPath)}): timeout={timeoutSeconds}s args={argPreview}");
+
+            using var process = new System.Diagnostics.Process { StartInfo = psi };
+            process.Start();
+            var stdoutTask = process.StandardOutput.ReadToEndAsync();
+            var stderrTask = process.StandardError.ReadToEndAsync();
+            var waitTask = process.WaitForExitAsync();
+            var completed = await Task.WhenAny(waitTask, Task.Delay(audiverisTimeout)).ConfigureAwait(true);
+            if (completed != waitTask)
+            {
+                try
+                {
+                    if (!process.HasExited)
+                        process.Kill(entireProcessTree: true);
+                }
+                catch { }
+
+                await Task.WhenAll(stdoutTask, stderrTask).ConfigureAwait(true);
+                throw new TimeoutException($"Audiveris timeout tras {audiverisTimeout.TotalMinutes:0.#} min ({timeoutSeconds}s)");
+            }
+
+            await waitTask.ConfigureAwait(true);
+            await Task.WhenAll(stdoutTask, stderrTask).ConfigureAwait(true);
+            var stdout = (await stdoutTask.ConfigureAwait(true)).Trim();
+            var stderr = (await stderrTask.ConfigureAwait(true)).Trim();
+            LogDebug($"🎼 Audiveris exit ({Path.GetFileName(currentInputPath)}): code={process.ExitCode}");
+            return (process.ExitCode, stdout, stderr);
         }
 
-        return HasMusicScoreSibling(inputPath);
+        (bool Success, bool Partial, bool PageFailure) BuildFailureResult((int exitCode, string stdout, string stderr) attempt, string attemptedPath)
+        {
+            var firstCombined = string.Join("\n", new[] { attempt.stderr, attempt.stdout }.Where(s => !string.IsNullOrWhiteSpace(s)));
+            var isPageFailure = firstCombined.Contains("Error in reaching step PAGE", StringComparison.OrdinalIgnoreCase);
+            if (isPageFailure)
+            {
+                DeleteAudiverisPartialOutputs(attemptedPath);
+                Log($"⚠️ Audiveris PAGE fail en {Path.GetFileName(attemptedPath)}. Se omite y se limpia salida parcial.");
+                return (false, false, true);
+            }
+
+            DeleteAudiverisPartialOutputs(attemptedPath);
+            var combined = string.Join(" | ", new[] { attempt.stderr, attempt.stdout }.Where(s => !string.IsNullOrWhiteSpace(s)).Select(Tail));
+            var msg = string.IsNullOrWhiteSpace(combined) ? $"exit={attempt.exitCode}" : $"exit={attempt.exitCode} {combined}";
+            Log($"⚠️ Audiveris fallo ({Path.GetFileName(attemptedPath)}): {msg}");
+            return (false, false, false);
+        }
+
+        try
+        {
+            var firstTry = await RunAudiverisOnceAsync(inputPath, Array.Empty<string>()).ConfigureAwait(true);
+            if (firstTry.exitCode == 0)
+                return (HasMusicScoreSibling(inputPath), false, false);
+
+            var firstFail = BuildFailureResult(firstTry, inputPath);
+            if (!allowSiblingFallback || firstFail.PageFailure)
+                return firstFail;
+
+            if (!TryGetAudiverisSiblingVariant(inputPath, out var siblingPath))
+                return firstFail;
+            if (HasMusicScoreSibling(siblingPath) || IsAudiverisFamilyInTimeoutCooldown(siblingPath))
+                return firstFail;
+
+            Log($"ℹ️ Audiveris fallback: {Path.GetFileName(inputPath)} fallo; reintento con variante hermana {Path.GetFileName(siblingPath)}.");
+            var siblingTry = await RunAudiverisOnceAsync(siblingPath, Array.Empty<string>()).ConfigureAwait(true);
+            if (siblingTry.exitCode == 0)
+                return (true, false, false);
+            return BuildFailureResult(siblingTry, siblingPath);
+        }
+        catch (TimeoutException) when (allowSiblingFallback && TryGetAudiverisSiblingVariant(inputPath, out var siblingPath) && !HasMusicScoreSibling(siblingPath) && !IsAudiverisFamilyInTimeoutCooldown(siblingPath))
+        {
+            Log($"ℹ️ Audiveris fallback por timeout: {Path.GetFileName(inputPath)}; reintento con variante hermana {Path.GetFileName(siblingPath)}.");
+            var siblingTry = await RunAudiverisOnceAsync(siblingPath, Array.Empty<string>()).ConfigureAwait(true);
+            if (siblingTry.exitCode == 0)
+                return (true, false, false);
+            return BuildFailureResult(siblingTry, siblingPath);
+        }
     }
 
     // ── Video generation (MuseScore directo) ───────────────────────────────────
 
     private static readonly string[] VideoInputExtensions = [".mscz", ".mxl", ".xml", ".musicxml"];
 
-    private bool _videoRunning;
+    private volatile bool _videoRunning;
+    private readonly int _videoTimeoutSeconds = ReadFeatureFlagInt("SCOREDOWN_VIDEO_TIMEOUT_SEC", 600, 30, 7200);
+    private readonly int _videoParallel = ReadFeatureFlagInt("SCOREDOWN_VIDEO_PARALLEL", 1, 1, 4);
 
     private async void BtnGenerateVideo_Click(object sender, RoutedEventArgs e)
     {
@@ -3432,24 +2918,44 @@ public partial class MainWindow : Window, IAsyncDisposable
         btnDownload.IsEnabled = false;
         txtStatus.Text = "🎥 Generando vídeos...";
 
-        int ok = 0, fail = 0;
+        var videoTimeout = TimeSpan.FromSeconds(_videoTimeoutSeconds);
+        int ok = 0, fail = 0, processed = 0;
         try
         {
-            for (int i = 0; i < pending.Count; i++)
-            {
-                var input = pending[i];
-                var name = Path.GetFileName(input);
-                var outputMp4 = Path.Combine(
-                    Path.GetDirectoryName(input) ?? destFolder,
-                    Path.GetFileNameWithoutExtension(input) + ".mp4");
+            await Parallel.ForEachAsync(
+                pending,
+                new ParallelOptions { MaxDegreeOfParallelism = _videoParallel },
+                async (input, _) =>
+                {
+                    var name = Path.GetFileName(input);
+                    var idx = Interlocked.Increment(ref processed);
+                    var outputMp4 = Path.Combine(
+                        Path.GetDirectoryName(input) ?? destFolder,
+                        Path.GetFileNameWithoutExtension(input) + ".mp4");
 
-                txtStatus.Text = $"🎥 Video [{i + 1}/{pending.Count}] {name}";
-                LogDebug($"Video [{i + 1}/{pending.Count}] {name}");
+                    await Dispatcher.InvokeAsync(() =>
+                        txtStatus.Text = $"🎥 Video [{idx}/{pending.Count}] {name}");
+                    LogDebug($"Video [{idx}/{pending.Count}] {name}");
 
-                var generated = await RunMuseScoreVideoAsync(museScoreExe, input, outputMp4, extraVideoArgs).ConfigureAwait(true);
-                if (generated) ok++;
-                else { fail++; Log($"⚠️ Sin vídeo generado: {name}"); }
-            }
+                    bool generated;
+                    try
+                    {
+                        var videoTask = RunMuseScoreVideoAsync(museScoreExe, input, outputMp4, extraVideoArgs);
+                        var completed = await Task.WhenAny(videoTask, Task.Delay(videoTimeout)).ConfigureAwait(false);
+                        if (completed != videoTask)
+                            throw new TimeoutException($"MuseScore timeout tras {videoTimeout.TotalMinutes:0.#} min");
+                        generated = await videoTask.ConfigureAwait(false);
+                    }
+                    catch (TimeoutException tex)
+                    {
+                        Interlocked.Increment(ref fail);
+                        Log($"❌ Video timeout en {name}: {tex.Message}");
+                        return;
+                    }
+
+                    if (generated) Interlocked.Increment(ref ok);
+                    else { Interlocked.Increment(ref fail); Log($"⚠️ Sin vídeo generado: {name}"); }
+                }).ConfigureAwait(true);
 
             var msg = $"🎥 Vídeos completados: {ok} OK, {fail} sin generar";
             txtStatus.Text = msg;
@@ -3475,7 +2981,8 @@ public partial class MainWindow : Window, IAsyncDisposable
         var dir = Path.GetDirectoryName(inputPath);
         var stem = Path.GetFileNameWithoutExtension(inputPath);
         if (string.IsNullOrWhiteSpace(dir) || string.IsNullOrWhiteSpace(stem)) return false;
-        return File.Exists(Path.Combine(dir, stem + ".mp4"));
+        return File.Exists(Path.Combine(dir, stem + ".mp4"))
+            || File.Exists(Path.Combine(dir, stem, stem + ".mp4"));
     }
 
     private static List<string> ResolveMuseScoreVideoArgs()
@@ -3564,7 +3071,16 @@ public partial class MainWindow : Window, IAsyncDisposable
             psi.ArgumentList.Add(probeArg);
             using var p = new System.Diagnostics.Process { StartInfo = psi };
             p.Start();
-            await p.WaitForExitAsync().ConfigureAwait(false);
+            var stdoutTask = p.StandardOutput.ReadToEndAsync();
+            var stderrTask = p.StandardError.ReadToEndAsync();
+            var waitTask = p.WaitForExitAsync();
+            var allDone = Task.WhenAll(waitTask, stdoutTask, stderrTask);
+            var completed = await Task.WhenAny(allDone, Task.Delay(TimeSpan.FromSeconds(10))).ConfigureAwait(false);
+            if (completed != allDone)
+            {
+                try { if (!p.HasExited) p.Kill(entireProcessTree: true); } catch { }
+                return false;
+            }
             return p.ExitCode == 0;
         }
         catch
@@ -3581,7 +3097,7 @@ public partial class MainWindow : Window, IAsyncDisposable
         args.Add("-o");
         args.Add(outputMp4);
         args.Add(inputPath);
-        var autoOk = await RunProcessAsync(museScoreExe, args, Path.GetFileName(inputPath), "MuseScore MP4").ConfigureAwait(true);
+        var autoOk = await RunProcessAsync(museScoreExe, args, Path.GetFileName(inputPath), "MuseScore MP4", TimeSpan.FromSeconds(_videoTimeoutSeconds)).ConfigureAwait(true);
         return autoOk && File.Exists(outputMp4);
     }
 
@@ -3630,7 +3146,7 @@ public partial class MainWindow : Window, IAsyncDisposable
         return false;
     }
 
-    private async Task<bool> RunProcessAsync(string exe, IEnumerable<string> args, string inputName, string stage)
+    private async Task<bool> RunProcessAsync(string exe, IEnumerable<string> args, string inputName, string stage, TimeSpan? timeout = null)
     {
         var psi = new System.Diagnostics.ProcessStartInfo
         {
@@ -3647,14 +3163,31 @@ public partial class MainWindow : Window, IAsyncDisposable
         process.Start();
         var stdoutTask = process.StandardOutput.ReadToEndAsync();
         var stderrTask = process.StandardError.ReadToEndAsync();
-        await process.WaitForExitAsync().ConfigureAwait(true);
-        await Task.WhenAll(stdoutTask, stderrTask).ConfigureAwait(true);
+        var waitTask = process.WaitForExitAsync();
+
+        // Leer pipes en paralelo con WaitForExit para evitar deadlock por buffer lleno
+        var allDone = Task.WhenAll(waitTask, stdoutTask, stderrTask);
+        if (timeout.HasValue)
+        {
+            var completed = await Task.WhenAny(allDone, Task.Delay(timeout.Value)).ConfigureAwait(true);
+            if (completed != allDone)
+            {
+                try { if (!process.HasExited) process.Kill(entireProcessTree: true); } catch { }
+                await allDone.ConfigureAwait(true);
+                Log($"⚠️ {stage} timeout ({inputName}): proces killed tras {timeout.Value.TotalSeconds:0}s");
+                return false;
+            }
+        }
+        else
+        {
+            await allDone.ConfigureAwait(true);
+        }
 
         if (process.ExitCode == 0)
             return true;
 
-        var err = await stderrTask.ConfigureAwait(true);
-        var msg = string.IsNullOrWhiteSpace(err) ? $"exit={process.ExitCode}" : err.Trim();
+        var err = (await stderrTask.ConfigureAwait(true)).Trim();
+        var msg = string.IsNullOrWhiteSpace(err) ? $"exit={process.ExitCode}" : err;
         Log($"⚠️ {stage} fallo ({inputName}): {msg}");
         return false;
     }
@@ -3826,7 +3359,9 @@ public partial class MainWindow : Window, IAsyncDisposable
         => JsonStore.Save(_downloadHistoryPath, _downloadHistory.ToList());
 
     private void LoadOfflineLibrary()
-        => _offlineLibraryItems = JsonStore.Load<List<PartituraItem>>(_offlineLibraryPath, []);
+    {
+        _offlineLibraryItems = JsonStore.Load<List<PartituraItem>>(_offlineLibraryPath, []);
+    }
 
     private void SaveOfflineLibrary()
         => JsonStore.Save(_offlineLibraryPath, _offlineLibraryItems);
@@ -3840,6 +3375,175 @@ public partial class MainWindow : Window, IAsyncDisposable
 
     private void SaveTags()
         => JsonStore.Save(_tagsPath, _savedTags);
+
+    private void LoadAudiverisPageFailures()
+    {
+        var entries = JsonStore.Load<List<string>>(_audiverisPageFailuresPath, []);
+        _audiverisKnownPageFailures.Clear();
+        foreach (var path in entries)
+        {
+            if (string.IsNullOrWhiteSpace(path))
+                continue;
+
+            try
+            {
+                _audiverisKnownPageFailures.Add(Path.GetFullPath(path));
+            }
+            catch { }
+        }
+
+        if (_audiverisKnownPageFailures.Count > 0)
+            Log($"ℹ️ Audiveris: {_audiverisKnownPageFailures.Count} PAGE fail(s) cargados de sesión previa.");
+    }
+
+    private void SaveAudiverisPageFailures()
+        => JsonStore.Save(_audiverisPageFailuresPath, _audiverisKnownPageFailures.OrderBy(p => p).ToList());
+
+    private sealed class AudiverisTimeoutFamilyEntry
+    {
+        public string FamilyKey { get; set; } = string.Empty;
+        public DateTime ExpiresUtc { get; set; }
+    }
+
+    private void LoadAudiverisTimeoutFamilies()
+    {
+        var now = DateTime.UtcNow;
+        var entries = JsonStore.Load<List<AudiverisTimeoutFamilyEntry>>(_audiverisTimeoutFamiliesPath, []);
+        _audiverisTimeoutFamilies.Clear();
+        foreach (var entry in entries)
+        {
+            if (entry is null || string.IsNullOrWhiteSpace(entry.FamilyKey) || entry.ExpiresUtc <= now)
+                continue;
+
+            _audiverisTimeoutFamilies[entry.FamilyKey] = entry.ExpiresUtc;
+        }
+
+        if (_audiverisTimeoutFamilies.Count > 0)
+            Log($"ℹ️ Audiveris: {_audiverisTimeoutFamilies.Count} familia(s) en cooldown por timeout cargadas de sesión previa.");
+    }
+
+    private void SaveAudiverisTimeoutFamilies()
+    {
+        var now = DateTime.UtcNow;
+        var snapshot = _audiverisTimeoutFamilies
+            .Where(kv => kv.Value > now)
+            .Select(kv => new AudiverisTimeoutFamilyEntry { FamilyKey = kv.Key, ExpiresUtc = kv.Value })
+            .OrderBy(x => x.FamilyKey, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        JsonStore.Save(_audiverisTimeoutFamiliesPath, snapshot);
+    }
+
+    private void UpdateAudiverisStatus()
+    {
+        if (!IsInitialized || txtAudiverisStatus is null) return;
+        if (!Dispatcher.CheckAccess())
+        {
+            Dispatcher.BeginInvoke(UpdateAudiverisStatus, DispatcherPriority.Background);
+            return;
+        }
+        var now = DateTime.UtcNow;
+        var activeFamilies = _audiverisTimeoutFamilies
+            .Where(kv => kv.Value > now)
+            .OrderBy(kv => kv.Value)
+            .ToList();
+        var strikeCount = _audiverisTimeoutStrikes.Count(kv => kv.Value > 0);
+        var cooldownCount = activeFamilies.Count;
+        txtAudiverisStatus.Text = cooldownCount > 0 || strikeCount > 0
+            ? $"Cooldown: {cooldownCount} | Strikes: {strikeCount}"
+            : string.Empty;
+        if (cooldownCount > 0)
+        {
+            var lines = activeFamilies.Take(10).Select(kv =>
+            {
+                var key = kv.Key.Length > 60 ? kv.Key[^60..] : kv.Key;
+                var remaining = (kv.Value - now).TotalMinutes;
+                var strikes = _audiverisTimeoutStrikes.TryGetValue(kv.Key, out var s) ? s : 0;
+                return $"{key}  [{remaining:F0}min, s{strikes}]";
+            });
+            txtAudiverisStatus.ToolTip = "Familias en cooldown:\n" + string.Join("\n", lines) +
+                (cooldownCount > 10 ? $"\n... +{cooldownCount - 10} más" : string.Empty);
+        }
+        else
+        {
+            txtAudiverisStatus.ToolTip = null;
+        }
+    }
+
+    private sealed class AudiverisStrikeRecord
+    {
+        public int Strikes { get; set; }
+        public DateTime LastTimeoutUtc { get; set; }
+    }
+
+    private void LoadAudiverisTimeoutStrikes()
+    {
+        var decayHours = _audiverisStrikeDecayHours;
+        var now = DateTime.UtcNow;
+        var data = JsonStore.Load<Dictionary<string, AudiverisStrikeRecord>>(_audiverisTimeoutStrikesPath, []);
+        _audiverisTimeoutStrikes.Clear();
+        _audiverisStrikeLastUtc.Clear();
+        foreach (var kv in data)
+        {
+            if (string.IsNullOrWhiteSpace(kv.Key) || kv.Value is null || kv.Value.Strikes <= 0) continue;
+            // Decay: -1 strike per decayHours elapsed since last timeout
+            var hoursElapsed = (now - kv.Value.LastTimeoutUtc).TotalHours;
+            var decayed = (int)Math.Floor(hoursElapsed / decayHours);
+            var strikes = Math.Max(0, kv.Value.Strikes - decayed);
+            if (strikes <= 0) continue;
+            _audiverisTimeoutStrikes[kv.Key] = Math.Clamp(strikes, 1, 12);
+            _audiverisStrikeLastUtc[kv.Key] = kv.Value.LastTimeoutUtc;
+        }
+    }
+
+    private void SaveAudiverisTimeoutStrikes()
+    {
+        var snapshot = _audiverisTimeoutStrikes
+            .Where(kv => kv.Value > 0)
+            .ToDictionary(
+                kv => kv.Key,
+                kv => new AudiverisStrikeRecord
+                {
+                    Strikes = kv.Value,
+                    LastTimeoutUtc = _audiverisStrikeLastUtc.TryGetValue(kv.Key, out var ts) ? ts : DateTime.UtcNow
+                },
+                StringComparer.OrdinalIgnoreCase);
+        JsonStore.Save(_audiverisTimeoutStrikesPath, snapshot);
+    }
+
+    private bool IsAudiverisFamilyInTimeoutCooldown(string inputPath)
+    {
+        var familyKey = NormalizeAudiverisFamilyKey(inputPath);
+        if (!_audiverisTimeoutFamilies.TryGetValue(familyKey, out var expiresUtc))
+            return false;
+
+        if (expiresUtc > DateTime.UtcNow)
+            return true;
+
+        _audiverisTimeoutFamilies.TryRemove(familyKey, out _);
+        return false;
+    }
+
+    private void MarkAudiverisFamilyTimeout(string inputPath)
+    {
+        var familyKey = NormalizeAudiverisFamilyKey(inputPath);
+        var now = DateTime.UtcNow;
+
+        // Increment strikes first (cap at 12)
+        var newStrikes = _audiverisTimeoutStrikes.AddOrUpdate(
+            familyKey,
+            1,
+            (_, current) => Math.Clamp(current + 1, 1, 12));
+        _audiverisStrikeLastUtc[familyKey] = now;
+
+        // Exponential backoff: cooldownMinutes × 2^(strikes-1), capped at 7 days (10080 min)
+        var multiplier = Math.Min(Math.Pow(2, newStrikes - 1), 1024.0);
+        var cooldownMinutes = (long)Math.Min(_audiverisTimeoutCooldownMinutes * multiplier, 10080.0);
+        var expiresUtc = now.AddMinutes(cooldownMinutes);
+        _audiverisTimeoutFamilies.AddOrUpdate(
+            familyKey,
+            expiresUtc,
+            (_, current) => current > expiresUtc ? current : expiresUtc);
+    }
 
     private void BtnExportLibrary_Click(object sender, RoutedEventArgs e)
     {
@@ -3981,11 +3685,6 @@ public partial class MainWindow : Window, IAsyncDisposable
             txtDestFolder.Text = state.DestinationFolder;
         SelectComboItemByText(cmbSource, state.Source);
         SelectComboItemByText(cmbFilterSource, state.FilterSource);
-        if (state.EnableImlsp.HasValue)
-        {
-            _enableImlsp = state.EnableImlsp.Value;
-            chkEnableImlsp.IsChecked = _enableImlsp;
-        }
         if (state.EnableMutopia.HasValue)
         {
             _enableMutopia = state.EnableMutopia.Value;
@@ -3996,43 +3695,44 @@ public partial class MainWindow : Window, IAsyncDisposable
             _enableCpdl = state.EnableCpdl.Value;
             chkEnableCpdl.IsChecked = _enableCpdl;
         }
-        if (state.AutoResumeImlspPending.HasValue)
+        if (state.EnableMusopen.HasValue)
         {
-            _autoResumeImlspPending = state.AutoResumeImlspPending.Value;
-            chkAutoResumeImlspPending.IsChecked = _autoResumeImlspPending;
+            _enableMusopen = state.EnableMusopen.Value;
+            chkEnableMusopen.IsChecked = _enableMusopen;
         }
-        if (state.AutoContinuePendingBatches.HasValue)
+        // Restaurar sesión Musopen persistida
+        if (!string.IsNullOrWhiteSpace(state.MusopenCookieHeader))
         {
-            _autoContinuePendingBatches = state.AutoContinuePendingBatches.Value;
-            chkAutoContinuePendingBatches.IsChecked = _autoContinuePendingBatches;
-        }
-        if (state.AutoBatchLimit.HasValue)
-        {
-            _autoBatchLimit = Math.Max(0, state.AutoBatchLimit.Value);
-            txtBatchLimit.Text = _autoBatchLimit.ToString();
+            _musopen.SetSession(state.MusopenCookieHeader, state.MusopenUserAgent);
+            Log("🔐 Musopen sesión restaurada desde estado guardado.");
         }
         btnCpdlSession.IsEnabled = _enableCpdl;
+        btnMusopenSession.IsEnabled = _enableMusopen;
     }
 
     private void SaveUiState()
-        => JsonStore.Save(_uiStatePath, new UiState
+    {
+        var (muCookie, muUA) = _musopen.GetSessionHeaders();
+        JsonStore.Save(_uiStatePath, new UiState
         {
             DestinationFolder = txtDestFolder.Text,
             Source = (cmbSource.SelectedItem as ComboBoxItem)?.Content?.ToString(),
             FilterSource = (cmbFilterSource.SelectedItem as ComboBoxItem)?.Content?.ToString(),
-            EnableImlsp = _enableImlsp,
             EnableMutopia = _enableMutopia,
             EnableCpdl = _enableCpdl,
-            AutoResumeImlspPending = _autoResumeImlspPending,
-            AutoContinuePendingBatches = _autoContinuePendingBatches,
-            AutoBatchLimit = _autoBatchLimit
+            EnableMusopen = _enableMusopen,
+            MusopenCookieHeader = muCookie,
+            MusopenUserAgent = muUA
         });
+    }
 
     private static void SelectComboItemByText(System.Windows.Controls.ComboBox combo, string? text)
     {
         if (string.IsNullOrWhiteSpace(text)) return;
         if (string.Equals(text, "Ambas", StringComparison.OrdinalIgnoreCase))
             text = "Todas";
+        if (string.Equals(text, "IMSLP", StringComparison.OrdinalIgnoreCase))
+            text = "Mutopia";
         foreach (var item in combo.Items)
         {
             if (item is ComboBoxItem cbi &&
@@ -4093,6 +3793,7 @@ public partial class MainWindow : Window, IAsyncDisposable
             UserTag = i.UserTag,
             Genre = i.Genre,
             Instrument = i.Instrument,
+            License = i.License,
             Files = i.Files.Select(f => new PartituraFile
             {
                 Format = f.Format,

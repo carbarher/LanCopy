@@ -11,11 +11,13 @@ public sealed class CpdlSessionDialog : Window
 {
     private readonly WebView2 _webView;
     private readonly WpfButton _btnUseSession;
+    private readonly WpfButton _btnCheckCookies;
     private readonly TextBlock _txtStatus;
     private readonly string _siteLabel;
     private readonly string _startUrl;
     private readonly IReadOnlyList<string> _cookieScopeUrls;
     private readonly HashSet<string> _requiredCookieNames;
+    private readonly bool _allowFallbackWithoutRequiredCookies;
 
     public string? CookieHeader { get; private set; }
     public string? UserAgent { get; private set; }
@@ -29,12 +31,14 @@ public sealed class CpdlSessionDialog : Window
         string siteLabel,
         string startUrl,
         IReadOnlyList<string> cookieScopeUrls,
-        IReadOnlyList<string>? requiredCookieNames = null)
+        IReadOnlyList<string>? requiredCookieNames = null,
+        bool allowFallbackWithoutRequiredCookies = true)
     {
         _siteLabel = string.IsNullOrWhiteSpace(siteLabel) ? "Sitio" : siteLabel.Trim();
         _startUrl = startUrl;
         _cookieScopeUrls = cookieScopeUrls?.Count > 0 ? cookieScopeUrls : [startUrl];
         _requiredCookieNames = new HashSet<string>(requiredCookieNames ?? [], StringComparer.OrdinalIgnoreCase);
+        _allowFallbackWithoutRequiredCookies = allowFallbackWithoutRequiredCookies;
 
         Title = $"{_siteLabel} sesión interactiva";
         Width = 1024;
@@ -75,6 +79,15 @@ public sealed class CpdlSessionDialog : Window
             Orientation = System.Windows.Controls.Orientation.Horizontal,
             HorizontalAlignment = System.Windows.HorizontalAlignment.Right
         };
+        _btnCheckCookies = new WpfButton
+        {
+            Content = "Diagnóstico cookies",
+            Padding = new Thickness(10, 6, 10, 6),
+            Margin = new Thickness(0, 0, 6, 0),
+            IsEnabled = false
+        };
+        _btnCheckCookies.Click += BtnCheckCookies_Click;
+
         var btnCancel = new WpfButton
         {
             Content = "Cancelar",
@@ -91,6 +104,7 @@ public sealed class CpdlSessionDialog : Window
         };
         _btnUseSession.Click += BtnUseSession_Click;
 
+        buttons.Children.Add(_btnCheckCookies);
         buttons.Children.Add(btnCancel);
         buttons.Children.Add(_btnUseSession);
         DockPanel.SetDock(buttons, Dock.Right);
@@ -115,17 +129,21 @@ public sealed class CpdlSessionDialog : Window
 
             _webView.Source = new Uri(_startUrl);
             _btnUseSession.IsEnabled = true;
+            _btnCheckCookies.IsEnabled = true;
             _txtStatus.Text = "Completa el challenge/login en la web y pulsa 'Usar esta sesión'.";
         }
         catch (Exception ex)
         {
             _txtStatus.Text = $"Error WebView2: {ex.Message}";
             _btnUseSession.IsEnabled = false;
+            _btnCheckCookies.IsEnabled = false;
         }
     }
 
     private async void BtnUseSession_Click(object? sender, RoutedEventArgs e)
     {
+        _btnUseSession.IsEnabled = false;
+        _txtStatus.Text = "Leyendo cookies de sesión...";
         try
         {
             if (_webView.CoreWebView2 is null)
@@ -134,44 +152,41 @@ public sealed class CpdlSessionDialog : Window
                 return;
             }
 
-            var allCookies = new List<CoreWebView2Cookie>();
-            foreach (var scope in _cookieScopeUrls)
-            {
-                try
-                {
-                    var scoped = await _webView.CoreWebView2.CookieManager.GetCookiesAsync(scope);
-                    allCookies.AddRange(scoped);
-                }
-                catch
-                {
-                    // Ignorar scope inválido y continuar con los demás.
-                }
-            }
+            var (cookiePairs, cookiesFromManagerFailed, cookieManagerError) =
+                await CollectCookiesAsync();
 
-            var cookies = allCookies
-                .Where(c => !string.IsNullOrWhiteSpace(c.Name) && !string.IsNullOrWhiteSpace(c.Value))
-                .GroupBy(c => c.Name, StringComparer.OrdinalIgnoreCase)
-                .Select(g => g.First())
-                .ToList();
-
-            var pairs = cookies
-                .Select(c => $"{c.Name}={c.Value}")
+            var pairs = cookiePairs
+                .Select(kv => $"{kv.Key}={kv.Value}")
                 .ToList();
 
             if (pairs.Count == 0)
             {
-                _txtStatus.Text = "Sin cookies de sesión aún. Completa challenge y reintenta.";
+                _txtStatus.Text = cookiesFromManagerFailed && !string.IsNullOrWhiteSpace(cookieManagerError)
+                    ? $"Sin cookies de sesión (WebView2): {cookieManagerError}"
+                    : "Sin cookies de sesión aún. Completa challenge y reintenta.";
                 return;
             }
 
             if (_requiredCookieNames.Count > 0)
             {
-                var names = cookies.Select(c => c.Name).ToHashSet(StringComparer.OrdinalIgnoreCase);
+                var names = cookiePairs.Keys.ToHashSet(StringComparer.OrdinalIgnoreCase);
                 var hasRequired = _requiredCookieNames.Any(names.Contains);
                 if (!hasRequired)
                 {
-                    _txtStatus.Text = $"Sesión incompleta: falta cookie requerida ({string.Join(", ", _requiredCookieNames)}). Completa challenge y reintenta.";
-                    return;
+                    var title = await TryGetDocumentTitleAsync().WaitAsync(TimeSpan.FromSeconds(2));
+                    if (!_allowFallbackWithoutRequiredCookies || IsLikelyChallengeTitle(title))
+                    {
+                        var requiredState = BuildRequiredCookieState(cookiePairs);
+                        _txtStatus.Text = $"Sesión incompleta: falta cookie requerida ({requiredState}). Completa challenge y reintenta.";
+                        return;
+                    }
+
+                    // Si no estamos en challenge y sí hay cookies, permitir continuar.
+                    if (cookiePairs.Count == 0)
+                    {
+                        _txtStatus.Text = $"Sesión incompleta: no se pudieron leer cookies válidas (title: {title}).";
+                        return;
+                    }
                 }
             }
 
@@ -194,5 +209,199 @@ public sealed class CpdlSessionDialog : Window
         {
             _txtStatus.Text = $"No se pudo leer sesión: {ex.Message}";
         }
+        finally
+        {
+            _btnUseSession.IsEnabled = true;
+        }
+    }
+
+    private async void BtnCheckCookies_Click(object? sender, RoutedEventArgs e)
+    {
+        _btnCheckCookies.IsEnabled = false;
+        try
+        {
+            if (_webView.CoreWebView2 is null)
+            {
+                _txtStatus.Text = "WebView2 no inicializado.";
+                return;
+            }
+
+            var (cookiePairs, _, _) = await CollectCookiesAsync();
+            var title = await TryGetDocumentTitleAsync().WaitAsync(TimeSpan.FromSeconds(2));
+            var requiredState = BuildRequiredCookieState(cookiePairs);
+            _txtStatus.Text = $"Cookies: {cookiePairs.Count}. Requeridas: {requiredState}. Título: {title}";
+        }
+        catch (Exception ex)
+        {
+            _txtStatus.Text = $"Error diagnóstico cookies: {ex.Message}";
+        }
+        finally
+        {
+            _btnCheckCookies.IsEnabled = true;
+        }
+    }
+
+    private async Task<(Dictionary<string, string> cookies, bool managerFailed, string? managerError)> CollectCookiesAsync()
+    {
+        var allCookies = new List<CoreWebView2Cookie>();
+        var cookiesFromManagerFailed = false;
+        string? cookieManagerError = null;
+        foreach (var scope in _cookieScopeUrls)
+        {
+            try
+            {
+                var scoped = await _webView.CoreWebView2!.CookieManager
+                    .GetCookiesAsync(scope)
+                    .WaitAsync(TimeSpan.FromSeconds(8));
+                allCookies.AddRange(scoped);
+            }
+            catch (Exception ex)
+            {
+                // Algunos runtimes WebView2 viejos fallan al materializar CoreWebView2Cookie.
+                // Seguimos con fallback por DevTools para mantener compatibilidad.
+                cookiesFromManagerFailed = true;
+                cookieManagerError = ex.Message;
+            }
+        }
+
+        var cookiePairs = allCookies
+            .Where(c => !string.IsNullOrWhiteSpace(c.Name) && !string.IsNullOrWhiteSpace(c.Value))
+            .GroupBy(c => c.Name, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(g => g.Key, g => g.First().Value, StringComparer.OrdinalIgnoreCase);
+
+        var devToolsCookies = await TryGetCookiesViaDevToolsAsync(_cookieScopeUrls).WaitAsync(TimeSpan.FromSeconds(8));
+        foreach (var (name, value) in devToolsCookies)
+            cookiePairs[name] = value;
+
+        // Fallback extra: cookies no-HttpOnly visibles en document.cookie.
+        var documentCookies = await TryGetCookiesFromDocumentAsync().WaitAsync(TimeSpan.FromSeconds(3));
+        foreach (var (name, value) in documentCookies)
+            cookiePairs[name] = value;
+
+        return (cookiePairs, cookiesFromManagerFailed, cookieManagerError);
+    }
+
+    private string BuildRequiredCookieState(IReadOnlyDictionary<string, string> cookiePairs)
+    {
+        if (_requiredCookieNames.Count == 0)
+            return "(sin requeridas)";
+
+        var found = new List<string>();
+        var missing = new List<string>();
+        foreach (var req in _requiredCookieNames)
+        {
+            if (cookiePairs.ContainsKey(req)) found.Add(req);
+            else missing.Add(req);
+        }
+
+        return $"ok:[{string.Join(", ", found)}] faltan:[{string.Join(", ", missing)}]";
+    }
+
+    private async Task<List<(string Name, string Value)>> TryGetCookiesFromDocumentAsync()
+    {
+        var result = new List<(string Name, string Value)>();
+        if (_webView.CoreWebView2 is null)
+            return result;
+
+        try
+        {
+            var cookieJson = await _webView.CoreWebView2.ExecuteScriptAsync("document.cookie");
+            var cookieStr = JsonSerializer.Deserialize<string>(cookieJson) ?? string.Empty;
+            if (string.IsNullOrWhiteSpace(cookieStr))
+                return result;
+
+            var segments = cookieStr.Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+            foreach (var segment in segments)
+            {
+                var idx = segment.IndexOf('=');
+                if (idx <= 0)
+                    continue;
+
+                var name = segment[..idx].Trim();
+                var value = segment[(idx + 1)..].Trim();
+                if (string.IsNullOrWhiteSpace(name) || string.IsNullOrWhiteSpace(value))
+                    continue;
+
+                result.Add((name, value));
+            }
+        }
+        catch
+        {
+            // Best-effort.
+        }
+
+        return result;
+    }
+
+    private async Task<string> TryGetDocumentTitleAsync()
+    {
+        try
+        {
+            if (_webView.CoreWebView2 is null)
+                return string.Empty;
+
+            var titleJson = await _webView.CoreWebView2.ExecuteScriptAsync("document.title");
+            return JsonSerializer.Deserialize<string>(titleJson) ?? string.Empty;
+        }
+        catch
+        {
+            return string.Empty;
+        }
+    }
+
+    private static bool IsLikelyChallengeTitle(string? title)
+    {
+        if (string.IsNullOrWhiteSpace(title))
+            return true;
+
+        return title.Contains("Bot Check", StringComparison.OrdinalIgnoreCase)
+            || title.Contains("Just a moment", StringComparison.OrdinalIgnoreCase)
+            || title.Contains("Attention Required", StringComparison.OrdinalIgnoreCase)
+            || title.Contains("Access denied", StringComparison.OrdinalIgnoreCase)
+            || title.Contains("Checking your browser", StringComparison.OrdinalIgnoreCase)
+            || title.Contains("Captcha", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private async Task<List<(string Name, string Value)>> TryGetCookiesViaDevToolsAsync(IEnumerable<string> scopeUrls)
+    {
+        var result = new List<(string Name, string Value)>();
+        if (_webView.CoreWebView2 is null)
+            return result;
+
+        try
+        {
+            var urls = scopeUrls
+                .Where(u => Uri.TryCreate(u, UriKind.Absolute, out _))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToArray();
+
+            if (urls.Length == 0)
+                return result;
+
+            var payload = JsonSerializer.Serialize(new { urls });
+            var json = await _webView.CoreWebView2.CallDevToolsProtocolMethodAsync("Network.getCookies", payload);
+            using var doc = JsonDocument.Parse(json);
+            if (!doc.RootElement.TryGetProperty("cookies", out var cookies) || cookies.ValueKind != JsonValueKind.Array)
+                return result;
+
+            foreach (var cookie in cookies.EnumerateArray())
+            {
+                if (!cookie.TryGetProperty("name", out var nameProp) || !cookie.TryGetProperty("value", out var valueProp))
+                    continue;
+
+                var name = nameProp.GetString();
+                var value = valueProp.GetString();
+                if (string.IsNullOrWhiteSpace(name) || string.IsNullOrWhiteSpace(value))
+                    continue;
+
+                result.Add((name, value));
+            }
+        }
+        catch
+        {
+            // Fallback best-effort.
+        }
+
+        return result;
     }
 }

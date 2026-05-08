@@ -18,11 +18,12 @@ public class PartituraItem : INotifyPropertyChanged
     private string _composer = string.Empty;
     private string _pageUrl = string.Empty;
     private bool _isSelected = true;
-    private string _source = "IMSLP";
+    private string _source = "Mutopia";
     private string _userTag = string.Empty;
     private int _sourcePageId;
     private string _genre = string.Empty;
     private string _instrument = string.Empty;
+    private string _license = string.Empty;
 
     public string Title { get => _title; set => Set(ref _title, value); }
     public string Composer { get => _composer; set => Set(ref _composer, value); }
@@ -33,6 +34,7 @@ public class PartituraItem : INotifyPropertyChanged
     public int SourcePageId { get => _sourcePageId; set => Set(ref _sourcePageId, value); }
     public string Genre { get => _genre; set => Set(ref _genre, value); }
     public string Instrument { get => _instrument; set => Set(ref _instrument, value); }
+    public string License { get => _license; set => Set(ref _license, value); }
 
     public List<PartituraFile> Files { get; set; } = new();
 

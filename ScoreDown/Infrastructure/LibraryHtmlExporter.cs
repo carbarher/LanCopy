@@ -13,7 +13,6 @@ public static class LibraryHtmlExporter
 
   private static string SourceBadge(string source) => source switch
   {
-    "IMSLP" => "<span class='badge badge-imslp'>IMSLP</span>",
     "CPDL" => "<span class='badge badge-cpdl'>CPDL</span>",
     "Mutopia" => "<span class='badge badge-mutopia'>Mutopia</span>",
     _ => $"<span class='badge badge-other'>{EscHtml(source)}</span>",
@@ -218,7 +217,6 @@ public static class LibraryHtmlExporter
       display: inline-block; border-radius: 4px; font-size: .68rem;
       font-weight: 700; padding: .1rem .38rem; letter-spacing: .03em;
     }
-    .badge-imslp   { background: #d4edff; color: #0059b3; }
     .badge-cpdl    { background: #d4f5e4; color: #1a7a42; }
     .badge-mutopia { background: #fde8ff; color: #7a1aa8; }
     .badge-other   { background: #eee; color: #555; }

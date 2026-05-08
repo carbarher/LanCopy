@@ -42,3 +42,7 @@ _flat_build/
 # LanCopy local artifacts
 LanCopy/publish/
 LanCopy/write_*.py
+
+# Audiveris probe output
+_audiveris_probe/
+_audiveris_single/
