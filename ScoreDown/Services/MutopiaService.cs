@@ -170,6 +170,10 @@ public class MutopiaService
                         files.Add(new PartituraFile { Format = "PDF", DownloadUrl = href, FileName = SanitizeFileName(Path.GetFileName(href)) });
                     else if (href.EndsWith(".mid", StringComparison.OrdinalIgnoreCase))
                         files.Add(new PartituraFile { Format = "MIDI", DownloadUrl = href, FileName = SanitizeFileName(Path.GetFileName(href)) });
+                    else if (href.EndsWith(".mxl", StringComparison.OrdinalIgnoreCase))
+                        files.Add(new PartituraFile { Format = "MXL", DownloadUrl = href, FileName = SanitizeFileName(Path.GetFileName(href)) });
+                    else if (href.EndsWith(".xml", StringComparison.OrdinalIgnoreCase))
+                        files.Add(new PartituraFile { Format = "XML", DownloadUrl = href, FileName = SanitizeFileName(Path.GetFileName(href)) });
                 }
             }
 

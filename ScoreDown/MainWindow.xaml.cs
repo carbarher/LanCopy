@@ -4,6 +4,7 @@ using ScoreDown.Services;
 using System.Collections.Concurrent;
 using System.Collections.ObjectModel;
 using System.ComponentModel;
+using System.Diagnostics;
 using System.IO;
 using System.Text.Json;
 using System.Windows;
@@ -42,6 +43,7 @@ public partial class MainWindow : Window, IAsyncDisposable
     private readonly MutopiaService _mutopia = new();
     private readonly CpdlService _cpdl = new();
     private readonly MusopenService _musopen = new();
+    private readonly OpenScoreService _openScore = new();
     private readonly DownloadService _downloader = new();
 
     private readonly ObservableCollection<PartituraItem> _allResults = new();
@@ -92,6 +94,12 @@ public partial class MainWindow : Window, IAsyncDisposable
     private readonly string _audiverisTimeoutStrikesPath = Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
         "ScoreDown", "audiveris-timeout-strikes.json");
+    private readonly string _audiverisTelemetryPath = Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+        "ScoreDown", "audiveris-timeout-telemetry.json");
+    private readonly string _oemerTelemetryPath = Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+        "ScoreDown", "oemer-timeout-telemetry.json");
     private bool _enableMutopia = ReadFeatureFlag("SCOREDOWN_ENABLE_MUTOPIA", true);
     private bool _enableCpdl = ReadFeatureFlag("SCOREDOWN_ENABLE_CPDL", false);
     private bool _enableMusopen = ReadFeatureFlag("SCOREDOWN_ENABLE_MUSOPEN", true);
@@ -115,22 +123,58 @@ public partial class MainWindow : Window, IAsyncDisposable
     // Cache de lista merged para sugerencias de compositor — invalida cuando cambia _knownComposersCache
     private List<string>? _composerSuggestionsPool;
     private int _composerPoolVersion;  // inc al añadir a _knownComposersCache
-    private static readonly string[] AudiverisInputExtensions = [".pdf", ".png", ".jpg", ".jpeg", ".tif", ".tiff", ".bmp"];
-    private static readonly string[] AudiverisOutputExtensions = [".mxl", ".xml", ".mscz", ".mscx"];
+    private static readonly HashSet<string> AudiverisInputExtensions = new(StringComparer.OrdinalIgnoreCase) { ".pdf", ".png", ".jpg", ".jpeg", ".tif", ".tiff", ".bmp" };
+    private static readonly HashSet<string> AudiverisOutputExtensions = new(StringComparer.OrdinalIgnoreCase) { ".mxl", ".xml", ".musicxml", ".mscz", ".mscx" };
     private readonly int _audiverisBatchSize = ReadFeatureFlagInt("SCOREDOWN_AUDIVERIS_BATCH", 100, 1, 10000);
     private readonly int _audiverisTimeoutSeconds = ReadFeatureFlagInt("SCOREDOWN_AUDIVERIS_TIMEOUT_SEC", 300, 30, 7200);
-    private readonly int _audiverisParallel = ReadFeatureFlagInt("SCOREDOWN_AUDIVERIS_PARALLEL", 2, 1, 8);
+    private readonly int _audiverisParallel = ReadFeatureFlagInt("SCOREDOWN_AUDIVERIS_PARALLEL", 3, 1, 8);
     private readonly int _audiverisPdfTimeoutMinSeconds = ReadFeatureFlagInt("SCOREDOWN_AUDIVERIS_TIMEOUT_PDF_MIN_SEC", 420, 60, 7200);
     private readonly int _audiverisPdfTimeoutPerMbSeconds = ReadFeatureFlagInt("SCOREDOWN_AUDIVERIS_TIMEOUT_PDF_PER_MB_SEC", 12, 0, 300);
+    private readonly int _audiverisPdfTimeoutPerPageSeconds = ReadFeatureFlagInt("SCOREDOWN_AUDIVERIS_TIMEOUT_PDF_PER_PAGE_SEC", 10, 0, 300);
     private readonly int _audiverisPdfTimeoutMaxSeconds = ReadFeatureFlagInt("SCOREDOWN_AUDIVERIS_TIMEOUT_PDF_MAX_SEC", 1800, 120, 10800);
     private readonly int _audiverisTimeoutStrikeBoostSeconds = ReadFeatureFlagInt("SCOREDOWN_AUDIVERIS_TIMEOUT_STRIKE_BOOST_SEC", 60, 0, 600);
     private readonly int _audiverisTimeoutCooldownMinutes = ReadFeatureFlagInt("SCOREDOWN_AUDIVERIS_TIMEOUT_COOLDOWN_MIN", 720, 10, 10080);
     private readonly int _audiverisStrikeDecayHours = ReadFeatureFlagInt("SCOREDOWN_AUDIVERIS_STRIKE_DECAY_HOURS", 48, 1, 8760);
-    private readonly HashSet<string> _audiverisKnownPageFailures = new(StringComparer.OrdinalIgnoreCase);
+    private readonly ConcurrentDictionary<string, byte> _audiverisKnownPageFailures = new(StringComparer.OrdinalIgnoreCase);
+    private bool _audiverisKnownPageFailuresDirty;
     private readonly ConcurrentDictionary<string, DateTime> _audiverisTimeoutFamilies = new(StringComparer.OrdinalIgnoreCase);
     private readonly ConcurrentDictionary<string, int> _audiverisTimeoutStrikes = new(StringComparer.OrdinalIgnoreCase);
     private readonly ConcurrentDictionary<string, DateTime> _audiverisStrikeLastUtc = new(StringComparer.OrdinalIgnoreCase);
+    private bool _audiverisTimeoutFamiliesDirty;
+    private bool _audiverisTimeoutStrikesDirty;
     private volatile bool _audiverisRunning;
+    private CancellationTokenSource? _audiverisCts;
+
+    // ── oemer ──────────────────────────────────────────────────────────────
+    private readonly ObservableCollection<AudiverisLogItem> _oemerLog = [];
+    private readonly string _oemerPageFailuresPath = Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+        "ScoreDown", "oemer-page-failures.json");
+    private readonly string _oemerTimeoutFamiliesPath = Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+        "ScoreDown", "oemer-timeout-families.json");
+    private readonly string _oemerTimeoutStrikesPath = Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+        "ScoreDown", "oemer-timeout-strikes.json");
+    private readonly int _oemerBatchSize = ReadFeatureFlagInt("SCOREDOWN_OEMER_BATCH", 100, 1, 10000);
+    private readonly int _oemerTimeoutSeconds = ReadFeatureFlagInt("SCOREDOWN_OEMER_TIMEOUT_SEC", 180, 30, 7200);
+    private readonly int _oemerParallel = ReadFeatureFlagInt("SCOREDOWN_OEMER_PARALLEL", 4, 1, 8);
+    private readonly int _oemerPdfTimeoutMinSeconds = ReadFeatureFlagInt("SCOREDOWN_OEMER_TIMEOUT_PDF_MIN_SEC", 600, 60, 86400);
+    private readonly int _oemerPdfTimeoutPerMbSeconds = ReadFeatureFlagInt("SCOREDOWN_OEMER_TIMEOUT_PDF_PER_MB_SEC", 30, 0, 600);
+    private readonly int _oemerPdfTimeoutPerPageSeconds = ReadFeatureFlagInt("SCOREDOWN_OEMER_TIMEOUT_PDF_PER_PAGE_SEC", 15, 0, 300);
+    private readonly int _oemerPdfTimeoutMaxSeconds = ReadFeatureFlagInt("SCOREDOWN_OEMER_TIMEOUT_PDF_MAX_SEC", 3600, 120, 86400);
+    private readonly int _oemerTimeoutStrikeBoostSeconds = ReadFeatureFlagInt("SCOREDOWN_OEMER_TIMEOUT_STRIKE_BOOST_SEC", 120, 0, 1200);
+    private readonly int _oemerTimeoutCooldownMinutes = ReadFeatureFlagInt("SCOREDOWN_OEMER_TIMEOUT_COOLDOWN_MIN", 720, 10, 10080);
+    private readonly int _oemerStrikeDecayHours = ReadFeatureFlagInt("SCOREDOWN_OEMER_STRIKE_DECAY_HOURS", 48, 1, 8760);
+    private readonly ConcurrentDictionary<string, byte> _oemerKnownPageFailures = new(StringComparer.OrdinalIgnoreCase);
+    private bool _oemerKnownPageFailuresDirty;
+    private readonly ConcurrentDictionary<string, DateTime> _oemerTimeoutFamilies = new(StringComparer.OrdinalIgnoreCase);
+    private readonly ConcurrentDictionary<string, int> _oemerTimeoutStrikes = new(StringComparer.OrdinalIgnoreCase);
+    private readonly ConcurrentDictionary<string, DateTime> _oemerStrikeLastUtc = new(StringComparer.OrdinalIgnoreCase);
+    private bool _oemerTimeoutFamiliesDirty;
+    private bool _oemerTimeoutStrikesDirty;
+    private volatile bool _oemerRunning;
+    private CancellationTokenSource? _oemerCts;
 
     private PartituraItem? _contextItem;  // item bajo clic derecho
     private readonly ConcurrentDictionary<string, byte> _pausedQueueFiles = new(StringComparer.OrdinalIgnoreCase);
@@ -140,6 +184,21 @@ public partial class MainWindow : Window, IAsyncDisposable
     private GlobalCircuitBreaker? _circuitBreaker;
     private int _cleanupDone;
     private int _shutdownRequested;
+    // ── Dir-scan cache (reutiliza escaneo raw entre SafeEnumerateFiles y BuildMusicScoreSiblingSet) ──
+    private readonly Dictionary<string, (DateTime Time, List<string> Files)> _rawFilesCache = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, (DateTime Time, HashSet<string> Set)> _siblingSetCache = new(StringComparer.OrdinalIgnoreCase);
+    private static readonly TimeSpan _rawFilesCacheTtl = TimeSpan.FromSeconds(60);
+    private static readonly System.Text.RegularExpressions.Regex _pageSuffixRegex =
+        new(@"^(.+)_p(\d{1,6})$", System.Text.RegularExpressions.RegexOptions.Compiled);
+    private static readonly object _pdfRendererCacheLock = new();
+    private static bool _pdfRendererCacheInitialized;
+    private static (string Kind, string Exe)? _pdfRendererCache;
+    private static readonly object _oemerCommandCacheLock = new();
+    private static bool _oemerCommandCacheInitialized;
+    private static (string Exe, string[] PrefixArgs)? _oemerCommandCache;
+    private static readonly object _audiverisExeCacheLock = new();
+    private static bool _audiverisExeCacheInitialized;
+    private static string? _audiverisExeCache;
     // ── Tray / toast ─────────────────────────────────────────────────────
     // R6: NotifyIcon initialized in ctor (after InitializeComponent) to avoid pre-UI GDI access.
     private WinForms.NotifyIcon _notifyIcon = null!;
@@ -196,6 +255,11 @@ public partial class MainWindow : Window, IAsyncDisposable
         lstQueue.ItemsSource = _downloadQueue;
         lstDownloadHistory.ItemsSource = _downloadHistory;
         lstAudiverisLog.ItemsSource = _audiverisLog;
+        LoadOemerPageFailures();
+        LoadOemerTimeoutFamilies();
+        LoadOemerTimeoutStrikes();
+        UpdateOemerStatus();
+        lstOemerLog.ItemsSource = _oemerLog;
         UpdateSessionStats();
         UpdateSourceDashboard();
     }
@@ -245,6 +309,9 @@ public partial class MainWindow : Window, IAsyncDisposable
         SaveAudiverisPageFailures();
         SaveAudiverisTimeoutFamilies();
         SaveAudiverisTimeoutStrikes();
+        SaveOemerPageFailures();
+        SaveOemerTimeoutFamilies();
+        SaveOemerTimeoutStrikes();
 
         // Production cleanup: close marker + retention cleanup
         _fileLogger?.Log("=== ScoreDown Closed ===");
@@ -629,7 +696,8 @@ public partial class MainWindow : Window, IAsyncDisposable
                 UpdateQueue(r.file, r.state, r.percent, r.speedKBps);
             });
 
-            var result = await _downloader.DownloadFileAsync(queueItem.SourceFile, subFolder, progress, file => _pausedQueueFiles.ContainsKey(file.DownloadUrl), _downloadCts?.Token ?? default);
+            var cts = _downloadCts;
+            var result = await _downloader.DownloadFileAsync(queueItem.SourceFile, subFolder, progress, file => _pausedQueueFiles.ContainsKey(file.DownloadUrl), cts?.Token ?? default);
             if (result.Success)
             {
                 _sessionDownloads += result.Skipped ? 0 : 1;
@@ -664,7 +732,14 @@ public partial class MainWindow : Window, IAsyncDisposable
         _pausedQueueFiles.TryRemove(queueItem.SourceFile.DownloadUrl, out _);
         queueItem.Status = "Reanudando";
         lstQueue.Items.Refresh();
-        await RetryQueueItemAsync(queueItem);
+        try
+        {
+            await RetryQueueItemAsync(queueItem);
+        }
+        catch (Exception ex)
+        {
+            Log($"❌ Error reanudando {queueItem.FileName}: {ex.Message}");
+        }
     }
 
     private async Task RetryQueueItemAsync(DownloadQueueItem queueItem)
@@ -683,7 +758,8 @@ public partial class MainWindow : Window, IAsyncDisposable
             UpdateQueue(r.file, r.state, r.percent, r.speedKBps);
         });
 
-        var result = await _downloader.DownloadFileAsync(queueItem.SourceFile, subFolder, progress, null, _downloadCts?.Token ?? default);
+        var cts = _downloadCts;
+        var result = await _downloader.DownloadFileAsync(queueItem.SourceFile, subFolder, progress, null, cts?.Token ?? default);
         if (result.Success)
             RecordDownload(queueItem.SourceItem, queueItem.SourceFile, result, queueItem.SourceItem.Source);
     }
@@ -966,6 +1042,7 @@ public partial class MainWindow : Window, IAsyncDisposable
             downloadable = await ApplyBulkPreflightAsync(downloadable, progress, ct).ConfigureAwait(false);
             if (downloadable.Count == 0)
             {
+                _circuitBreaker?.RecordSuccess(); // Fase 1 completó OK; preflight descartó fase 2
                 Log("⚠️ Preflight descartó todas las fuentes para descarga automática (baja disponibilidad de archivos)");
                 return;
             }
@@ -1599,6 +1676,11 @@ public partial class MainWindow : Window, IAsyncDisposable
                 results = await FetchWithCacheAsync("Musopen", query,
                     (p, token) => _musopen.SearchAsync(query, p, token), progress, ct);
             }
+            else if (source == "OpenScore")
+            {
+                results = await FetchWithCacheAsync("OpenScore", query,
+                    (p, token) => _openScore.SearchAsync(query, p, token), progress, ct);
+            }
             else if (source == "Offline")
             {
                 progress.Report("🔍 Buscando en biblioteca offline...");
@@ -1638,11 +1720,14 @@ public partial class MainWindow : Window, IAsyncDisposable
                     ? SafeSearchAsync("Musopen", () =>
                         FetchWithCacheAsync("Musopen", query, (p, token) => _musopen.SearchAsync(query, p, token), null, ct))
                     : Task.FromResult<List<PartituraItem>>([]);
+                var openScoreTask = SafeSearchAsync("OpenScore", () =>
+                    FetchWithCacheAsync("OpenScore", query, (p, token) => _openScore.SearchAsync(query, p, token), null, ct));
 
-                var all = await Task.WhenAll(mutopiaTask, cpdlTask, musopenTask);
+                var all = await Task.WhenAll(mutopiaTask, cpdlTask, musopenTask, openScoreTask);
                 results.AddRange(all[0]);
                 results.AddRange(all[1]);
                 results.AddRange(all[2]);
+                results.AddRange(all[3]);
             }
 
             foreach (var item in results)
@@ -1795,6 +1880,12 @@ public partial class MainWindow : Window, IAsyncDisposable
         UpdateSourceDashboard();
     }
 
+    private void ChkAutoConvert_Changed(object sender, RoutedEventArgs e)
+    {
+        if (!IsInitialized) return;
+        SaveUiState();
+    }
+
     private void ChkSelectAll_Changed(object sender, RoutedEventArgs e)
     {
         if (!IsInitialized) return;
@@ -1808,6 +1899,7 @@ public partial class MainWindow : Window, IAsyncDisposable
     {
         bool onlyPdf = chkOnlyPdf.IsChecked == true;
         bool onlyMidi = chkOnlyMidi.IsChecked == true;
+        bool onlyXml = chkOnlyXml.IsChecked == true;
         var tagFilter = txtTagFilter.Text?.Trim() ?? string.Empty;
         var titleQuery = txtTitleSearch.Text?.Trim() ?? string.Empty;
         var composerQuery = txtComposerSearch.Text?.Trim() ?? string.Empty;
@@ -1822,20 +1914,20 @@ public partial class MainWindow : Window, IAsyncDisposable
             if (!string.IsNullOrWhiteSpace(tagFilter) && !item.UserTag.Contains(tagFilter, StringComparison.OrdinalIgnoreCase)) return false;
             if (!string.IsNullOrWhiteSpace(titleQuery) && !item.Title.Contains(titleQuery, StringComparison.OrdinalIgnoreCase)) return false;
             if (!string.IsNullOrWhiteSpace(composerQuery) && !item.Composer.Contains(composerQuery, StringComparison.OrdinalIgnoreCase)) return false;
-            if (onlyPdf || onlyMidi)
+            if (onlyPdf || onlyMidi || onlyXml)
             {
                 var hasPdf = item.Files.Any(f => string.Equals(f.Format, "PDF", StringComparison.OrdinalIgnoreCase));
                 var hasMidi = item.Files.Any(f => string.Equals(f.Format, "MIDI", StringComparison.OrdinalIgnoreCase));
-                var formatOk = onlyPdf && onlyMidi ? (hasPdf || hasMidi)
-                    : onlyPdf ? hasPdf
-                    : hasMidi;
+                var hasXml = item.Files.Any(f => f.Format is "XML" or "MXL");
+                bool formatOk = (onlyPdf && hasPdf) || (onlyMidi && hasMidi) || (onlyXml && hasXml);
                 if (!formatOk) return false;
             }
             return true;
         };
         _resultsView.View.Filter = filterPredicate;
-
-        _filtered = _allResults.Where(i => filterPredicate(i)).ToList();
+        // View.Filter refreshes synchronously; enumerate the already-filtered view
+        // instead of re-evaluating the predicate over _allResults a second time.
+        _filtered = _resultsView.View.Cast<PartituraItem>().ToList();
         txtResultCount.Text = $"{_filtered.Count} obras";
         UpdateDownloadButton();
     }
@@ -2044,6 +2136,7 @@ public partial class MainWindow : Window, IAsyncDisposable
         // Construir lista de trabajos: todas las obras seleccionadas, todos sus archivos
         bool onlyPdf = chkOnlyPdf.IsChecked == true;
         bool onlyMidi = chkOnlyMidi.IsChecked == true;
+        bool onlyXml = chkOnlyXml.IsChecked == true;
 
         var selectedItems = _filtered.Where(i => i.IsSelected).ToList();
         var missingFilesItems = selectedItems
@@ -2091,12 +2184,11 @@ public partial class MainWindow : Window, IAsyncDisposable
             .SelectMany(i => i.Files
                 .Where(f =>
                 {
-                    if (!onlyPdf && !onlyMidi) return true;
+                    if (!onlyPdf && !onlyMidi && !onlyXml) return true;
                     var isPdf = string.Equals(f.Format, "PDF", StringComparison.OrdinalIgnoreCase);
                     var isMidi = string.Equals(f.Format, "MIDI", StringComparison.OrdinalIgnoreCase);
-                    return onlyPdf && onlyMidi ? (isPdf || isMidi)
-                        : onlyPdf ? isPdf
-                        : isMidi;
+                    var isXml = f.Format is "XML" or "MXL";
+                    return (onlyPdf && isPdf) || (onlyMidi && isMidi) || (onlyXml && isXml);
                 })
                 .Select(f => (item: i, file: f)))
             .ToList();
@@ -2185,6 +2277,8 @@ public partial class MainWindow : Window, IAsyncDisposable
 
             if (chkAutoConvertAudiveris.IsChecked == true && result.Ok > 0 && !ct.IsCancellationRequested)
                 await AutoConvertWithAudiverisAsync(destFolder);
+            if (chkAutoConvertOemer.IsChecked == true && result.Ok > 0 && !ct.IsCancellationRequested)
+                await AutoConvertWithOemerAsync(destFolder);
         }
         catch (OperationCanceledException)
         {
@@ -2215,6 +2309,8 @@ public partial class MainWindow : Window, IAsyncDisposable
             btnConvertAudiveris.IsEnabled = !running && !_audiverisRunning;
         if (btnGenerateVideo != null)
             btnGenerateVideo.IsEnabled = !running && !_videoRunning;
+        if (btnCancelVideo != null)
+            btnCancelVideo.IsEnabled = false;
     }
 
     private async Task AutoConvertWithAudiverisAsync(string destFolder)
@@ -2228,16 +2324,14 @@ public partial class MainWindow : Window, IAsyncDisposable
             return;
         }
 
-        var pendingBeforeCooldown = SafeEnumerateFiles(destFolder, f => AudiverisInputExtensions.Contains(Path.GetExtension(f), StringComparer.OrdinalIgnoreCase) && !HasMusicScoreSibling(f))
-            .Where(f => !_audiverisKnownPageFailures.Contains(f))
+        var siblingSet = BuildMusicScoreSiblingSetCached(destFolder);
+        var pendingBeforeCooldown = SafeEnumerateFilesCached(destFolder, f => AudiverisInputExtensions.Contains(Path.GetExtension(f)) && !HasMusicScoreSiblingFast(f, siblingSet))
+            .Where(f => !_audiverisKnownPageFailures.ContainsKey(f))
             .ToList();
-        var pending = pendingBeforeCooldown
-            .Where(f => !IsAudiverisFamilyInTimeoutCooldown(f))
-            .ToList();
-        var skippedCooldownFamilies = pendingBeforeCooldown.Count - pending.Count;
+        var pending = FilterByCooldown(pendingBeforeCooldown, IsAudiverisFamilyInTimeoutCooldown, out var skippedCooldownFamilies, out var skippedCooldownFamilyKeys);
 
         if (skippedCooldownFamilies > 0)
-            Log($"ℹ️ Auto-Audiveris: {skippedCooldownFamilies} archivo(s) omitidos por cooldown de timeout activo.");
+            Log($"ℹ️ Auto-Audiveris: {skippedCooldownFamilies} archivo(s) omitidos por cooldown de timeout activo ({skippedCooldownFamilyKeys.Count} familia(s)){FormatTopCooldownFamilies(skippedCooldownFamilyKeys, _audiverisTimeoutFamilies)}.");
 
         if (pending.Count == 0)
         {
@@ -2245,96 +2339,24 @@ public partial class MainWindow : Window, IAsyncDisposable
             return;
         }
 
-        var familyPending = SelectFirstPerAudiverisFamily(pending, out var skippedFamilyDuplicates);
+        var familyPending = SelectFirstPerAudiverisFamily(pending, out var skippedFamilyDuplicates, out var familySizes);
         if (skippedFamilyDuplicates > 0)
             Log($"ℹ️ Auto-Audiveris: {skippedFamilyDuplicates} archivo(s) omitidos por duplicado de familia (a4/let).");
 
         Log($"🎼 Auto-convertir: procesando {familyPending.Count} archivo(s) con Audiveris...");
+        _audiverisLog.Clear();
         _audiverisRunning = true;
+        _audiverisCts = new CancellationTokenSource();
         if (btnConvertAudiveris != null) btnConvertAudiveris.IsEnabled = false;
+        if (btnCancelAudiveris != null) btnCancelAudiveris.IsEnabled = true;
 
-        int ok = 0, partial = 0, fail = 0, skippedByFamilyTimeout = 0, processed = 0;
-        var timeoutFamilies = new System.Collections.Concurrent.ConcurrentDictionary<string, byte>(StringComparer.OrdinalIgnoreCase);
         try
         {
-            await Parallel.ForEachAsync(
-                familyPending,
-                new ParallelOptions { MaxDegreeOfParallelism = _audiverisParallel },
-                async (input, cancellationToken) =>
-                {
-                    var name = Path.GetFileName(input);
-                    var familyKey = NormalizeAudiverisFamilyKey(input);
-                    if (timeoutFamilies.ContainsKey(familyKey))
-                    {
-                        Interlocked.Increment(ref skippedByFamilyTimeout);
-                        await Dispatcher.InvokeAsync(() =>
-                            _audiverisLog.Add(new AudiverisLogItem { FileName = name, Status = "⏭️ Omitido (familia timeout)" }));
-                        return;
-                    }
-
-                    var idx = Interlocked.Increment(ref processed);
-                    await Dispatcher.InvokeAsync(() =>
-                        txtStatus.Text = $"🎼 Auto-Audiveris [{idx}/{familyPending.Count}] {name}");
-                    LogDebug($"Auto-Audiveris [{idx}/{familyPending.Count}] {name}");
-
-                    (bool Success, bool Partial, bool PageFailure) result;
-                    try
-                    {
-                        result = await RunAudiverisConversionAsync(audiverisExe, input).ConfigureAwait(false);
-                    }
-                    catch (TimeoutException tex)
-                    {
-                        Interlocked.Increment(ref fail);
-                        timeoutFamilies.TryAdd(familyKey, 0);
-                        MarkAudiverisFamilyTimeout(input);
-                        Log($"❌ Auto-Audiveris timeout en {name}: {tex.Message}");
-                        await Dispatcher.InvokeAsync(() =>
-                            _audiverisLog.Add(new AudiverisLogItem { FileName = name, Status = "⏱️ Timeout" }));
-                        return;
-                    }
-
-                    if (result.Success)
-                    {
-                        _audiverisTimeoutStrikes.TryRemove(familyKey, out _);
-                        _audiverisStrikeLastUtc.TryRemove(familyKey, out _);
-                        if (result.Partial)
-                        {
-                            Interlocked.Increment(ref partial);
-                            Log($"⚠️ Conversión parcial: {name} (solo hoja 1)");
-                            await Dispatcher.InvokeAsync(() =>
-                                _audiverisLog.Add(new AudiverisLogItem { FileName = name, Status = "⚠️ Parcial (hoja 1)" }));
-                        }
-                        else
-                        {
-                            Interlocked.Increment(ref ok);
-                            await Dispatcher.InvokeAsync(() =>
-                                _audiverisLog.Add(new AudiverisLogItem { FileName = name, Status = "✅ Convertido" }));
-                        }
-                    }
-                    else
-                    {
-                        Interlocked.Increment(ref fail);
-                        await Dispatcher.InvokeAsync(() =>
-                        {
-                            if (result.PageFailure)
-                            {
-                                _audiverisKnownPageFailures.Add(input);
-                            }
-                            Log($"⚠️ Sin salida: {name}");
-                            _audiverisLog.Add(new AudiverisLogItem { FileName = name, Status = "⚠️ Sin salida" });
-                        });
-                    }
-                }).ConfigureAwait(true);
-
-            if (_audiverisKnownPageFailures.Count > 0)
-                SaveAudiverisPageFailures();
-            if (!_audiverisTimeoutFamilies.IsEmpty)
-                SaveAudiverisTimeoutFamilies();
-            if (!_audiverisTimeoutStrikes.IsEmpty)
-                SaveAudiverisTimeoutStrikes();
-            UpdateAudiverisStatus();
-            var msg = $"🎼 Auto-Audiveris finalizado: {ok} completos, {partial} parciales, {fail} sin convertir" +
-                      (skippedByFamilyTimeout > 0 ? $", {skippedByFamilyTimeout} omitidos por timeout de familia" : string.Empty);
+            var r = await RunAudiverisBatchCoreAsync(familyPending, audiverisExe, "Auto-Audiveris", destFolder, _audiverisCts.Token, familySizes);
+            var converted = r.Ok + r.Partial;
+            var msg = $"🎼 Auto-Audiveris: {converted}/{familyPending.Count} convertidas" +
+                      $" | ✅ {r.Ok} completas, ⚠️ {r.Partial} parciales, ❌ {r.Fail} sin salida" +
+                      (r.SkippedByFamilyTimeout > 0 ? $", ⏭️ {r.SkippedByFamilyTimeout} omitidos" : string.Empty);
             txtStatus.Text = msg;
             Log(msg);
         }
@@ -2345,7 +2367,10 @@ public partial class MainWindow : Window, IAsyncDisposable
         finally
         {
             _audiverisRunning = false;
+            _audiverisCts?.Dispose();
+            _audiverisCts = null;
             if (btnConvertAudiveris != null) btnConvertAudiveris.IsEnabled = true;
+            if (btnCancelAudiveris != null) btnCancelAudiveris.IsEnabled = false;
         }
     }
 
@@ -2356,6 +2381,8 @@ public partial class MainWindow : Window, IAsyncDisposable
         _audiverisTimeoutFamilies.Clear();
         _audiverisTimeoutStrikes.Clear();
         _audiverisStrikeLastUtc.Clear();
+        _audiverisTimeoutFamiliesDirty = true;
+        _audiverisTimeoutStrikesDirty = true;
         SaveAudiverisTimeoutFamilies();
         SaveAudiverisTimeoutStrikes();
         UpdateAudiverisStatus();
@@ -2389,7 +2416,7 @@ public partial class MainWindow : Window, IAsyncDisposable
 
         LogDebug($"🎼 Audiveris ejecutable: {audiverisExe}");
 
-        var inputs = SafeEnumerateFiles(destFolder, f => AudiverisInputExtensions.Contains(Path.GetExtension(f), StringComparer.OrdinalIgnoreCase))
+        var inputs = SafeEnumerateFilesCached(destFolder, f => AudiverisInputExtensions.Contains(Path.GetExtension(f)))
             .ToList();
 
         LogDebug($"🎼 Audiveris: candidatos detectados {inputs.Count}");
@@ -2400,20 +2427,26 @@ public partial class MainWindow : Window, IAsyncDisposable
             return;
         }
 
-        var pendingBeforeCooldown = inputs
-            .Where(f => !HasMusicScoreSibling(f))
-            .Where(f => !_audiverisKnownPageFailures.Contains(f))
-            .ToList();
-        var pending = pendingBeforeCooldown
-            .Where(f => !IsAudiverisFamilyInTimeoutCooldown(f))
-            .ToList();
+        var siblingSet = BuildMusicScoreSiblingSetCached(destFolder);
+        var noSibling = inputs.Where(f => !HasMusicScoreSiblingFast(f, siblingSet)).ToList();
+        var pendingBeforeCooldown = new List<string>(noSibling.Count);
+        var skippedKnownPageFails = 0;
+        foreach (var file in noSibling)
+        {
+            if (_audiverisKnownPageFailures.ContainsKey(file))
+            {
+                skippedKnownPageFails++;
+                continue;
+            }
 
-        var skippedKnownPageFails = inputs.Count(f => !HasMusicScoreSibling(f) && _audiverisKnownPageFailures.Contains(f));
+            pendingBeforeCooldown.Add(file);
+        }
+        var pending = FilterByCooldown(pendingBeforeCooldown, IsAudiverisFamilyInTimeoutCooldown, out var skippedCooldownFamilies, out var skippedCooldownFamilyKeys);
+
         if (skippedKnownPageFails > 0)
             Log($"ℹ️ Audiveris: {skippedKnownPageFails} archivo(s) omitidos por PAGE fail previo en esta sesión.");
-        var skippedCooldownFamilies = pendingBeforeCooldown.Count - pending.Count;
         if (skippedCooldownFamilies > 0)
-            Log($"ℹ️ Audiveris: {skippedCooldownFamilies} archivo(s) omitidos por cooldown de timeout activo.");
+            Log($"ℹ️ Audiveris: {skippedCooldownFamilies} archivo(s) omitidos por cooldown de timeout activo ({skippedCooldownFamilyKeys.Count} familia(s)){FormatTopCooldownFamilies(skippedCooldownFamilyKeys, _audiverisTimeoutFamilies)}.");
 
         if (pending.Count == 0)
         {
@@ -2421,7 +2454,7 @@ public partial class MainWindow : Window, IAsyncDisposable
             return;
         }
 
-        var familyPending = SelectFirstPerAudiverisFamily(pending, out var skippedFamilyDuplicates);
+        var familyPending = SelectFirstPerAudiverisFamily(pending, out var skippedFamilyDuplicates, out var familySizes);
         if (skippedFamilyDuplicates > 0)
             Log($"ℹ️ Audiveris: {skippedFamilyDuplicates} archivo(s) omitidos por duplicado de familia (a4/let) en esta corrida.");
 
@@ -2440,103 +2473,28 @@ public partial class MainWindow : Window, IAsyncDisposable
             return;
         }
 
-        Log($"🎼 Audiveris: inicio conversion de {batch.Count} archivo(s) (paralelo={_audiverisParallel})." + (deferred > 0 ? $" ({deferred} quedan pendientes)" : string.Empty));
+        var effectiveAudiverisParallel = GetEffectiveAudiverisParallel();
+        Log($"🎼 Audiveris: inicio conversion de {batch.Count} archivo(s) (paralelo={effectiveAudiverisParallel}, cfg={_audiverisParallel})." + (deferred > 0 ? $" ({deferred} quedan pendientes)" : string.Empty));
+        _audiverisLog.Clear();
 
         _audiverisRunning = true;
+        _audiverisCts = new CancellationTokenSource();
         btnConvertAudiveris.IsEnabled = false;
+        btnCancelAudiveris.IsEnabled = true;
         btnSearch.IsEnabled = false;
         btnDownload.IsEnabled = false;
         txtStatus.Text = "🎼 Convirtiendo con Audiveris...";
         var capturedDestFolder = txtDestFolder.Text?.Trim() ?? string.Empty;
 
-        int ok = 0;
-        int partial = 0;
-        int fail = 0;
-        int skippedByFamilyTimeout = 0;
-        int processed = 0;
-        var timeoutFamilies = new System.Collections.Concurrent.ConcurrentDictionary<string, byte>(StringComparer.OrdinalIgnoreCase);
         try
         {
-            await Parallel.ForEachAsync(
-                batch,
-                new ParallelOptions { MaxDegreeOfParallelism = _audiverisParallel },
-                async (input, cancellationToken) =>
-                {
-                    var name = Path.GetFileName(input);
-                    var familyKey = NormalizeAudiverisFamilyKey(input);
-                    if (timeoutFamilies.ContainsKey(familyKey))
-                    {
-                        Interlocked.Increment(ref skippedByFamilyTimeout);
-                        await Dispatcher.InvokeAsync(() =>
-                            _audiverisLog.Add(new AudiverisLogItem { FileName = name, Status = "⏭️ Omitido (familia timeout)" }));
-                        return;
-                    }
-
-                    var idx = Interlocked.Increment(ref processed);
-                    await Dispatcher.InvokeAsync(() =>
-                        txtStatus.Text = $"🎼 Audiveris [{idx}/{batch.Count}] {name}");
-
-                    (bool Success, bool Partial, bool PageFailure) result;
-                    try
-                    {
-                        result = await RunAudiverisConversionAsync(audiverisExe, input, capturedDestFolder).ConfigureAwait(false);
-                    }
-                    catch (TimeoutException tex)
-                    {
-                        Interlocked.Increment(ref fail);
-                        timeoutFamilies.TryAdd(familyKey, 0);
-                        MarkAudiverisFamilyTimeout(input);
-                        Log($"❌ Audiveris timeout en {name}: {tex.Message}");
-                        await Dispatcher.InvokeAsync(() =>
-                            _audiverisLog.Add(new AudiverisLogItem { FileName = name, Status = "⏱️ Timeout" }));
-                        return;
-                    }
-
-                    if (result.Success)
-                    {
-                        _audiverisTimeoutStrikes.TryRemove(familyKey, out _);
-                        _audiverisStrikeLastUtc.TryRemove(familyKey, out _);
-                        if (result.Partial)
-                        {
-                            Interlocked.Increment(ref partial);
-                            Log($"⚠️ Conversión parcial: {name} (solo hoja 1)");
-                            await Dispatcher.InvokeAsync(() =>
-                                _audiverisLog.Add(new AudiverisLogItem { FileName = name, Status = "⚠️ Parcial (hoja 1)" }));
-                        }
-                        else
-                        {
-                            Interlocked.Increment(ref ok);
-                            await Dispatcher.InvokeAsync(() =>
-                                _audiverisLog.Add(new AudiverisLogItem { FileName = name, Status = "✅ Convertido" }));
-                        }
-                    }
-                    else
-                    {
-                        Interlocked.Increment(ref fail);
-                        await Dispatcher.InvokeAsync(() =>
-                        {
-                            if (result.PageFailure)
-                            {
-                                _audiverisKnownPageFailures.Add(input);
-                            }
-                            Log($"⚠️ Audiveris sin salida detectada: {name}");
-                            _audiverisLog.Add(new AudiverisLogItem { FileName = name, Status = "⚠️ Sin salida" });
-                        });
-                    }
-                }).ConfigureAwait(true);
-
-            if (_audiverisKnownPageFailures.Count > 0)
-                SaveAudiverisPageFailures();
-            if (!_audiverisTimeoutFamilies.IsEmpty)
-                SaveAudiverisTimeoutFamilies();
-            if (!_audiverisTimeoutStrikes.IsEmpty)
-                SaveAudiverisTimeoutStrikes();
-            UpdateAudiverisStatus();
-            txtStatus.Text = $"🎼 Conversión finalizada: {ok} completas, {partial} parciales, {fail} sin convertir" +
-                             (skippedByFamilyTimeout > 0 ? $", {skippedByFamilyTimeout} omitidos por timeout de familia" : string.Empty);
-            Log($"🎼 Conversión Audiveris completada: {ok} completas, {partial} parciales, {fail} sin convertir" +
-                (skippedByFamilyTimeout > 0 ? $", {skippedByFamilyTimeout} omitidos por timeout de familia" : string.Empty) +
-                (deferred > 0 ? $". Pendientes: {deferred}" : string.Empty));
+            var r = await RunAudiverisBatchCoreAsync(batch, audiverisExe, "Audiveris", capturedDestFolder, _audiverisCts.Token, familySizes);
+            var converted = r.Ok + r.Partial;
+            var statusMsg = $"🎼 Audiveris: {converted}/{batch.Count} convertidas" +
+                            $" | ✅ {r.Ok} completas, ⚠️ {r.Partial} parciales, ❌ {r.Fail} sin salida" +
+                            (r.SkippedByFamilyTimeout > 0 ? $", ⏭️ {r.SkippedByFamilyTimeout} omitidos" : string.Empty);
+            txtStatus.Text = statusMsg;
+            Log(statusMsg + (deferred > 0 ? $" | pendientes: {deferred}" : string.Empty));
         }
         catch (Exception ex)
         {
@@ -2547,10 +2505,982 @@ public partial class MainWindow : Window, IAsyncDisposable
         finally
         {
             _audiverisRunning = false;
+            _audiverisCts?.Dispose();
+            _audiverisCts = null;
             btnConvertAudiveris.IsEnabled = true;
+            btnCancelAudiveris.IsEnabled = false;
             btnSearch.IsEnabled = true;
             UpdateDownloadButton();
         }
+    }
+
+    private async Task<(int Ok, int Partial, int Fail, int SkippedByFamilyTimeout)> RunAudiverisBatchCoreAsync(
+        IList<string> batch,
+        string audiverisExe,
+        string label,
+        string fallbackOutputDir,
+        CancellationToken ct = default,
+        IReadOnlyDictionary<string, long>? fileSizes = null)
+    {
+        int ok = 0, partial = 0, fail = 0, skippedByFamilyTimeout = 0, processed = 0;
+        int total = batch.Count;
+        var siblingSet = BuildMusicScoreSiblingSetCached(fallbackOutputDir);
+        var effectiveParallel = GetEffectiveAudiverisParallel();
+
+        try
+        {
+            await Parallel.ForEachAsync(
+                batch,
+                new ParallelOptions { MaxDegreeOfParallelism = effectiveParallel, CancellationToken = ct },
+                async (input, cancellationToken) =>
+                {
+                    var name = Path.GetFileName(input);
+                    var familyKey = NormalizeAudiverisFamilyKey(input);
+                    var knownSize = fileSizes is not null && fileSizes.TryGetValue(input, out var sz) ? sz : -1L;
+
+                    var idx = Interlocked.Increment(ref processed);
+                    if (idx == 1 || idx == total || idx % 5 == 0)
+                    {
+                        await Dispatcher.InvokeAsync(() =>
+                            txtStatus.Text = $"🎼 {label} [{idx}/{total}] {name}");
+                    }
+                    LogDebug($"{label} [{idx}/{total}] {name}");
+
+                    var computedTimeout = ComputeAudiverisTimeoutSeconds(input, knownSize);
+                    var sw = Stopwatch.StartNew();
+                    (bool Success, bool Partial, bool PageFailure) result;
+                    try
+                    {
+                        result = await RunAudiverisConversionAsync(audiverisExe, input, fallbackOutputDir, allowSiblingFallback: true, siblingSet, knownSize).ConfigureAwait(false);
+                    }
+                    catch (TimeoutException tex)
+                    {
+                        sw.Stop();
+                        Interlocked.Increment(ref fail);
+                        MarkAudiverisFamilyTimeout(input, familyKey);
+                        _ = Task.Run(() => AppendTelemetry(_audiverisTelemetryPath, new TimeoutTelemetryEntry { FamilyKey = familyKey, ComputedTimeoutSeconds = computedTimeout, ActualElapsedSeconds = sw.Elapsed.TotalSeconds, TimedOut = true, DateUtc = DateTime.UtcNow }));
+                        var snapOk = Volatile.Read(ref ok); var snapPart = Volatile.Read(ref partial); var snapFail = Volatile.Read(ref fail);
+                        Log($"❌ {label} timeout [{idx}/{total}] {name}: {tex.Message} (ok={snapOk}, parcial={snapPart}, fail={snapFail})");
+                        if (idx % 5 == 0)
+                        {
+                            var conv = snapOk + snapPart;
+                            Log($"📊 {label} progreso: {idx}/{total} procesadas, convertidas={conv} ({conv * 100 / Math.Max(1, total)}%) (ok={snapOk}, parcial={snapPart}, fail={snapFail}){(conv == 0 ? " | ⚠️ 0 convertidas aún" : string.Empty)}");
+                        }
+                        await Dispatcher.InvokeAsync(() =>
+                            _audiverisLog.Add(new AudiverisLogItem { FileName = name, Status = "⏱️ Timeout" }));
+                        return;
+                    }
+                    catch (Exception ex) when (ex is not OperationCanceledException)
+                    {
+                        Interlocked.Increment(ref fail);
+                        var snapOk = Volatile.Read(ref ok); var snapFail = Volatile.Read(ref fail);
+                        Log($"❌ {label} error inesperado [{idx}/{total}] {name}: {ex.GetType().Name}: {ex.Message} (ok={snapOk}, fail={snapFail})");
+                        await Dispatcher.InvokeAsync(() =>
+                            _audiverisLog.Add(new AudiverisLogItem { FileName = name, Status = "❌ Error" }));
+                        return;
+                    }
+
+                    sw.Stop();
+                    if (result.Success)
+                    {
+                        _ = Task.Run(() => AppendTelemetry(_audiverisTelemetryPath, new TimeoutTelemetryEntry { FamilyKey = familyKey, ComputedTimeoutSeconds = computedTimeout, ActualElapsedSeconds = sw.Elapsed.TotalSeconds, TimedOut = false, DateUtc = DateTime.UtcNow }));
+                        if (_audiverisTimeoutFamilies.TryRemove(familyKey, out _))
+                            _audiverisTimeoutFamiliesDirty = true;
+                        if (_audiverisTimeoutStrikes.TryRemove(familyKey, out _))
+                            _audiverisTimeoutStrikesDirty = true;
+                        if (_audiverisStrikeLastUtc.TryRemove(familyKey, out _))
+                            _audiverisTimeoutStrikesDirty = true;
+                        Interlocked.Increment(ref ok);
+                        var snapOk = Volatile.Read(ref ok); var snapPart = Volatile.Read(ref partial); var snapFail = Volatile.Read(ref fail);
+                        Log($"✅ Convertido [{idx}/{total}]: {name} (ok={snapOk}, parcial={snapPart}, fail={snapFail})");
+                        await Dispatcher.InvokeAsync(() =>
+                            _audiverisLog.Add(new AudiverisLogItem { FileName = name, Status = "✅ Convertido" }));
+                    }
+                    else
+                    {
+                        Interlocked.Increment(ref fail);
+                        var movedPath = MoveToAudiverisFailedFolder(input);
+                        await Dispatcher.InvokeAsync(() =>
+                        {
+                            if (result.PageFailure)
+                            {
+                                if (_audiverisKnownPageFailures.TryAdd(movedPath ?? input, 0))
+                                    _audiverisKnownPageFailuresDirty = true;
+                            }
+                            var statusLabel = result.PageFailure ? "❌ PAGE fail" : "⚠️ Sin salida";
+                            var moved = movedPath != null ? " → _AudiverisFailed" : string.Empty;
+                            var snapOk2 = Volatile.Read(ref ok); var snapPart2 = Volatile.Read(ref partial); var snapFail2 = Volatile.Read(ref fail);
+                            Log($"{statusLabel} [{idx}/{total}]: {name}{moved} (ok={snapOk2}, parcial={snapPart2}, fail={snapFail2})");
+                            _audiverisLog.Add(new AudiverisLogItem { FileName = name, Status = statusLabel + moved });
+                        });
+                    }
+
+                    if (idx % 5 == 0)
+                    {
+                        var snapOk = Volatile.Read(ref ok); var snapPart = Volatile.Read(ref partial); var snapFail = Volatile.Read(ref fail);
+                        var conv = snapOk + snapPart;
+                        Log($"📊 {label} progreso: {idx}/{total} procesadas, convertidas={conv} ({conv * 100 / Math.Max(1, total)}%) (ok={snapOk}, parcial={snapPart}, fail={snapFail}){(conv == 0 ? " | ⚠️ 0 convertidas aún" : string.Empty)}");
+                    }
+                }).ConfigureAwait(true);
+        }
+        catch (OperationCanceledException)
+        {
+            Log($"⏹️ {label} cancelado por usuario (ok={ok}, parcial={partial}, fail={fail}).");
+        }
+
+        SaveAudiverisPageFailures();
+        SaveAudiverisTimeoutFamilies();
+        SaveAudiverisTimeoutStrikes();
+        InvalidateRawFilesCache(fallbackOutputDir);
+        UpdateAudiverisStatus();
+
+        return (ok, partial, fail, skippedByFamilyTimeout);
+    }
+
+    private void BtnCancelAudiveris_Click(object sender, RoutedEventArgs e)
+    {
+        _audiverisCts?.Cancel();
+        if (btnCancelAudiveris != null) btnCancelAudiveris.IsEnabled = false;
+        Log("⏹️ Cancelando Audiveris...");
+    }
+
+    // ── oemer handlers ─────────────────────────────────────────────────────
+
+    private void BtnCancelOemer_Click(object sender, RoutedEventArgs e)
+    {
+        _oemerCts?.Cancel();
+        if (btnCancelOemer != null) btnCancelOemer.IsEnabled = false;
+        Log("⏹️ Cancelando oemer...");
+    }
+
+    private void BtnResetOemerCooldown_Click(object sender, RoutedEventArgs e)
+    {
+        var cooldownCount = _oemerTimeoutFamilies.Count;
+        var strikeCount = _oemerTimeoutStrikes.Count;
+        _oemerTimeoutFamilies.Clear();
+        _oemerTimeoutStrikes.Clear();
+        _oemerStrikeLastUtc.Clear();
+        _oemerTimeoutFamiliesDirty = true;
+        _oemerTimeoutStrikesDirty = true;
+        SaveOemerTimeoutFamilies();
+        SaveOemerTimeoutStrikes();
+        UpdateOemerStatus();
+        Log($"🔄 oemer: cooldown y strikes reiniciados ({cooldownCount} familias, {strikeCount} strikes).");
+    }
+
+    private async void BtnConvertOemer_Click(object sender, RoutedEventArgs e)
+    {
+        Log("🎵 Botón oemer pulsado.");
+        if (_videoRunning) { Log("⚠️ Hay un vídeo en proceso. Espera a que termine."); return; }
+
+        var destFolder = txtDestFolder.Text?.Trim();
+        if (string.IsNullOrWhiteSpace(destFolder) || !Directory.Exists(destFolder))
+        {
+            Log("⚠️ oemer: carpeta destino no válida.");
+            DarkDialogService.ShowMessage(this, "Selecciona una carpeta de destino válida.", "oemer", MessageBoxButton.OK, MessageBoxImage.Warning);
+            return;
+        }
+
+        var (oemerExe, prefixArgs) = ResolveOemerCommand();
+        if (string.IsNullOrWhiteSpace(oemerExe))
+        {
+            Log("⚠️ oemer no encontrado. Instala con: pip install oemer");
+            DarkDialogService.ShowMessage(this,
+                "No se encontró oemer. Instálalo con:\n  pip install oemer\n\nO define OEMER_EXE con la ruta al ejecutable.",
+                "oemer no disponible", MessageBoxButton.OK, MessageBoxImage.Warning);
+            return;
+        }
+
+        var inputs = SafeEnumerateFilesCached(destFolder, f => AudiverisInputExtensions.Contains(Path.GetExtension(f)))
+            .ToList();
+        if (inputs.Count == 0)
+        {
+            Log("🎵 oemer: no hay partituras PDF/imagen para convertir.");
+            return;
+        }
+
+        var siblingSet = BuildMusicScoreSiblingSetCached(destFolder);
+        var noSibling = inputs.Where(f => !HasMusicScoreSiblingFast(f, siblingSet)).ToList();
+        var pendingBeforeCooldown = new List<string>(noSibling.Count);
+        var skippedKnownFails = 0;
+        foreach (var file in noSibling)
+        {
+            if (_oemerKnownPageFailures.ContainsKey(file))
+            {
+                skippedKnownFails++;
+                continue;
+            }
+
+            pendingBeforeCooldown.Add(file);
+        }
+        var pending = FilterByCooldown(pendingBeforeCooldown, IsOemerFamilyInTimeoutCooldown, out var skippedCooldown, out var skippedCooldownFamilyKeys);
+
+        var pdfRenderer = ResolvePdfToPngRenderer();
+        if (pdfRenderer is null)
+        {
+            var skippedMissingPdfConverter = pending.Count(IsPdfInput);
+            if (skippedMissingPdfConverter > 0)
+            {
+                pending = pending.Where(f => !IsPdfInput(f)).ToList();
+                Log($"⚠️ oemer: {skippedMissingPdfConverter} PDF omitidos; falta convertidor PDF→PNG (Ghostscript/Poppler).");
+            }
+        }
+
+        if (skippedKnownFails > 0)
+            Log($"ℹ️ oemer: {skippedKnownFails} archivo(s) omitidos por fallo permanente previo.");
+        if (skippedCooldown > 0)
+            Log($"ℹ️ oemer: {skippedCooldown} archivo(s) omitidos por cooldown de timeout activo ({skippedCooldownFamilyKeys.Count} familia(s)){FormatTopCooldownFamilies(skippedCooldownFamilyKeys, _oemerTimeoutFamilies)}.");
+
+        if (pending.Count == 0)
+        {
+            Log("🎵 oemer: todo ya estaba convertido.");
+            return;
+        }
+
+        var familyPending = SelectFirstPerAudiverisFamily(pending, out var skippedFamilyDuplicates, out _);
+        if (skippedFamilyDuplicates > 0)
+            Log($"ℹ️ oemer: {skippedFamilyDuplicates} archivo(s) omitidos por duplicado de familia (a4/let).");
+
+        var batch = familyPending.Take(_oemerBatchSize).ToList();
+        var deferred = familyPending.Count - batch.Count;
+
+        var proceed = DarkDialogService.ShowMessage(
+            this,
+            $"Se convertirán {batch.Count} archivo(s) con oemer.\n\nSolo se procesan los que aún no tienen salida MusicXML." +
+            (deferred > 0 ? $"\n\nQuedarán {deferred} pendientes para la siguiente corrida." : string.Empty) +
+            "\n\n¿Continuar?",
+            "Convertir con oemer", MessageBoxButton.YesNo, MessageBoxImage.Question);
+        if (proceed != MessageBoxResult.Yes)
+        {
+            Log("ℹ️ oemer cancelado por usuario.");
+            return;
+        }
+
+        var effectiveOemerParallel = GetEffectiveOemerParallel();
+        Log($"🎵 oemer: inicio conversión de {batch.Count} archivo(s) (paralelo={effectiveOemerParallel}, cfg={_oemerParallel})." + (deferred > 0 ? $" ({deferred} quedan pendientes)" : string.Empty));
+        _oemerLog.Clear();
+
+        _oemerRunning = true;
+        _oemerCts = new CancellationTokenSource();
+        btnConvertOemer.IsEnabled = false;
+        btnCancelOemer.IsEnabled = true;
+        btnSearch.IsEnabled = false;
+        btnDownload.IsEnabled = false;
+        txtStatus.Text = "🎵 Convirtiendo con oemer...";
+
+        try
+        {
+            var r = await RunOemerBatchCoreAsync(batch, oemerExe, prefixArgs, "oemer", destFolder, _oemerCts.Token);
+            var statusMsg = $"🎵 oemer: {r.Ok}/{batch.Count} convertidas | ✅ {r.Ok}, ❌ {r.Fail}";
+            txtStatus.Text = statusMsg;
+            Log(statusMsg + (deferred > 0 ? $" | pendientes: {deferred}" : string.Empty));
+        }
+        catch (Exception ex)
+        {
+            txtStatus.Text = "Error en conversión oemer";
+            Log($"❌ oemer error: {ex.Message}");
+            DarkDialogService.ShowMessage(this, $"Error en conversión con oemer: {ex.Message}", "oemer", MessageBoxButton.OK, MessageBoxImage.Error);
+        }
+        finally
+        {
+            _oemerRunning = false;
+            _oemerCts?.Dispose();
+            _oemerCts = null;
+            btnConvertOemer.IsEnabled = true;
+            btnCancelOemer.IsEnabled = false;
+            btnSearch.IsEnabled = true;
+            UpdateDownloadButton();
+        }
+    }
+
+    private async Task AutoConvertWithOemerAsync(string destFolder)
+    {
+        if (_oemerRunning) return;
+
+        var (oemerExe, prefixArgs) = ResolveOemerCommand();
+        if (string.IsNullOrWhiteSpace(oemerExe))
+        {
+            Log("⚠️ Auto-oemer: oemer no encontrado. Instala con: pip install oemer");
+            return;
+        }
+
+        var siblingSet = BuildMusicScoreSiblingSetCached(destFolder);
+        var pendingBeforeCooldown = SafeEnumerateFilesCached(destFolder,
+                                f => AudiverisInputExtensions.Contains(Path.GetExtension(f))
+                  && !HasMusicScoreSiblingFast(f, siblingSet))
+            .Where(f => !_oemerKnownPageFailures.ContainsKey(f))
+            .ToList();
+        var pending = FilterByCooldown(pendingBeforeCooldown, IsOemerFamilyInTimeoutCooldown, out var skippedCooldown, out var skippedCooldownFamilyKeys);
+
+        var pdfRenderer = ResolvePdfToPngRenderer();
+        if (pdfRenderer is null)
+        {
+            var skippedMissingPdfConverter = pending.Count(IsPdfInput);
+            if (skippedMissingPdfConverter > 0)
+            {
+                pending = pending.Where(f => !IsPdfInput(f)).ToList();
+                Log($"⚠️ Auto-oemer: {skippedMissingPdfConverter} PDF omitidos; falta convertidor PDF→PNG (Ghostscript/Poppler).");
+            }
+        }
+
+        if (skippedCooldown > 0)
+            Log($"ℹ️ Auto-oemer: {skippedCooldown} archivo(s) omitidos por cooldown activo ({skippedCooldownFamilyKeys.Count} familia(s)){FormatTopCooldownFamilies(skippedCooldownFamilyKeys, _oemerTimeoutFamilies)}.");
+
+        if (pending.Count == 0)
+        {
+            Log("🎵 Auto-oemer: todo ya estaba convertido o no hay PDF/imagen.");
+            return;
+        }
+
+        var familyPending = SelectFirstPerAudiverisFamily(pending, out var skippedFamilyDuplicates, out _);
+        if (skippedFamilyDuplicates > 0)
+            Log($"ℹ️ Auto-oemer: {skippedFamilyDuplicates} archivo(s) omitidos por duplicado de familia (a4/let).");
+
+        Log($"🎵 Auto-oemer: procesando {familyPending.Count} archivo(s)...");
+        _oemerLog.Clear();
+        _oemerRunning = true;
+        _oemerCts = new CancellationTokenSource();
+        if (btnConvertOemer != null) btnConvertOemer.IsEnabled = false;
+        if (btnCancelOemer != null) btnCancelOemer.IsEnabled = true;
+
+        try
+        {
+            var r = await RunOemerBatchCoreAsync(familyPending, oemerExe, prefixArgs, "Auto-oemer", destFolder, _oemerCts.Token);
+            var msg = $"🎵 Auto-oemer: {r.Ok}/{familyPending.Count} convertidas | ✅ {r.Ok}, ❌ {r.Fail}";
+            txtStatus.Text = msg;
+            Log(msg);
+        }
+        catch (Exception ex)
+        {
+            Log($"❌ Auto-oemer error: {ex.Message}");
+        }
+        finally
+        {
+            _oemerRunning = false;
+            _oemerCts?.Dispose();
+            _oemerCts = null;
+            if (btnConvertOemer != null) btnConvertOemer.IsEnabled = true;
+            if (btnCancelOemer != null) btnCancelOemer.IsEnabled = false;
+        }
+    }
+
+    private async Task<(int Ok, int Fail)> RunOemerBatchCoreAsync(
+        IList<string> batch,
+        string oemerExe,
+        string[] prefixArgs,
+        string label,
+        string rootDir,
+        CancellationToken ct = default)
+    {
+        int ok = 0, fail = 0, processed = 0;
+        int total = batch.Count;
+        var effectiveParallel = GetEffectiveOemerParallel();
+
+        try
+        {
+            await Parallel.ForEachAsync(
+                batch,
+                new ParallelOptions { MaxDegreeOfParallelism = effectiveParallel, CancellationToken = ct },
+                async (input, innerCt) =>
+                {
+                    var name = Path.GetFileName(input);
+                    var familyKey = NormalizeAudiverisFamilyKey(input);
+                    var idx = Interlocked.Increment(ref processed);
+                    if (idx == 1 || idx == total || idx % 5 == 0)
+                    {
+                        await Dispatcher.InvokeAsync(() =>
+                            txtStatus.Text = $"🎵 {label} [{idx}/{total}] {name}");
+                    }
+                    LogDebug($"{label} [{idx}/{total}] {name}");
+
+                    var computedTimeout = ComputeOemerTimeoutSeconds(input);
+                    var sw = Stopwatch.StartNew();
+                    (bool Success, bool PermanentFailure) result;
+                    try
+                    {
+                        result = await RunOemerConversionAsync(oemerExe, prefixArgs, input, innerCt).ConfigureAwait(false);
+                    }
+                    catch (TimeoutException tex)
+                    {
+                        sw.Stop();
+                        Interlocked.Increment(ref fail);
+                        MarkOemerFamilyTimeout(input, familyKey);
+                        _ = Task.Run(() => AppendTelemetry(_oemerTelemetryPath, new TimeoutTelemetryEntry { FamilyKey = familyKey, ComputedTimeoutSeconds = computedTimeout, ActualElapsedSeconds = sw.Elapsed.TotalSeconds, TimedOut = true, DateUtc = DateTime.UtcNow }));
+                        var snapOk = Volatile.Read(ref ok); var snapFail = Volatile.Read(ref fail);
+                        Log($"❌ {label} timeout [{idx}/{total}] {name}: {tex.Message} (ok={snapOk}, fail={snapFail})");
+                        await Dispatcher.InvokeAsync(() =>
+                            _oemerLog.Add(new AudiverisLogItem { FileName = name, Status = "⏱️ Timeout" }));
+                        return;
+                    }
+                    catch (Exception ex) when (ex is not OperationCanceledException)
+                    {
+                        Interlocked.Increment(ref fail);
+                        Log($"❌ {label} error [{idx}/{total}] {name}: {ex.GetType().Name}: {ex.Message}");
+                        await Dispatcher.InvokeAsync(() =>
+                            _oemerLog.Add(new AudiverisLogItem { FileName = name, Status = "❌ Error" }));
+                        return;
+                    }
+
+                    sw.Stop();
+                    if (result.Success)
+                    {
+                        _ = Task.Run(() => AppendTelemetry(_oemerTelemetryPath, new TimeoutTelemetryEntry { FamilyKey = familyKey, ComputedTimeoutSeconds = computedTimeout, ActualElapsedSeconds = sw.Elapsed.TotalSeconds, TimedOut = false, DateUtc = DateTime.UtcNow }));
+                        if (_oemerTimeoutFamilies.TryRemove(familyKey, out _))
+                            _oemerTimeoutFamiliesDirty = true;
+                        if (_oemerTimeoutStrikes.TryRemove(familyKey, out _))
+                            _oemerTimeoutStrikesDirty = true;
+                        if (_oemerStrikeLastUtc.TryRemove(familyKey, out _))
+                            _oemerTimeoutStrikesDirty = true;
+                        Interlocked.Increment(ref ok);
+                        var snapOk2 = Volatile.Read(ref ok); var snapFail2 = Volatile.Read(ref fail);
+                        Log($"✅ oemer [{idx}/{total}]: {name} (ok={snapOk2}, fail={snapFail2})");
+                        await Dispatcher.InvokeAsync(() =>
+                            _oemerLog.Add(new AudiverisLogItem { FileName = name, Status = "✅ Convertido" }));
+                    }
+                    else
+                    {
+                        Interlocked.Increment(ref fail);
+                        if (result.PermanentFailure)
+                        {
+                            Log($"🚫 oemer fallo permanente [{idx}/{total}]: {name}");
+                            await Dispatcher.InvokeAsync(() =>
+                            {
+                                if (_oemerKnownPageFailures.TryAdd(input, 0))
+                                    _oemerKnownPageFailuresDirty = true;
+                                _oemerLog.Add(new AudiverisLogItem { FileName = name, Status = "🚫 Fallo permanente" });
+                            });
+                        }
+                        else
+                        {
+                            var movedPath = MoveToOemerFailedFolder(input);
+                            var moved = movedPath != null ? " → _OemerFailed" : string.Empty;
+                            Log($"⚠️ Sin salida [{idx}/{total}]: {name}{moved}");
+                            await Dispatcher.InvokeAsync(() =>
+                                _oemerLog.Add(new AudiverisLogItem { FileName = name, Status = "⚠️ Sin salida" + moved }));
+                        }
+                    }
+
+                    if (idx % 5 == 0)
+                    {
+                        var snapOk3 = Volatile.Read(ref ok); var snapFail3 = Volatile.Read(ref fail);
+                        Log($"📊 {label} progreso: {idx}/{total} · convertidas={snapOk3} ({snapOk3 * 100 / Math.Max(1, total)}%) · fail={snapFail3}");
+                    }
+                }).ConfigureAwait(true);
+        }
+        catch (OperationCanceledException)
+        {
+            Log($"⏹️ {label} cancelado (ok={ok}, fail={fail}).");
+        }
+
+        SaveOemerPageFailures();
+        SaveOemerTimeoutFamilies();
+        SaveOemerTimeoutStrikes();
+        InvalidateRawFilesCache(rootDir);
+        UpdateOemerStatus();
+
+        return (ok, fail);
+    }
+
+    private static (string Exe, string[] PrefixArgs) ResolveOemerCommand()
+    {
+        lock (_oemerCommandCacheLock)
+        {
+            if (_oemerCommandCacheInitialized) return _oemerCommandCache ?? (string.Empty, []);
+            _oemerCommandCache = ResolveOemerCommandCore();
+            _oemerCommandCacheInitialized = true;
+            return _oemerCommandCache ?? (string.Empty, []);
+        }
+    }
+
+    private static (string Exe, string[] PrefixArgs)? ResolveOemerCommandCore()
+    {
+        // 1. Env var OEMER_EXE
+        var fromEnv = Environment.GetEnvironmentVariable("OEMER_EXE");
+        if (!string.IsNullOrWhiteSpace(fromEnv) && File.Exists(fromEnv))
+            return (fromEnv, []);
+
+        // 2. oemer.exe / oemer.cmd on PATH
+        var pathEnv = Environment.GetEnvironmentVariable("PATH") ?? "";
+        foreach (var dir in pathEnv.Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries))
+        {
+            foreach (var name in new[] { "oemer.exe", "oemer.cmd" })
+            {
+                var p = Path.Combine(dir, name);
+                if (File.Exists(p)) return (p, []);
+            }
+        }
+
+        // 3. Python Scripts dirs (pip install oemer puts oemer.exe there)
+        var home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+        var scriptsDirs = new List<string>();
+        foreach (var pyVer in new[] { "Python313", "Python312", "Python311", "Python310", "Python39", "Python38" })
+        {
+            scriptsDirs.Add(Path.Combine(home, "AppData", "Local", "Programs", "Python", pyVer, "Scripts"));
+            scriptsDirs.Add(Path.Combine(home, "AppData", "Roaming", "Python", pyVer, "Scripts"));
+        }
+        scriptsDirs.Add(Path.Combine(home, "AppData", "Local", "Programs", "Python", "Scripts"));
+        scriptsDirs.Add(@"C:\ProgramData\miniconda3\Scripts");
+        scriptsDirs.Add(@"C:\ProgramData\anaconda3\Scripts");
+        scriptsDirs.Add(Path.Combine(home, "miniconda3", "Scripts"));
+        scriptsDirs.Add(Path.Combine(home, "anaconda3", "Scripts"));
+
+        foreach (var dir in scriptsDirs)
+        {
+            foreach (var name in new[] { "oemer.exe", "oemer.cmd" })
+            {
+                var p = Path.Combine(dir, name);
+                if (File.Exists(p)) return (p, []);
+            }
+        }
+
+        // 4. venvs locales relativos al exe y al directorio de trabajo
+        var appDir = AppDomain.CurrentDomain.BaseDirectory;
+        var cwdDir = Directory.GetCurrentDirectory();
+        var venvRoots = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var root in new[] { appDir, cwdDir })
+        {
+            var cur = root;
+            for (int i = 0; i < 4; i++)
+            {
+                if (string.IsNullOrEmpty(cur)) break;
+                foreach (var venvName in new[] { ".venv", "venv", "env", ".env" })
+                    venvRoots.Add(Path.Combine(cur, venvName, "Scripts"));
+                cur = Path.GetDirectoryName(cur)!;
+            }
+        }
+        foreach (var dir in venvRoots)
+        {
+            foreach (var name in new[] { "oemer.exe", "oemer.cmd" })
+            {
+                var p = Path.Combine(dir, name);
+                if (File.Exists(p)) return (p, []);
+            }
+        }
+
+        return null;
+    }
+
+    private async Task<(bool Success, bool PermanentFailure)> RunOemerConversionAsync(
+        string oemerExe,
+        string[] prefixArgs,
+        string inputPath,
+        CancellationToken ct = default)
+    {
+        var isPdf = string.Equals(Path.GetExtension(inputPath), ".pdf", StringComparison.OrdinalIgnoreCase);
+        if (isPdf)
+            return await RunOemerOnPdfAsync(oemerExe, prefixArgs, inputPath, ct).ConfigureAwait(true);
+
+        return await RunOemerOnImageAsync(oemerExe, prefixArgs, inputPath, ct).ConfigureAwait(true);
+    }
+
+    /// <summary>
+    /// Convierte PDF a PNG página a página con Ghostscript / pdftoppm / pymupdf,
+    /// luego ejecuta oemer en cada PNG. Los MXL resultantes van al directorio del PDF
+    /// renombrados como {stem}_p{n:0000}.mxl.
+    /// </summary>
+    private async Task<(bool Success, bool PermanentFailure)> RunOemerOnPdfAsync(
+        string oemerExe, string[] prefixArgs, string pdfPath, CancellationToken ct)
+    {
+        var name = Path.GetFileName(pdfPath);
+        var pdfDir = Path.GetDirectoryName(pdfPath) ?? string.Empty;
+        var pdfStem = Path.GetFileNameWithoutExtension(pdfPath);
+        var pdfFamilyKey = NormalizeAudiverisFamilyKey(pdfPath);
+        long knownPdfSizeBytes;
+        try { knownPdfSizeBytes = new FileInfo(pdfPath).Length; }
+        catch { knownPdfSizeBytes = -1; }
+
+        var renderer = ResolvePdfToPngRenderer();
+        if (renderer is null)
+        {
+            Log($"⚠️ oemer PDF ({name}): no hay convertidor PDF→PNG. Instala Ghostscript (gswin64c.exe) o Poppler (pdftoppm.exe). Fichero no movido.");
+            return (false, false); // no permanente: puede instalarse después
+        }
+
+        var tempDirBase = Path.Combine(Path.GetTempPath(), "scoredown_oemer");
+        var tempDir = Path.Combine(tempDirBase, $"{Process.GetCurrentProcess().Id}_{Path.GetRandomFileName()}");
+        Directory.CreateDirectory(tempDir);
+        try
+        {
+            LogDebug($"🎵 oemer PDF ({name}): convirtiendo con {renderer.Value.Kind}…");
+            var pages = await ConvertPdfToPngPagesAsync(pdfPath, tempDir, renderer.Value, 300, ct).ConfigureAwait(true);
+            if (pages.Count == 0)
+            {
+                Log($"⚠️ oemer PDF ({name}): {renderer.Value.Kind} no produjo páginas PNG.");
+                return (false, false);
+            }
+
+            Log($"🎵 oemer PDF ({name}): {pages.Count} página(s) → ejecutando oemer…");
+            int okPages = 0;
+            for (int pageIdx = 0; pageIdx < pages.Count; pageIdx++)
+            {
+                ct.ThrowIfCancellationRequested();
+                var pagePng = pages[pageIdx];
+                var pageNum = pageIdx + 1;
+                var result = await RunOemerOnImageAsync(
+                    oemerExe,
+                    prefixArgs,
+                    pagePng,
+                    ct,
+                    isFromPdf: true,
+                    pdfPageCount: pages.Count,
+                    timeoutFamilyKey: pdfFamilyKey,
+                    knownSizeBytes: knownPdfSizeBytes).ConfigureAwait(true);
+                if (result.Success)
+                {
+                    // Mover MXL al dir del PDF: stem_p0001.mxl
+                    foreach (var ext in AudiverisOutputExtensions)
+                    {
+                        var pageStem = Path.GetFileNameWithoutExtension(pagePng);
+                        var src = Path.Combine(tempDir, pageStem + ext);
+                        if (!File.Exists(src)) continue;
+                        var dst = Path.Combine(pdfDir, $"{pdfStem}_p{pageNum:0000}{ext}");
+                        try { File.Move(src, dst, overwrite: true); okPages++; } catch { }
+                    }
+                }
+                else
+                {
+                    LogDebug($"🎵 oemer PDF ({name}) pág {pageNum}: sin salida (permanent={result.PermanentFailure}).");
+                }
+            }
+
+            if (okPages > 0)
+            {
+                Log($"✅ oemer PDF ({name}): {okPages}/{pages.Count} página(s) convertidas.");
+                return (true, false);
+            }
+            Log($"⚠️ oemer PDF ({name}): ninguna página produjo MXL.");
+            return (false, false);
+        }
+        finally
+        {
+            try
+            {
+                Directory.Delete(tempDir, recursive: true);
+                // Limpiar dir padre si está vacío
+                try { var parent = Path.GetDirectoryName(tempDir); if (Directory.Exists(parent) && !Directory.EnumerateFileSystemEntries(parent).Any()) Directory.Delete(parent); } catch { }
+            }
+            catch { }
+        }
+    }
+
+    /// <summary>Ejecuta oemer sobre un archivo de imagen (no PDF). Lógica original.</summary>
+    private async Task<(bool Success, bool PermanentFailure)> RunOemerOnImageAsync(
+        string oemerExe, string[] prefixArgs, string inputPath, CancellationToken ct, bool isFromPdf = false, int pdfPageCount = 1, string? timeoutFamilyKey = null, long knownSizeBytes = -1)
+    {
+        var outputDir = Path.GetDirectoryName(inputPath) ?? string.Empty;
+        var timeoutSeconds = ComputeOemerTimeoutSeconds(inputPath, isFromPdf, pdfPageCount, timeoutFamilyKey, knownSizeBytes);
+        var timeout = TimeSpan.FromSeconds(timeoutSeconds);
+        var name = Path.GetFileName(inputPath);
+
+        var psi = new System.Diagnostics.ProcessStartInfo
+        {
+            FileName = oemerExe,
+            UseShellExecute = false,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            CreateNoWindow = true
+        };
+        var ortThreads = ReadFeatureFlagInt("SCOREDOWN_OEMER_ORT_THREADS", 0, 0, 64);
+        if (ortThreads == 0)
+        {
+            var logical = Environment.ProcessorCount;
+            var parallel = Math.Max(1, _oemerParallel);
+            ortThreads = Math.Max(1, logical / parallel);
+        }
+        psi.Environment["OEMER_ORT_THREADS"] = ortThreads.ToString();
+        foreach (var a in prefixArgs) psi.ArgumentList.Add(a);
+        psi.ArgumentList.Add(inputPath);
+        psi.ArgumentList.Add("-o");
+        psi.ArgumentList.Add(outputDir);
+
+        LogDebug($"🎵 oemer spawn ({name}): timeout={timeoutSeconds}s exe={oemerExe}");
+
+        using var process = new System.Diagnostics.Process { StartInfo = psi };
+        if (!process.Start())
+            throw new InvalidOperationException($"No se pudo iniciar oemer: {oemerExe}");
+
+        var stdoutTask = process.StandardOutput.ReadToEndAsync();
+        var stderrTask = process.StandardError.ReadToEndAsync();
+        var waitTask = process.WaitForExitAsync(ct);
+        var allDone = Task.WhenAll(waitTask, stdoutTask, stderrTask);
+
+        using var delayCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        var delayTask = Task.Delay(timeout, delayCts.Token);
+        var completed = await Task.WhenAny(allDone, delayTask).ConfigureAwait(true);
+        if (completed == delayTask)
+        {
+            try { if (!process.HasExited) process.Kill(entireProcessTree: true); } catch { }
+            try { await allDone.ConfigureAwait(true); } catch { }
+            throw new TimeoutException($"oemer timeout tras {timeout.TotalMinutes:0.#} min ({timeoutSeconds}s)");
+        }
+
+        delayCts.Cancel();
+        try
+        {
+            await allDone.ConfigureAwait(true);
+        }
+        catch (OperationCanceledException)
+        {
+            try { if (!process.HasExited) process.Kill(entireProcessTree: true); } catch { }
+            try { await Task.WhenAll(stdoutTask, stderrTask).ConfigureAwait(true); } catch { }
+            throw;
+        }
+
+        var stdout = stdoutTask.Result.Trim();
+        var stderr = stderrTask.Result.Trim();
+        LogDebug($"🎵 oemer exit ({name}): code={process.ExitCode}");
+
+        if (process.ExitCode == 0 && HasMusicScoreSibling(inputPath))
+            return (true, false);
+
+        var combined = (stdout + "\n" + stderr).Trim();
+        var isPermanent = IsOemerPermanentFailure(combined);
+        var tail = combined.Length > 500 ? "..." + combined[^500..] : combined;
+        Log($"⚠️ oemer fallo ({name}): exit={process.ExitCode} {tail}");
+        return (false, isPermanent);
+    }
+
+    private static bool IsOemerPermanentFailure(string output)
+    {
+        if (string.IsNullOrWhiteSpace(output)) return false;
+        return output.Contains("No staff", StringComparison.OrdinalIgnoreCase) ||
+               output.Contains("no staffs", StringComparison.OrdinalIgnoreCase) ||
+               output.Contains("Empty page", StringComparison.OrdinalIgnoreCase) ||
+               output.Contains("no notes detected", StringComparison.OrdinalIgnoreCase) ||
+               // oemer pasó PDF directamente sin conversión previa (UnidentifiedImageError)
+               output.Contains("UnidentifiedImageError", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static string? MoveToOemerFailedFolder(string inputPath)
+    {
+        try
+        {
+            if (!File.Exists(inputPath)) return null;
+            var dir = Path.GetDirectoryName(inputPath);
+            if (string.IsNullOrEmpty(dir)) return null;
+            if (Path.GetFileName(dir).Equals("_OemerFailed", StringComparison.OrdinalIgnoreCase))
+                return inputPath;
+            var failedDir = Path.Combine(dir, "_OemerFailed");
+            Directory.CreateDirectory(failedDir);
+            var dest = Path.Combine(failedDir, Path.GetFileName(inputPath));
+            File.Move(inputPath, dest, overwrite: true);
+            return dest;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private static bool IsPdfInput(string path)
+        => string.Equals(Path.GetExtension(path), ".pdf", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// Busca un ejecutable capaz de renderizar PDF → PNG.
+    /// Devuelve ("gs", exe) para Ghostscript, ("pdftoppm", exe) para Poppler,
+    /// ("pymupdf", python_exe) para pymupdf en el venv, o null si no hay nada disponible.
+    /// </summary>
+    private static (string Kind, string Exe)? ResolvePdfToPngRenderer()
+    {
+        lock (_pdfRendererCacheLock)
+        {
+            if (_pdfRendererCacheInitialized)
+                return _pdfRendererCache;
+
+            var pathEnv = Environment.GetEnvironmentVariable("PATH") ?? "";
+            var pathDirs = pathEnv.Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries);
+
+            // 1. Ghostscript en PATH
+            foreach (var dir in pathDirs)
+            {
+                foreach (var name in new[] { "gswin64c.exe", "gswin32c.exe", "gs.exe" })
+                {
+                    var p = Path.Combine(dir, name);
+                    if (File.Exists(p))
+                    {
+                        _pdfRendererCache = ("gs", p);
+                        _pdfRendererCacheInitialized = true;
+                        return _pdfRendererCache;
+                    }
+                }
+            }
+
+            // 2. Ghostscript en ubicaciones típicas de instalación Windows
+            var pf64 = Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles);
+            var pf86 = Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86);
+            foreach (var root in new[] { pf64, pf86, @"C:\Program Files", @"C:\Program Files (x86)" })
+            {
+                var gsDir = Path.Combine(root, "gs");
+                if (!Directory.Exists(gsDir)) continue;
+                try
+                {
+                    foreach (var vDir in Directory.EnumerateDirectories(gsDir))
+                    {
+                        foreach (var name in new[] { "gswin64c.exe", "gswin32c.exe" })
+                        {
+                            var p = Path.Combine(vDir, "bin", name);
+                            if (File.Exists(p))
+                            {
+                                _pdfRendererCache = ("gs", p);
+                                _pdfRendererCacheInitialized = true;
+                                return _pdfRendererCache;
+                            }
+                        }
+                    }
+                }
+                catch { }
+            }
+
+            // 3. pdftoppm (Poppler) en PATH
+            foreach (var dir in pathDirs)
+            {
+                var p = Path.Combine(dir, "pdftoppm.exe");
+                if (File.Exists(p))
+                {
+                    _pdfRendererCache = ("pdftoppm", p);
+                    _pdfRendererCacheInitialized = true;
+                    return _pdfRendererCache;
+                }
+            }
+            // pdftoppm en MiKTeX / TeX Live / Poppler-windows
+            foreach (var root in new[] { @"C:\Program Files\MiKTeX\miktex\bin\x64", @"C:\texlive\bin\win32", @"C:\poppler\bin" })
+            {
+                var p = Path.Combine(root, "pdftoppm.exe");
+                if (File.Exists(p))
+                {
+                    _pdfRendererCache = ("pdftoppm", p);
+                    _pdfRendererCacheInitialized = true;
+                    return _pdfRendererCache;
+                }
+            }
+
+            // 4. pymupdf (fitz) en el venv de oemer — buscamos python en venv
+            var (oemerExe, _) = ResolveOemerCommand();
+            if (!string.IsNullOrWhiteSpace(oemerExe))
+            {
+                var venvDir = Path.GetDirectoryName(oemerExe) ?? string.Empty; // …/Scripts
+                var pythonExe = Path.Combine(venvDir, "python.exe");
+                if (!File.Exists(pythonExe))
+                    pythonExe = Path.Combine(venvDir, "..", "python.exe");
+                if (File.Exists(pythonExe))
+                {
+                    // Comprobación rápida sin lanzar proceso (asumimos que si tiene oemer tiene fitz instalado
+                    // si el package está presente en site-packages)
+                    var sitePackages = Path.Combine(venvDir, "..", "Lib", "site-packages", "fitz");
+                    if (Directory.Exists(sitePackages))
+                    {
+                        _pdfRendererCache = ("pymupdf", Path.GetFullPath(pythonExe));
+                        _pdfRendererCacheInitialized = true;
+                        return _pdfRendererCache;
+                    }
+                }
+            }
+
+            _pdfRendererCache = null;
+            _pdfRendererCacheInitialized = true;
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Convierte un PDF en imágenes PNG (una por página) en <paramref name="outDir"/>.
+    /// Devuelve la lista de rutas PNG generadas en orden de página, o lista vacía si falla.
+    /// </summary>
+    private async Task<List<string>> ConvertPdfToPngPagesAsync(
+        string pdfPath, string outDir, (string Kind, string Exe) renderer, int dpi, CancellationToken ct)
+    {
+        var pages = new List<string>();
+        var pdfName = Path.GetFileNameWithoutExtension(pdfPath);
+
+        if (renderer.Kind == "gs")
+        {
+            var outputPattern = Path.Combine(outDir, "page_%04d.png");
+            var args = new[]
+            {
+                "-dBATCH", "-dNOPAUSE", "-dQUIET",
+                "-sDEVICE=pnggray", $"-r{dpi}",
+                $"-sOutputFile={outputPattern}",
+                pdfPath
+            };
+            var ok = await RunProcessAsync(renderer.Exe, args, pdfName, "GS PDF→PNG", TimeSpan.FromMinutes(5), ct).ConfigureAwait(true);
+            if (!ok) return pages;
+        }
+        else if (renderer.Kind == "pdftoppm")
+        {
+            var prefix = Path.Combine(outDir, "page");
+            var args = new[] { "-r", dpi.ToString(), "-gray", "-png", pdfPath, prefix };
+            var ok = await RunProcessAsync(renderer.Exe, args, pdfName, "pdftoppm PDF→PNG", TimeSpan.FromMinutes(5), ct).ConfigureAwait(true);
+            if (!ok) return pages;
+        }
+        else if (renderer.Kind == "pymupdf")
+        {
+            var script =
+                "import fitz,sys,os;" +
+                "doc=fitz.open(sys.argv[1]);" +
+                $"dpi={dpi};" +
+                "[doc[i].get_pixmap(matrix=fitz.Matrix(dpi/72,dpi/72),colorspace=fitz.csGRAY)" +
+                ".save(os.path.join(sys.argv[2],f'page_{{i+1:04d}}.png')) for i in range(len(doc))]";
+            var args = new[] { "-c", script, pdfPath, outDir };
+            var ok = await RunProcessAsync(renderer.Exe, args, pdfName, "pymupdf PDF→PNG", TimeSpan.FromMinutes(5), ct).ConfigureAwait(true);
+            if (!ok) return pages;
+        }
+
+        try
+        {
+            pages.AddRange(
+                Directory.EnumerateFiles(outDir, "page_*.png")
+                         .OrderBy(f => f, StringComparer.OrdinalIgnoreCase));
+        }
+        catch { }
+
+        return pages;
+    }
+
+    private int ComputeOemerTimeoutSeconds(string inputPath, bool isFromPdf = false, int pdfPageCount = 1, string? timeoutFamilyKey = null, long knownSizeBytes = -1)
+    {
+        var familyKey = string.IsNullOrWhiteSpace(timeoutFamilyKey)
+            ? NormalizeAudiverisFamilyKey(inputPath)
+            : timeoutFamilyKey;
+        var strike = _oemerTimeoutStrikes.TryGetValue(familyKey, out var value) ? value : 0;
+        var isPdfInput = isFromPdf || string.Equals(Path.GetExtension(inputPath), ".pdf", StringComparison.OrdinalIgnoreCase);
+        if (!isPdfInput)
+            return _oemerTimeoutSeconds + (strike * _oemerTimeoutStrikeBoostSeconds);
+
+        var baseSeconds = Math.Max(_oemerTimeoutSeconds, _oemerPdfTimeoutMinSeconds);
+        long bytes;
+        if (knownSizeBytes >= 0)
+        {
+            bytes = knownSizeBytes;
+        }
+        else
+        {
+            try { bytes = new FileInfo(inputPath).Length; }
+            catch { bytes = 0; }
+        }
+        var sizeMb = Math.Max(1, (int)Math.Ceiling(bytes / (1024d * 1024d)));
+        var extraPages = Math.Max(0, pdfPageCount - 1);
+        var adaptive = baseSeconds
+                       + (sizeMb * _oemerPdfTimeoutPerMbSeconds)
+                       + (extraPages * _oemerPdfTimeoutPerPageSeconds)
+                       + (strike * _oemerTimeoutStrikeBoostSeconds);
+        var clamped = Math.Clamp(adaptive, _oemerPdfTimeoutMinSeconds, _oemerPdfTimeoutMaxSeconds);
+        if (isFromPdf)
+            LogDebug($"🎵 oemer timeout ({Path.GetFileName(inputPath)}): base={baseSeconds}s size={sizeMb}MB pages={Math.Max(1, pdfPageCount)} strike={strike} => {clamped}s");
+        return clamped;
+    }
+
+    private int GetEffectiveAudiverisParallel()
+    {
+        // Reservar al menos un core para UI/IO evita saturación en CPU-only.
+        var cpuBoundCap = Math.Max(1, Environment.ProcessorCount - 1);
+        return Math.Max(1, Math.Min(_audiverisParallel, cpuBoundCap));
+    }
+
+    private int GetEffectiveOemerParallel()
+    {
+        // Reservar al menos un core para UI/IO evita saturación en CPU-only.
+        var cpuBoundCap = Math.Max(1, Environment.ProcessorCount - 1);
+        return Math.Max(1, Math.Min(_oemerParallel, cpuBoundCap));
     }
 
     private static IEnumerable<string> SafeEnumerateFiles(string rootDir, Func<string, bool> filter)
@@ -2572,7 +3502,114 @@ public partial class MainWindow : Window, IAsyncDisposable
                 if (filter(f)) yield return f;
             IEnumerable<string> subdirs;
             try { subdirs = Directory.EnumerateDirectories(dir); } catch { continue; }
-            foreach (var d in subdirs) stack.Push(d);
+            foreach (var d in subdirs)
+            {
+                var dirName = Path.GetFileName(d);
+                if (!dirName.Equals("_AudiverisFailed", StringComparison.OrdinalIgnoreCase) &&
+                    !dirName.Equals("_OemerFailed", StringComparison.OrdinalIgnoreCase))
+                    stack.Push(d);
+            }
+        }
+    }
+
+    /// <summary>
+    /// Obtiene todos los archivos del directorio con caché de 60s para evitar re-escaneos en ciclos
+    /// Audiveris → oemer → Video que comparten la misma carpeta destino.
+    /// </summary>
+    private List<string> GetRawFilesFromDir(string rootDir)
+    {
+        var now = DateTime.UtcNow;
+        if (_rawFilesCache.TryGetValue(rootDir, out var cached) && now < cached.Time.Add(_rawFilesCacheTtl))
+            return cached.Files;
+        var files = SafeEnumerateFiles(rootDir, _ => true).ToList();
+        _rawFilesCache[rootDir] = (now, files);
+        return files;
+    }
+
+    private void InvalidateRawFilesCache(string rootDir)
+    {
+        if (string.IsNullOrWhiteSpace(rootDir))
+            return;
+        _rawFilesCache.Remove(rootDir);
+        _siblingSetCache.Remove(rootDir);
+    }
+
+    /// <summary>
+    /// Versión con caché de SafeEnumerateFiles. Evita re-escanear el árbol completo dentro del mismo ciclo.
+    /// </summary>
+    private IEnumerable<string> SafeEnumerateFilesCached(string rootDir, Func<string, bool> filter)
+        => GetRawFilesFromDir(rootDir).Where(filter);
+
+    /// <summary>
+    /// Versión con caché de BuildMusicScoreSiblingSet. Reutiliza el escaneo raw de GetRawFilesFromDir
+    /// y almacena el HashSet derivado con el mismo TTL.
+    /// </summary>
+    private HashSet<string> BuildMusicScoreSiblingSetCached(string rootDir)
+    {
+        var now = DateTime.UtcNow;
+        if (_siblingSetCache.TryGetValue(rootDir, out var cachedSet) && now < cachedSet.Time.Add(_rawFilesCacheTtl))
+            return cachedSet.Set;
+
+        var set = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        try
+        {
+            foreach (var f in GetRawFilesFromDir(rootDir))
+            {
+                var ext = Path.GetExtension(f);
+                if (!AudiverisOutputExtensions.Contains(ext)) continue;
+
+                var dir = Path.GetDirectoryName(f) ?? string.Empty;
+                var stem = Path.GetFileNameWithoutExtension(f);
+                string canonDir;
+                try { canonDir = Path.GetFullPath(dir); } catch { canonDir = dir; }
+
+                set.Add(canonDir + "|" + stem);
+
+                var dirName = Path.GetFileName(dir);
+                if (!string.IsNullOrEmpty(dirName) &&
+                    string.Equals(dirName, stem, StringComparison.OrdinalIgnoreCase))
+                {
+                    var parentDir = Path.GetDirectoryName(dir) ?? string.Empty;
+                    string canonParent;
+                    try { canonParent = Path.GetFullPath(parentDir); } catch { canonParent = parentDir; }
+                    set.Add(canonParent + "|" + stem);
+                }
+
+                // oemer página: stem_p0001.mxl → base stem sin sufijo _p\d+
+                var m = _pageSuffixRegex.Match(stem);
+                if (m.Success)
+                    set.Add(canonDir + "|" + m.Groups[1].Value);
+            }
+        }
+        catch { }
+
+        _siblingSetCache[rootDir] = (now, set);
+        return set;
+    }
+
+    /// <summary>
+    /// Mueve el PDF fallido a una subcarpeta <c>_AudiverisFailed</c> junto a él.
+    /// Devuelve la nueva ruta si tuvo éxito, null si el archivo ya no existe o el movimiento falló.
+    /// </summary>
+    private static string? MoveToAudiverisFailedFolder(string inputPath)
+    {
+        try
+        {
+            if (!File.Exists(inputPath)) return null;
+            var dir = Path.GetDirectoryName(inputPath);
+            if (string.IsNullOrEmpty(dir)) return null;
+            // Evitar doble anidado si el archivo ya está dentro de _AudiverisFailed/
+            if (Path.GetFileName(dir).Equals("_AudiverisFailed", StringComparison.OrdinalIgnoreCase))
+                return inputPath;
+            var failedDir = Path.Combine(dir, "_AudiverisFailed");
+            Directory.CreateDirectory(failedDir);
+            var dest = Path.Combine(failedDir, Path.GetFileName(inputPath));
+            File.Move(inputPath, dest, overwrite: true);
+            return dest;
+        }
+        catch
+        {
+            return null; // best-effort; el archivo queda donde está
         }
     }
 
@@ -2584,13 +3621,78 @@ public partial class MainWindow : Window, IAsyncDisposable
 
         foreach (var ext in AudiverisOutputExtensions)
         {
-            var candidate = Path.Combine(dir, stem + ext);
-            if (File.Exists(candidate)) return true;
-            // Audiveris puede generar stem/stem.ext en subdirectorio
-            var subCandidate = Path.Combine(dir, stem, stem + ext);
-            if (File.Exists(subCandidate)) return true;
+            // Exact match: stem.mxl
+            if (File.Exists(Path.Combine(dir, stem + ext))) return true;
+            // Audiveris: stem/stem.mxl subdirectorio
+            if (File.Exists(Path.Combine(dir, stem, stem + ext))) return true;
+            // oemer página: stem_p0001.mxl (generado por ConvertPdfWithOemerAsync)
+            try
+            {
+                if (Directory.EnumerateFiles(dir, stem + "_p*" + ext).Any()) return true;
+            }
+            catch { }
         }
         return false;
+    }
+
+    /// <summary>
+    /// Escanea rootDir una sola vez y construye un HashSet de claves "canonicalDir|stem"
+    /// para todos los archivos de salida de Audiveris (.mxl/.xml/.mscz/.mscx).
+    /// Usar con <see cref="HasMusicScoreSiblingFast"/> en operaciones sobre lotes grandes.
+    /// </summary>
+    private static HashSet<string> BuildMusicScoreSiblingSet(string rootDir)
+    {
+        var set = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        try
+        {
+            foreach (var f in Directory.EnumerateFiles(rootDir, "*.*", SearchOption.AllDirectories))
+            {
+                var ext = Path.GetExtension(f);
+                if (!AudiverisOutputExtensions.Contains(ext)) continue;
+
+                var dir = Path.GetDirectoryName(f) ?? string.Empty;
+                var stem = Path.GetFileNameWithoutExtension(f);
+                string canonDir;
+                try { canonDir = Path.GetFullPath(dir); } catch { canonDir = dir; }
+
+                // Coincidencia directa: destFolder/.../stem.ext → "canonDir|stem"
+                set.Add(canonDir + "|" + stem);
+
+                // Coincidencia en subdirectorio: destFolder/.../stem/stem.ext →
+                // la clave que usa HasMusicScoreSibling es el directorio padre
+                var dirName = Path.GetFileName(dir);
+                if (!string.IsNullOrEmpty(dirName) &&
+                    string.Equals(dirName, stem, StringComparison.OrdinalIgnoreCase))
+                {
+                    var parentDir = Path.GetDirectoryName(dir) ?? string.Empty;
+                    string canonParent;
+                    try { canonParent = Path.GetFullPath(parentDir); } catch { canonParent = parentDir; }
+                    set.Add(canonParent + "|" + stem);
+                }
+
+                // oemer página: stem_p0001.mxl → base stem sin sufijo _p\d+
+                // Así stem_p0001 → clave canonDir|stem (sin _p0001) para el PDF original
+                var pageSuffix = _pageSuffixRegex.Match(stem);
+                if (pageSuffix.Success)
+                {
+                    var baseStem = pageSuffix.Groups[1].Value;
+                    set.Add(canonDir + "|" + baseStem);
+                }
+            }
+        }
+        catch { }
+        return set;
+    }
+
+    /// <summary>O(1) variante de <see cref="HasMusicScoreSibling"/> usando un set preconstruido.</summary>
+    private static bool HasMusicScoreSiblingFast(string inputPath, HashSet<string> siblingSet)
+    {
+        var dir = Path.GetDirectoryName(inputPath);
+        var stem = Path.GetFileNameWithoutExtension(inputPath);
+        if (string.IsNullOrWhiteSpace(dir) || string.IsNullOrWhiteSpace(stem)) return false;
+        string canonDir;
+        try { canonDir = Path.GetFullPath(dir); } catch { canonDir = dir; }
+        return siblingSet.Contains(canonDir + "|" + stem);
     }
 
     private static string NormalizeAudiverisFamilyKey(string inputPath)
@@ -2609,7 +3711,7 @@ public partial class MainWindow : Window, IAsyncDisposable
         return fullDir.ToLowerInvariant() + "|" + stem.ToLowerInvariant();
     }
 
-    private static List<string> SelectFirstPerAudiverisFamily(IEnumerable<string> files, out int skippedDuplicates)
+    private static List<string> SelectFirstPerAudiverisFamily(IEnumerable<string> files, out int skippedDuplicates, out Dictionary<string, long> fileSizes)
     {
         var bestPerFamily = new Dictionary<string, (string Path, long Size)>(StringComparer.OrdinalIgnoreCase);
         var total = 0;
@@ -2632,13 +3734,16 @@ public partial class MainWindow : Window, IAsyncDisposable
         }
 
         skippedDuplicates = Math.Max(0, total - bestPerFamily.Count);
+        fileSizes = new Dictionary<string, long>(bestPerFamily.Count, StringComparer.OrdinalIgnoreCase);
+        foreach (var kv in bestPerFamily.Values)
+            fileSizes[kv.Path] = kv.Size;
         return bestPerFamily.Values
             .Select(v => v.Path)
             .OrderBy(f => f, StringComparer.OrdinalIgnoreCase)
             .ToList();
     }
 
-    private int ComputeAudiverisTimeoutSeconds(string inputPath)
+    private int ComputeAudiverisTimeoutSeconds(string inputPath, long knownSizeBytes = -1, int pdfPageCount = 1)
     {
         var familyKey = NormalizeAudiverisFamilyKey(inputPath);
         var strike = _audiverisTimeoutStrikes.TryGetValue(familyKey, out var value) ? value : 0;
@@ -2649,11 +3754,18 @@ public partial class MainWindow : Window, IAsyncDisposable
 
         var baseSeconds = Math.Max(_audiverisTimeoutSeconds, _audiverisPdfTimeoutMinSeconds);
         long bytes;
-        try { bytes = new FileInfo(inputPath).Length; }
-        catch { bytes = 0; }
+        if (knownSizeBytes >= 0)
+            bytes = knownSizeBytes;
+        else
+        {
+            try { bytes = new FileInfo(inputPath).Length; }
+            catch { bytes = 0; }
+        }
 
         var sizeMb = Math.Max(1, (int)Math.Ceiling(bytes / (1024d * 1024d)));
-        var adaptive = baseSeconds + (sizeMb * _audiverisPdfTimeoutPerMbSeconds) + (strike * _audiverisTimeoutStrikeBoostSeconds);
+        var extraPages = Math.Max(0, pdfPageCount - 1);
+        var adaptive = baseSeconds + (sizeMb * _audiverisPdfTimeoutPerMbSeconds) + (extraPages * _audiverisPdfTimeoutPerPageSeconds) + (strike * _audiverisTimeoutStrikeBoostSeconds);
+        LogDebug($"🎼 audiveris timeout ({Path.GetFileName(inputPath)}): base={baseSeconds}s size={sizeMb}MB pages={Math.Max(1, pdfPageCount)} strike={strike} => {Math.Clamp(adaptive, _audiverisPdfTimeoutMinSeconds, _audiverisPdfTimeoutMaxSeconds)}s");
         return Math.Clamp(adaptive, _audiverisPdfTimeoutMinSeconds, _audiverisPdfTimeoutMaxSeconds);
     }
 
@@ -2702,6 +3814,17 @@ public partial class MainWindow : Window, IAsyncDisposable
     }
 
     private static string? ResolveAudiverisExecutable()
+    {
+        lock (_audiverisExeCacheLock)
+        {
+            if (_audiverisExeCacheInitialized) return _audiverisExeCache;
+            _audiverisExeCache = ResolveAudiverisExecutableCore();
+            _audiverisExeCacheInitialized = true;
+            return _audiverisExeCache;
+        }
+    }
+
+    private static string? ResolveAudiverisExecutableCore()
     {
         var env = Environment.GetEnvironmentVariable("AUDIVERIS_EXE");
         if (!string.IsNullOrWhiteSpace(env) && File.Exists(env))
@@ -2752,14 +3875,18 @@ public partial class MainWindow : Window, IAsyncDisposable
         return null;
     }
 
-    private async Task<(bool Success, bool Partial, bool PageFailure)> RunAudiverisConversionAsync(string audiverisExe, string inputPath, string fallbackOutputDir = "", bool allowSiblingFallback = true)
+    private async Task<(bool Success, bool Partial, bool PageFailure)> RunAudiverisConversionAsync(string audiverisExe, string inputPath, string fallbackOutputDir = "", bool allowSiblingFallback = true, HashSet<string>? siblingSet = null, long knownSizeBytes = -1)
     {
         var outputDir = Path.GetDirectoryName(inputPath) ?? (string.IsNullOrEmpty(fallbackOutputDir) ? string.Empty : fallbackOutputDir);
+        bool HasSiblingFastOrSlow(string path)
+            => siblingSet is not null ? HasMusicScoreSiblingFast(path, siblingSet) : HasMusicScoreSibling(path);
         static string Tail(string s) => s.Length > 500 ? "..." + s[^500..] : s;
 
         async Task<(int exitCode, string stdout, string stderr)> RunAudiverisOnceAsync(string currentInputPath, IEnumerable<string> extraArgs)
         {
-            var timeoutSeconds = ComputeAudiverisTimeoutSeconds(currentInputPath);
+            // Use pre-computed size when processing the original input path to avoid a second stat() call
+            var sizeForTimeout = string.Equals(currentInputPath, inputPath, StringComparison.OrdinalIgnoreCase) ? knownSizeBytes : -1L;
+            var timeoutSeconds = ComputeAudiverisTimeoutSeconds(currentInputPath, sizeForTimeout);
             var audiverisTimeout = TimeSpan.FromSeconds(timeoutSeconds);
             var psi = new System.Diagnostics.ProcessStartInfo
             {
@@ -2788,11 +3915,15 @@ public partial class MainWindow : Window, IAsyncDisposable
             LogDebug($"🎼 Audiveris spawn ({Path.GetFileName(currentInputPath)}): timeout={timeoutSeconds}s args={argPreview}");
 
             using var process = new System.Diagnostics.Process { StartInfo = psi };
-            process.Start();
+            if (!process.Start())
+                throw new InvalidOperationException($"No se pudo iniciar Audiveris: {psi.FileName}");
             var stdoutTask = process.StandardOutput.ReadToEndAsync();
             var stderrTask = process.StandardError.ReadToEndAsync();
             var waitTask = process.WaitForExitAsync();
-            var completed = await Task.WhenAny(waitTask, Task.Delay(audiverisTimeout)).ConfigureAwait(true);
+            // Delay con CancellationToken para que no quede timer huérfano tras éxito
+            using var delayCts = new CancellationTokenSource();
+            var delayTask = Task.Delay(audiverisTimeout, delayCts.Token);
+            var completed = await Task.WhenAny(waitTask, delayTask).ConfigureAwait(true);
             if (completed != waitTask)
             {
                 try
@@ -2802,22 +3933,35 @@ public partial class MainWindow : Window, IAsyncDisposable
                 }
                 catch { }
 
-                await Task.WhenAll(stdoutTask, stderrTask).ConfigureAwait(true);
+                try { await Task.WhenAll(stdoutTask, stderrTask, waitTask).ConfigureAwait(true); } catch { }
                 throw new TimeoutException($"Audiveris timeout tras {audiverisTimeout.TotalMinutes:0.#} min ({timeoutSeconds}s)");
             }
 
+            delayCts.Cancel(); // libera el timer del Delay antes de que expire
             await waitTask.ConfigureAwait(true);
             await Task.WhenAll(stdoutTask, stderrTask).ConfigureAwait(true);
-            var stdout = (await stdoutTask.ConfigureAwait(true)).Trim();
-            var stderr = (await stderrTask.ConfigureAwait(true)).Trim();
+            var stdout = stdoutTask.Result.Trim();
+            var stderr = stderrTask.Result.Trim();
             LogDebug($"🎼 Audiveris exit ({Path.GetFileName(currentInputPath)}): code={process.ExitCode}");
             return (process.ExitCode, stdout, stderr);
+        }
+
+        static bool IsAudiverisPageFailure(string text)
+        {
+            if (string.IsNullOrWhiteSpace(text)) return false;
+            if (text.Contains("Error in reaching step PAGE", StringComparison.OrdinalIgnoreCase)) return true;
+            if (text.Contains("reaching step PAGE", StringComparison.OrdinalIgnoreCase)) return true;
+            if (text.Contains("step PAGE", StringComparison.OrdinalIgnoreCase) &&
+                text.Contains("error", StringComparison.OrdinalIgnoreCase)) return true;
+            if (text.Contains("PAGE", StringComparison.OrdinalIgnoreCase) &&
+                text.Contains("StepException", StringComparison.OrdinalIgnoreCase)) return true;
+            return false;
         }
 
         (bool Success, bool Partial, bool PageFailure) BuildFailureResult((int exitCode, string stdout, string stderr) attempt, string attemptedPath)
         {
             var firstCombined = string.Join("\n", new[] { attempt.stderr, attempt.stdout }.Where(s => !string.IsNullOrWhiteSpace(s)));
-            var isPageFailure = firstCombined.Contains("Error in reaching step PAGE", StringComparison.OrdinalIgnoreCase);
+            var isPageFailure = IsAudiverisPageFailure(firstCombined);
             if (isPageFailure)
             {
                 DeleteAudiverisPartialOutputs(attemptedPath);
@@ -2832,6 +3976,20 @@ public partial class MainWindow : Window, IAsyncDisposable
             return (false, false, false);
         }
 
+        bool CanFallbackToSibling(string originalInputPath, out string siblingPath)
+        {
+            siblingPath = string.Empty;
+            if (!TryGetAudiverisSiblingVariant(originalInputPath, out var candidateSiblingPath))
+                return false;
+            if (HasSiblingFastOrSlow(candidateSiblingPath))
+                return false;
+            var siblingFamilyKey = NormalizeAudiverisFamilyKey(candidateSiblingPath);
+            if (IsAudiverisFamilyInTimeoutCooldown(candidateSiblingPath, siblingFamilyKey))
+                return false;
+            siblingPath = candidateSiblingPath;
+            return true;
+        }
+
         try
         {
             var firstTry = await RunAudiverisOnceAsync(inputPath, Array.Empty<string>()).ConfigureAwait(true);
@@ -2842,9 +4000,7 @@ public partial class MainWindow : Window, IAsyncDisposable
             if (!allowSiblingFallback || firstFail.PageFailure)
                 return firstFail;
 
-            if (!TryGetAudiverisSiblingVariant(inputPath, out var siblingPath))
-                return firstFail;
-            if (HasMusicScoreSibling(siblingPath) || IsAudiverisFamilyInTimeoutCooldown(siblingPath))
+            if (!CanFallbackToSibling(inputPath, out var siblingPath))
                 return firstFail;
 
             Log($"ℹ️ Audiveris fallback: {Path.GetFileName(inputPath)} fallo; reintento con variante hermana {Path.GetFileName(siblingPath)}.");
@@ -2853,7 +4009,7 @@ public partial class MainWindow : Window, IAsyncDisposable
                 return (true, false, false);
             return BuildFailureResult(siblingTry, siblingPath);
         }
-        catch (TimeoutException) when (allowSiblingFallback && TryGetAudiverisSiblingVariant(inputPath, out var siblingPath) && !HasMusicScoreSibling(siblingPath) && !IsAudiverisFamilyInTimeoutCooldown(siblingPath))
+        catch (TimeoutException) when (allowSiblingFallback && CanFallbackToSibling(inputPath, out var siblingPath))
         {
             Log($"ℹ️ Audiveris fallback por timeout: {Path.GetFileName(inputPath)}; reintento con variante hermana {Path.GetFileName(siblingPath)}.");
             var siblingTry = await RunAudiverisOnceAsync(siblingPath, Array.Empty<string>()).ConfigureAwait(true);
@@ -2865,9 +4021,10 @@ public partial class MainWindow : Window, IAsyncDisposable
 
     // ── Video generation (MuseScore directo) ───────────────────────────────────
 
-    private static readonly string[] VideoInputExtensions = [".mscz", ".mxl", ".xml", ".musicxml"];
+    private static readonly HashSet<string> VideoInputExtensions = new(StringComparer.OrdinalIgnoreCase) { ".mscz", ".mxl", ".xml", ".musicxml" };
 
     private volatile bool _videoRunning;
+    private CancellationTokenSource? _videoCts;
     private readonly int _videoTimeoutSeconds = ReadFeatureFlagInt("SCOREDOWN_VIDEO_TIMEOUT_SEC", 600, 30, 7200);
     private readonly int _videoParallel = ReadFeatureFlagInt("SCOREDOWN_VIDEO_PARALLEL", 1, 1, 4);
 
@@ -2894,7 +4051,7 @@ public partial class MainWindow : Window, IAsyncDisposable
         var extraVideoArgs = ResolveMuseScoreVideoArgs();
         var soundProfile = GetArgValue(extraVideoArgs, "--sound-profile") ?? "MuseSounds";
 
-        var inputs = SafeEnumerateFiles(destFolder, f => VideoInputExtensions.Contains(Path.GetExtension(f), StringComparer.OrdinalIgnoreCase))
+        var inputs = SafeEnumerateFilesCached(destFolder, f => VideoInputExtensions.Contains(Path.GetExtension(f)))
             .ToList();
 
         if (inputs.Count == 0)
@@ -2913,19 +4070,20 @@ public partial class MainWindow : Window, IAsyncDisposable
         Log($"🎥 Video: ejecución automática para {pending.Count} partitura(s). Perfil audio: {soundProfile}");
 
         _videoRunning = true;
+        _videoCts = new CancellationTokenSource();
         btnGenerateVideo.IsEnabled = false;
+        btnCancelVideo.IsEnabled = true;
         btnSearch.IsEnabled = false;
         btnDownload.IsEnabled = false;
         txtStatus.Text = "🎥 Generando vídeos...";
 
-        var videoTimeout = TimeSpan.FromSeconds(_videoTimeoutSeconds);
         int ok = 0, fail = 0, processed = 0;
         try
         {
             await Parallel.ForEachAsync(
                 pending,
-                new ParallelOptions { MaxDegreeOfParallelism = _videoParallel },
-                async (input, _) =>
+                new ParallelOptions { MaxDegreeOfParallelism = _videoParallel, CancellationToken = _videoCts.Token },
+                async (input, ct) =>
                 {
                     var name = Path.GetFileName(input);
                     var idx = Interlocked.Increment(ref processed);
@@ -2940,16 +4098,12 @@ public partial class MainWindow : Window, IAsyncDisposable
                     bool generated;
                     try
                     {
-                        var videoTask = RunMuseScoreVideoAsync(museScoreExe, input, outputMp4, extraVideoArgs);
-                        var completed = await Task.WhenAny(videoTask, Task.Delay(videoTimeout)).ConfigureAwait(false);
-                        if (completed != videoTask)
-                            throw new TimeoutException($"MuseScore timeout tras {videoTimeout.TotalMinutes:0.#} min");
-                        generated = await videoTask.ConfigureAwait(false);
+                        generated = await RunMuseScoreVideoAsync(museScoreExe, input, outputMp4, extraVideoArgs, ct).ConfigureAwait(false);
                     }
-                    catch (TimeoutException tex)
+                    catch (Exception ex) when (ex is not OperationCanceledException)
                     {
                         Interlocked.Increment(ref fail);
-                        Log($"❌ Video timeout en {name}: {tex.Message}");
+                        Log($"❌ Video error en {name}: {ex.Message}");
                         return;
                     }
 
@@ -2958,6 +4112,12 @@ public partial class MainWindow : Window, IAsyncDisposable
                 }).ConfigureAwait(true);
 
             var msg = $"🎥 Vídeos completados: {ok} OK, {fail} sin generar";
+            txtStatus.Text = msg;
+            Log(msg);
+        }
+        catch (OperationCanceledException)
+        {
+            var msg = $"⏹️ Vídeo cancelado por usuario (ok={ok}, fail={fail})";
             txtStatus.Text = msg;
             Log(msg);
         }
@@ -2970,10 +4130,20 @@ public partial class MainWindow : Window, IAsyncDisposable
         finally
         {
             _videoRunning = false;
+            _videoCts?.Dispose();
+            _videoCts = null;
             btnGenerateVideo.IsEnabled = true;
+            btnCancelVideo.IsEnabled = false;
             btnSearch.IsEnabled = true;
             UpdateDownloadButton();
         }
+    }
+
+    private void BtnCancelVideo_Click(object sender, RoutedEventArgs e)
+    {
+        _videoCts?.Cancel();
+        if (btnCancelVideo != null) btnCancelVideo.IsEnabled = false;
+        Log("⏹️ Cancelando generación de vídeo...");
     }
 
     private static bool HasVideoSibling(string inputPath)
@@ -3089,7 +4259,7 @@ public partial class MainWindow : Window, IAsyncDisposable
         }
     }
 
-    private async Task<bool> RunMuseScoreVideoAsync(string museScoreExe, string inputPath, string outputMp4, IReadOnlyList<string> extraVideoArgs)
+    private async Task<bool> RunMuseScoreVideoAsync(string museScoreExe, string inputPath, string outputMp4, IReadOnlyList<string> extraVideoArgs, CancellationToken ct = default)
     {
         var args = new List<string>(extraVideoArgs.Count + 5);
         args.Add("--score-video");
@@ -3097,7 +4267,7 @@ public partial class MainWindow : Window, IAsyncDisposable
         args.Add("-o");
         args.Add(outputMp4);
         args.Add(inputPath);
-        var autoOk = await RunProcessAsync(museScoreExe, args, Path.GetFileName(inputPath), "MuseScore MP4", TimeSpan.FromSeconds(_videoTimeoutSeconds)).ConfigureAwait(true);
+        var autoOk = await RunProcessAsync(museScoreExe, args, Path.GetFileName(inputPath), "MuseScore MP4", TimeSpan.FromSeconds(_videoTimeoutSeconds), ct).ConfigureAwait(true);
         return autoOk && File.Exists(outputMp4);
     }
 
@@ -3146,7 +4316,7 @@ public partial class MainWindow : Window, IAsyncDisposable
         return false;
     }
 
-    private async Task<bool> RunProcessAsync(string exe, IEnumerable<string> args, string inputName, string stage, TimeSpan? timeout = null)
+    private async Task<bool> RunProcessAsync(string exe, IEnumerable<string> args, string inputName, string stage, TimeSpan? timeout = null, CancellationToken ct = default)
     {
         var psi = new System.Diagnostics.ProcessStartInfo
         {
@@ -3160,34 +4330,49 @@ public partial class MainWindow : Window, IAsyncDisposable
             psi.ArgumentList.Add(arg);
 
         using var process = new System.Diagnostics.Process { StartInfo = psi };
-        process.Start();
+        if (!process.Start())
+            throw new InvalidOperationException($"No se pudo iniciar el proceso: {psi.FileName}");
         var stdoutTask = process.StandardOutput.ReadToEndAsync();
         var stderrTask = process.StandardError.ReadToEndAsync();
-        var waitTask = process.WaitForExitAsync();
+        var waitTask = process.WaitForExitAsync(ct);
 
         // Leer pipes en paralelo con WaitForExit para evitar deadlock por buffer lleno
         var allDone = Task.WhenAll(waitTask, stdoutTask, stderrTask);
         if (timeout.HasValue)
         {
-            var completed = await Task.WhenAny(allDone, Task.Delay(timeout.Value)).ConfigureAwait(true);
+            using var delayCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            var delayTask = Task.Delay(timeout.Value, delayCts.Token);
+            var completed = await Task.WhenAny(allDone, delayTask).ConfigureAwait(true);
             if (completed != allDone)
             {
                 try { if (!process.HasExited) process.Kill(entireProcessTree: true); } catch { }
-                await allDone.ConfigureAwait(true);
-                Log($"⚠️ {stage} timeout ({inputName}): proces killed tras {timeout.Value.TotalSeconds:0}s");
+                try { await allDone.ConfigureAwait(true); } catch { }
+                if (ct.IsCancellationRequested)
+                    throw new OperationCanceledException($"{stage} cancelado por usuario", ct);
+                Log($"⚠️ {stage} timeout ({inputName}): proceso killed tras {timeout.Value.TotalSeconds:0}s");
                 return false;
             }
+            delayCts.Cancel();
         }
-        else
+        try
         {
             await allDone.ConfigureAwait(true);
+        }
+        catch (OperationCanceledException)
+        {
+            try { if (!process.HasExited) process.Kill(entireProcessTree: true); } catch { }
+            try { await Task.WhenAll(stdoutTask, stderrTask).ConfigureAwait(true); } catch { }
+            throw;
         }
 
         if (process.ExitCode == 0)
             return true;
 
-        var err = (await stderrTask.ConfigureAwait(true)).Trim();
-        var msg = string.IsNullOrWhiteSpace(err) ? $"exit={process.ExitCode}" : err;
+        var err = stderrTask.Result.Trim();
+        var stdout = stdoutTask.Result.Trim();
+        var msg = !string.IsNullOrWhiteSpace(err) ? err
+            : !string.IsNullOrWhiteSpace(stdout) ? stdout
+            : $"exit={process.ExitCode}";
         Log($"⚠️ {stage} fallo ({inputName}): {msg}");
         return false;
     }
@@ -3213,10 +4398,22 @@ public partial class MainWindow : Window, IAsyncDisposable
     {
         if (_downloadQueue is null) return;
 
+        // Match by DownloadUrl first (precise); fallback to FileName for items enqueued without URL
         var item = _downloadQueue.FirstOrDefault(q =>
-            string.Equals(q.FileName, file.FileName, StringComparison.OrdinalIgnoreCase) && q.Percent < 100.0);
+            q.SourceFile is not null &&
+            string.Equals(q.SourceFile.DownloadUrl, file.DownloadUrl, StringComparison.OrdinalIgnoreCase) &&
+            q.Percent < 100.0);
         if (item is null)
-            item = _downloadQueue.FirstOrDefault(q => string.Equals(q.FileName, file.FileName, StringComparison.OrdinalIgnoreCase));
+            item = _downloadQueue.FirstOrDefault(q =>
+                q.SourceFile is not null &&
+                string.Equals(q.SourceFile.DownloadUrl, file.DownloadUrl, StringComparison.OrdinalIgnoreCase));
+        // Last-resort: filename only (legacy, handles items with no URL)
+        if (item is null)
+            item = _downloadQueue.FirstOrDefault(q =>
+                string.Equals(q.FileName, file.FileName, StringComparison.OrdinalIgnoreCase) && q.Percent < 100.0);
+        if (item is null)
+            item = _downloadQueue.FirstOrDefault(q =>
+                string.Equals(q.FileName, file.FileName, StringComparison.OrdinalIgnoreCase));
         if (item is null) return;
 
         item.Percent = percent;
@@ -3276,8 +4473,9 @@ public partial class MainWindow : Window, IAsyncDisposable
         _allResults.Clear();
         _filtered.Clear();
         _knownComposersCache.Clear();
-        lstResults.ItemsSource = null;
-        lstResults.ItemsSource = _filtered;
+        // No reasignar lstResults.ItemsSource — el binding a _resultsView.View
+        // se establece en el ctor (R8) y debe permanecer activo.
+        // _allResults.Clear() dispara CollectionChanged y limpia la vista.
         txtResultCount.Text = "Sin resultados";
         btnDownload.IsEnabled = false;
         btnExportJson.IsEnabled = false;
@@ -3321,7 +4519,9 @@ public partial class MainWindow : Window, IAsyncDisposable
     }
 
     private static string BuildTagKey(PartituraItem item)
-        => NormalizeKey(item.Source) + "|" + BuildDedupKey(item);
+        // Use only stable identity (source+composer+title), NOT file signatures.
+        // File signatures change when URLs rotate or new formats are added → tags lost.
+        => NormalizeKey(item.Source) + "|" + NormalizeKey(item.Composer) + "|" + NormalizeKey(item.Title);
 
     private void UpdateCacheStats()
     {
@@ -3343,9 +4543,26 @@ public partial class MainWindow : Window, IAsyncDisposable
             return;
         }
 
-        // Compatibilidad hacia atrás: tags guardados antes de incluir Source en la clave.
-        var legacyKey = BuildDedupKey(item);
-        item.UserTag = _savedTags.TryGetValue(legacyKey, out var legacyTag) ? legacyTag : string.Empty;
+        // Compatibilidad hacia atrás 1: clave con Source+DedupKey(composer+title+firma-archivos)
+        var legacyKeyV2 = NormalizeKey(item.Source) + "|" + BuildDedupKey(item);
+        if (_savedTags.TryGetValue(legacyKeyV2, out var tagV2))
+        {
+            item.UserTag = tagV2;
+            // Migrar a clave estable
+            _savedTags[key] = tagV2;
+            return;
+        }
+
+        // Compatibilidad hacia atrás 2: clave sin Source (antes de Round 10)
+        var legacyKeyV1 = BuildDedupKey(item);
+        if (_savedTags.TryGetValue(legacyKeyV1, out var tagV1))
+        {
+            item.UserTag = tagV1;
+            _savedTags[key] = tagV1;
+            return;
+        }
+
+        item.UserTag = string.Empty;
     }
 
     private void LoadDownloadHistory()
@@ -3387,17 +4604,23 @@ public partial class MainWindow : Window, IAsyncDisposable
 
             try
             {
-                _audiverisKnownPageFailures.Add(Path.GetFullPath(path));
+                _audiverisKnownPageFailures.TryAdd(Path.GetFullPath(path), 0);
             }
             catch { }
         }
+        _audiverisKnownPageFailuresDirty = false;
 
         if (_audiverisKnownPageFailures.Count > 0)
             Log($"ℹ️ Audiveris: {_audiverisKnownPageFailures.Count} PAGE fail(s) cargados de sesión previa.");
     }
 
     private void SaveAudiverisPageFailures()
-        => JsonStore.Save(_audiverisPageFailuresPath, _audiverisKnownPageFailures.OrderBy(p => p).ToList());
+    {
+        if (!_audiverisKnownPageFailuresDirty)
+            return;
+        JsonStore.Save(_audiverisPageFailuresPath, _audiverisKnownPageFailures.Keys.OrderBy(p => p).ToList());
+        _audiverisKnownPageFailuresDirty = false;
+    }
 
     private sealed class AudiverisTimeoutFamilyEntry
     {
@@ -3420,10 +4643,13 @@ public partial class MainWindow : Window, IAsyncDisposable
 
         if (_audiverisTimeoutFamilies.Count > 0)
             Log($"ℹ️ Audiveris: {_audiverisTimeoutFamilies.Count} familia(s) en cooldown por timeout cargadas de sesión previa.");
+        _audiverisTimeoutFamiliesDirty = false;
     }
 
     private void SaveAudiverisTimeoutFamilies()
     {
+        if (!_audiverisTimeoutFamiliesDirty)
+            return;
         var now = DateTime.UtcNow;
         var snapshot = _audiverisTimeoutFamilies
             .Where(kv => kv.Value > now)
@@ -3431,6 +4657,7 @@ public partial class MainWindow : Window, IAsyncDisposable
             .OrderBy(x => x.FamilyKey, StringComparer.OrdinalIgnoreCase)
             .ToList();
         JsonStore.Save(_audiverisTimeoutFamiliesPath, snapshot);
+        _audiverisTimeoutFamiliesDirty = false;
     }
 
     private void UpdateAudiverisStatus()
@@ -3475,6 +4702,37 @@ public partial class MainWindow : Window, IAsyncDisposable
         public DateTime LastTimeoutUtc { get; set; }
     }
 
+    private sealed class TimeoutTelemetryEntry
+    {
+        public string FamilyKey { get; set; } = string.Empty;
+        public int ComputedTimeoutSeconds { get; set; }
+        public double ActualElapsedSeconds { get; set; }
+        public bool TimedOut { get; set; }
+        public DateTime DateUtc { get; set; }
+    }
+
+    /// <summary>Ring-buffer telemetry: appends entry, keeps last <paramref name="maxEntries"/> (default 50). Thread-safe via file lock.</summary>
+    private static void AppendTelemetry(string path, TimeoutTelemetryEntry entry, int maxEntries = 50)
+    {
+        try
+        {
+            var dir = Path.GetDirectoryName(path);
+            if (!string.IsNullOrEmpty(dir)) Directory.CreateDirectory(dir);
+            List<TimeoutTelemetryEntry> list = [];
+            if (File.Exists(path))
+            {
+                try { list = JsonSerializer.Deserialize<List<TimeoutTelemetryEntry>>(File.ReadAllText(path)) ?? []; }
+                catch { list = []; }
+            }
+            list.Add(entry);
+            if (list.Count > maxEntries) list.RemoveRange(0, list.Count - maxEntries);
+            var tmp = path + ".tmp";
+            File.WriteAllText(tmp, JsonSerializer.Serialize(list, new JsonSerializerOptions { WriteIndented = true }), System.Text.Encoding.UTF8);
+            File.Move(tmp, path, overwrite: true);
+        }
+        catch { }
+    }
+
     private void LoadAudiverisTimeoutStrikes()
     {
         var decayHours = _audiverisStrikeDecayHours;
@@ -3487,16 +4745,20 @@ public partial class MainWindow : Window, IAsyncDisposable
             if (string.IsNullOrWhiteSpace(kv.Key) || kv.Value is null || kv.Value.Strikes <= 0) continue;
             // Decay: -1 strike per decayHours elapsed since last timeout
             var hoursElapsed = (now - kv.Value.LastTimeoutUtc).TotalHours;
+            if (hoursElapsed < 0) hoursElapsed = 0; // guard: clock adjusted backward
             var decayed = (int)Math.Floor(hoursElapsed / decayHours);
             var strikes = Math.Max(0, kv.Value.Strikes - decayed);
             if (strikes <= 0) continue;
             _audiverisTimeoutStrikes[kv.Key] = Math.Clamp(strikes, 1, 12);
             _audiverisStrikeLastUtc[kv.Key] = kv.Value.LastTimeoutUtc;
         }
+        _audiverisTimeoutStrikesDirty = false;
     }
 
     private void SaveAudiverisTimeoutStrikes()
     {
+        if (!_audiverisTimeoutStrikesDirty)
+            return;
         var snapshot = _audiverisTimeoutStrikes
             .Where(kv => kv.Value > 0)
             .ToDictionary(
@@ -3508,24 +4770,36 @@ public partial class MainWindow : Window, IAsyncDisposable
                 },
                 StringComparer.OrdinalIgnoreCase);
         JsonStore.Save(_audiverisTimeoutStrikesPath, snapshot);
+        _audiverisTimeoutStrikesDirty = false;
     }
 
-    private bool IsAudiverisFamilyInTimeoutCooldown(string inputPath)
+    private bool IsAudiverisFamilyInTimeoutCooldown(string inputPath, string? familyKey = null)
     {
-        var familyKey = NormalizeAudiverisFamilyKey(inputPath);
+        familyKey ??= NormalizeAudiverisFamilyKey(inputPath);
+        // Aplicar strike decay si ha pasado el tiempo
+        if (_audiverisStrikeLastUtc.TryGetValue(familyKey, out var lastStrikeUtc))
+        {
+            var decayHours = _audiverisStrikeDecayHours;
+            if (DateTime.UtcNow > lastStrikeUtc.AddHours(decayHours))
+            {
+                if (_audiverisTimeoutStrikes.TryRemove(familyKey, out _))
+                    _audiverisTimeoutStrikesDirty = true;
+                if (_audiverisStrikeLastUtc.TryRemove(familyKey, out _))
+                    _audiverisTimeoutStrikesDirty = true;
+            }
+        }
         if (!_audiverisTimeoutFamilies.TryGetValue(familyKey, out var expiresUtc))
             return false;
-
         if (expiresUtc > DateTime.UtcNow)
             return true;
-
-        _audiverisTimeoutFamilies.TryRemove(familyKey, out _);
+        if (_audiverisTimeoutFamilies.TryRemove(familyKey, out _))
+            _audiverisTimeoutFamiliesDirty = true;
         return false;
     }
 
-    private void MarkAudiverisFamilyTimeout(string inputPath)
+    private void MarkAudiverisFamilyTimeout(string inputPath, string? familyKey = null)
     {
-        var familyKey = NormalizeAudiverisFamilyKey(inputPath);
+        familyKey ??= NormalizeAudiverisFamilyKey(inputPath);
         var now = DateTime.UtcNow;
 
         // Increment strikes first (cap at 12)
@@ -3543,6 +4817,214 @@ public partial class MainWindow : Window, IAsyncDisposable
             familyKey,
             expiresUtc,
             (_, current) => current > expiresUtc ? current : expiresUtc);
+        _audiverisTimeoutFamiliesDirty = true;
+        _audiverisTimeoutStrikesDirty = true;
+    }
+
+    // ── oemer persistence & cooldown ───────────────────────────────────────
+
+    private void LoadOemerPageFailures()
+    {
+        var entries = JsonStore.Load<List<string>>(_oemerPageFailuresPath, []);
+        _oemerKnownPageFailures.Clear();
+        foreach (var path in entries)
+        {
+            if (string.IsNullOrWhiteSpace(path)) continue;
+            try { _oemerKnownPageFailures.TryAdd(Path.GetFullPath(path), 0); } catch { }
+        }
+        _oemerKnownPageFailuresDirty = false;
+        if (_oemerKnownPageFailures.Count > 0)
+            Log($"ℹ️ oemer: {_oemerKnownPageFailures.Count} fallo(s) permanentes cargados de sesión previa.");
+    }
+
+    private void SaveOemerPageFailures()
+    {
+        if (!_oemerKnownPageFailuresDirty)
+            return;
+        JsonStore.Save(_oemerPageFailuresPath, _oemerKnownPageFailures.Keys.OrderBy(p => p).ToList());
+        _oemerKnownPageFailuresDirty = false;
+    }
+
+    private void LoadOemerTimeoutFamilies()
+    {
+        var now = DateTime.UtcNow;
+        var entries = JsonStore.Load<List<AudiverisTimeoutFamilyEntry>>(_oemerTimeoutFamiliesPath, []);
+        _oemerTimeoutFamilies.Clear();
+        foreach (var entry in entries)
+        {
+            if (entry is null || string.IsNullOrWhiteSpace(entry.FamilyKey) || entry.ExpiresUtc <= now) continue;
+            _oemerTimeoutFamilies[entry.FamilyKey] = entry.ExpiresUtc;
+        }
+        if (_oemerTimeoutFamilies.Count > 0)
+            Log($"ℹ️ oemer: {_oemerTimeoutFamilies.Count} familia(s) en cooldown cargadas de sesión previa.");
+        _oemerTimeoutFamiliesDirty = false;
+    }
+
+    private void SaveOemerTimeoutFamilies()
+    {
+        if (!_oemerTimeoutFamiliesDirty)
+            return;
+        var now = DateTime.UtcNow;
+        var snapshot = _oemerTimeoutFamilies
+            .Where(kv => kv.Value > now)
+            .Select(kv => new AudiverisTimeoutFamilyEntry { FamilyKey = kv.Key, ExpiresUtc = kv.Value })
+            .OrderBy(x => x.FamilyKey, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        JsonStore.Save(_oemerTimeoutFamiliesPath, snapshot);
+        _oemerTimeoutFamiliesDirty = false;
+    }
+
+    private void LoadOemerTimeoutStrikes()
+    {
+        var decayHours = _oemerStrikeDecayHours;
+        var now = DateTime.UtcNow;
+        var data = JsonStore.Load<Dictionary<string, AudiverisStrikeRecord>>(_oemerTimeoutStrikesPath, []);
+        _oemerTimeoutStrikes.Clear();
+        _oemerStrikeLastUtc.Clear();
+        foreach (var kv in data)
+        {
+            if (string.IsNullOrWhiteSpace(kv.Key) || kv.Value is null || kv.Value.Strikes <= 0) continue;
+            var hoursElapsed = (now - kv.Value.LastTimeoutUtc).TotalHours;
+            if (hoursElapsed < 0) hoursElapsed = 0; // guard: clock adjusted backward
+            var decayed = (int)Math.Floor(hoursElapsed / decayHours);
+            var strikes = Math.Max(0, kv.Value.Strikes - decayed);
+            if (strikes <= 0) continue;
+            _oemerTimeoutStrikes[kv.Key] = Math.Clamp(strikes, 1, 12);
+            _oemerStrikeLastUtc[kv.Key] = kv.Value.LastTimeoutUtc;
+        }
+        _oemerTimeoutStrikesDirty = false;
+    }
+
+    private void SaveOemerTimeoutStrikes()
+    {
+        if (!_oemerTimeoutStrikesDirty)
+            return;
+        var snapshot = _oemerTimeoutStrikes
+            .Where(kv => kv.Value > 0)
+            .ToDictionary(
+                kv => kv.Key,
+                kv => new AudiverisStrikeRecord
+                {
+                    Strikes = kv.Value,
+                    LastTimeoutUtc = _oemerStrikeLastUtc.TryGetValue(kv.Key, out var ts) ? ts : DateTime.UtcNow
+                },
+                StringComparer.OrdinalIgnoreCase);
+        JsonStore.Save(_oemerTimeoutStrikesPath, snapshot);
+        _oemerTimeoutStrikesDirty = false;
+    }
+
+    private bool IsOemerFamilyInTimeoutCooldown(string inputPath, string? familyKey = null)
+    {
+        familyKey ??= NormalizeAudiverisFamilyKey(inputPath);
+        // Aplicar strike decay si ha pasado el tiempo
+        if (_oemerStrikeLastUtc.TryGetValue(familyKey, out var lastStrikeUtc))
+        {
+            var decayHours = _oemerStrikeDecayHours;
+            if (DateTime.UtcNow > lastStrikeUtc.AddHours(decayHours))
+            {
+                if (_oemerTimeoutStrikes.TryRemove(familyKey, out _))
+                    _oemerTimeoutStrikesDirty = true;
+                if (_oemerStrikeLastUtc.TryRemove(familyKey, out _))
+                    _oemerTimeoutStrikesDirty = true;
+            }
+        }
+        if (!_oemerTimeoutFamilies.TryGetValue(familyKey, out var expiresUtc))
+            return false;
+        if (expiresUtc > DateTime.UtcNow)
+            return true;
+        if (_oemerTimeoutFamilies.TryRemove(familyKey, out _))
+            _oemerTimeoutFamiliesDirty = true;
+        return false;
+    }
+
+    private void MarkOemerFamilyTimeout(string inputPath, string? familyKey = null)
+    {
+        familyKey ??= NormalizeAudiverisFamilyKey(inputPath);
+        var now = DateTime.UtcNow;
+        var newStrikes = _oemerTimeoutStrikes.AddOrUpdate(
+            familyKey, 1, (_, current) => Math.Clamp(current + 1, 1, 12));
+        _oemerStrikeLastUtc[familyKey] = now;
+        var multiplier = Math.Min(Math.Pow(2, newStrikes - 1), 1024.0);
+        var cooldownMinutes = (long)Math.Min(_oemerTimeoutCooldownMinutes * multiplier, 10080.0);
+        var expiresUtc = now.AddMinutes(cooldownMinutes);
+        _oemerTimeoutFamilies.AddOrUpdate(familyKey, expiresUtc, (_, current) => current > expiresUtc ? current : expiresUtc);
+        _oemerTimeoutFamiliesDirty = true;
+        _oemerTimeoutStrikesDirty = true;
+    }
+
+    /// <summary>Filtra <paramref name="files"/> omitiendo los que están en cooldown según <paramref name="isCooldown"/>.
+    /// Devuelve los archivos no bloqueados. <paramref name="skippedCount"/> = total archivos omitidos;
+    /// <paramref name="skippedFamilyKeys"/> = claves de familia únicas omitidas.</summary>
+    private List<string> FilterByCooldown(
+        IEnumerable<string> files,
+        Func<string, string?, bool> isCooldown,
+        out int skippedCount,
+        out HashSet<string> skippedFamilyKeys)
+    {
+        skippedCount = 0;
+        skippedFamilyKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var result = new List<string>();
+        foreach (var file in files)
+        {
+            var fk = NormalizeAudiverisFamilyKey(file);
+            if (isCooldown(file, fk))
+            {
+                skippedCount++;
+                skippedFamilyKeys.Add(fk);
+            }
+            else
+            {
+                result.Add(file);
+            }
+        }
+        return result;
+    }
+
+    /// <summary>Devuelve un sufijo legible con las top <paramref name="top"/> familias en cooldown y su tiempo restante, o string.Empty si ninguna aplica.</summary>
+    private static string FormatTopCooldownFamilies(IEnumerable<string> familyKeys, ConcurrentDictionary<string, DateTime> cooldownDict, int top = 5)
+    {
+        var now = DateTime.UtcNow;
+        var sorted = familyKeys
+            .Select(k => cooldownDict.TryGetValue(k, out var exp) ? (Key: k, Remaining: exp - now) : (Key: k, Remaining: TimeSpan.Zero))
+            .Where(x => x.Remaining > TimeSpan.Zero)
+            .OrderByDescending(x => x.Remaining)
+            .Take(top)
+            .ToList();
+        if (sorted.Count == 0) return string.Empty;
+        return " [" + string.Join(", ", sorted.Select(x => $"{Path.GetFileName(x.Key)}:{(int)x.Remaining.TotalMinutes}min")) + "]";
+    }
+
+    private void UpdateOemerStatus()
+    {
+        if (!IsInitialized || txtOemerStatus is null) return;
+        if (!Dispatcher.CheckAccess())
+        {
+            Dispatcher.BeginInvoke(UpdateOemerStatus, DispatcherPriority.Background);
+            return;
+        }
+        var now = DateTime.UtcNow;
+        var activeFamilies = _oemerTimeoutFamilies
+            .Where(kv => kv.Value > now)
+            .OrderBy(kv => kv.Value)
+            .ToList();
+        var strikeCount = _oemerTimeoutStrikes.Count(kv => kv.Value > 0);
+        var cooldownCount = activeFamilies.Count;
+        txtOemerStatus.Text = cooldownCount > 0 || strikeCount > 0
+            ? $"Cooldown: {cooldownCount} | Strikes: {strikeCount}"
+            : string.Empty;
+        if (cooldownCount > 0)
+        {
+            var lines = activeFamilies.Take(10).Select(kv =>
+            {
+                var key = kv.Key.Length > 60 ? kv.Key[^60..] : kv.Key;
+                var remaining = (kv.Value - now).TotalMinutes;
+                var strikes = _oemerTimeoutStrikes.TryGetValue(kv.Key, out var s) ? s : 0;
+                return $"{key}  [{remaining:F0}min, s{strikes}]";
+            });
+            txtOemerStatus.ToolTip = "Familias en cooldown:\n" + string.Join("\n", lines) +
+                (cooldownCount > 10 ? $"\n... +{cooldownCount - 10} más" : string.Empty);
+        }
+        else { txtOemerStatus.ToolTip = null; }
     }
 
     private void BtnExportLibrary_Click(object sender, RoutedEventArgs e)
@@ -3708,6 +5190,10 @@ public partial class MainWindow : Window, IAsyncDisposable
         }
         btnCpdlSession.IsEnabled = _enableCpdl;
         btnMusopenSession.IsEnabled = _enableMusopen;
+        if (state.AutoConvertAudiveris.HasValue)
+            chkAutoConvertAudiveris.IsChecked = state.AutoConvertAudiveris.Value;
+        if (state.AutoConvertOemer.HasValue)
+            chkAutoConvertOemer.IsChecked = state.AutoConvertOemer.Value;
     }
 
     private void SaveUiState()
@@ -3722,7 +5208,9 @@ public partial class MainWindow : Window, IAsyncDisposable
             EnableCpdl = _enableCpdl,
             EnableMusopen = _enableMusopen,
             MusopenCookieHeader = muCookie,
-            MusopenUserAgent = muUA
+            MusopenUserAgent = muUA,
+            AutoConvertAudiveris = chkAutoConvertAudiveris.IsChecked == true,
+            AutoConvertOemer = chkAutoConvertOemer.IsChecked == true
         });
     }
 
@@ -3757,14 +5245,16 @@ public partial class MainWindow : Window, IAsyncDisposable
 
         if (_searchCache.TryGetValue(key, out var entry) && entry.Expires > now)
         {
-            _cacheHits++;
-            _searchCache.TryUpdate(key, (entry.Expires, now, entry.Results), entry);
+            Interlocked.Increment(ref _cacheHits);
+            // Indexer write is atomic on ConcurrentDictionary; avoids TryUpdate race
+            // where another thread updates LastAccessed between TryGetValue and TryUpdate.
+            _searchCache[key] = (entry.Expires, now, entry.Results);
             UpdateCacheStats();
             progress?.Report($"⚡ Cache {source}: {entry.Results.Count} obras");
             return CloneItems(entry.Results);
         }
 
-        _cacheMisses++;
+        Interlocked.Increment(ref _cacheMisses);
         UpdateCacheStats();
         var fresh = await fetch(progress, ct);
         var newEntry = (Expires: now.Add(SearchCacheTtl), LastAccessed: now, Results: CloneItems(fresh));
@@ -3773,7 +5263,7 @@ public partial class MainWindow : Window, IAsyncDisposable
         // LRU eviction: keep only MaxCacheEntries newest-accessed (best-effort; slight race is acceptable)
         if (_searchCache.Count > MaxCacheEntries)
         {
-            var oldest = _searchCache.OrderBy(kv => kv.Value.LastAccessed).First().Key;
+            var oldest = _searchCache.MinBy(kv => kv.Value.LastAccessed).Key;
             _searchCache.TryRemove(oldest, out _);
         }
 

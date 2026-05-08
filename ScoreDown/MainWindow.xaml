@@ -298,6 +298,7 @@
                 <ComboBoxItem>Mutopia</ComboBoxItem>
                 <ComboBoxItem>CPDL</ComboBoxItem>
                 <ComboBoxItem>Musopen</ComboBoxItem>
+                <ComboBoxItem>OpenScore</ComboBoxItem>
                 <ComboBoxItem>Offline</ComboBoxItem>
                 <ComboBoxItem>Todas</ComboBoxItem>
             </ComboBox>
@@ -385,8 +386,6 @@
                     <ColumnDefinition Width="Auto"/>
                     <ColumnDefinition Width="*"/>
                     <ColumnDefinition Width="Auto"/>
-                    <ColumnDefinition Width="Auto"/>
-                    <ColumnDefinition Width="Auto"/>
                 </Grid.ColumnDefinitions>
                 <CheckBox x:Name="chkSelectAll" Grid.Column="0" Content="Sel. todo"
                           Checked="ChkSelectAll_Changed" Unchecked="ChkSelectAll_Changed" Margin="4,0,12,0"/>
@@ -400,14 +399,9 @@
                     <ComboBoxItem>Todas</ComboBoxItem>
                     <ComboBoxItem>Mutopia</ComboBoxItem>
                     <ComboBoxItem>CPDL</ComboBoxItem>
+                    <ComboBoxItem>OpenScore</ComboBoxItem>
                     <ComboBoxItem>Offline</ComboBoxItem>
                 </ComboBox>
-                <CheckBox x:Name="chkOnlyPdf" Grid.Column="3" Content="Solo PDF"
-                          Foreground="#A78BFA" Margin="0,0,8,0"
-                          Checked="FilterChanged" Unchecked="FilterChanged"/>
-                <CheckBox x:Name="chkOnlyMidi" Grid.Column="4" Content="Solo MIDI"
-                          Foreground="#A78BFA"
-                          Checked="FilterChanged" Unchecked="FilterChanged"/>
             </Grid>
 
             <!-- Lista + panel lateral -->
@@ -586,6 +580,22 @@
                     Margin="0,0,8,0" VerticalAlignment="Center"
                     IsChecked="True" Checked="SourceToggle_Changed" Unchecked="SourceToggle_Changed"
                     ToolTip="Habilitar Musopen en catálogo/descarga"/>
+                <Separator Style="{StaticResource {x:Static ToolBar.SeparatorStyleKey}}" Margin="4,0"/>
+                <CheckBox x:Name="chkOnlyPdf" Content="Solo PDF"
+                    Margin="0,0,8,0" VerticalAlignment="Center"
+                    Foreground="#A78BFA"
+                    Checked="FilterChanged" Unchecked="FilterChanged"
+                    ToolTip="Descargar solo archivos PDF"/>
+                <CheckBox x:Name="chkOnlyMidi" Content="Solo MIDI"
+                    Margin="0,0,8,0" VerticalAlignment="Center"
+                    Foreground="#A78BFA"
+                    Checked="FilterChanged" Unchecked="FilterChanged"
+                    ToolTip="Descargar solo archivos MIDI"/>
+                <CheckBox x:Name="chkOnlyXml" Content="Solo XML"
+                    Margin="0,0,8,0" VerticalAlignment="Center"
+                    Foreground="#A78BFA"
+                    Checked="FilterChanged" Unchecked="FilterChanged"
+                    ToolTip="Descargar solo archivos MusicXML/MXL"/>
                 <Button x:Name="btnExportHtmlBottom" Content="🌐 HTML"
                     Margin="0,0,4,0" Padding="10,7" Background="#334155"
                     Click="BtnExportHtml_Click" ToolTip="Exportar resultados a HTML"/>
@@ -602,10 +612,28 @@
                     Margin="0,0,4,0" Padding="10,7" Background="#14532D"
                     Click="BtnConvertAudiveris_Click"
                     ToolTip="Convertir PDF/imagen de carpeta destino a MusicXML/MXL (solo los no convertidos)"/>
+                <Button x:Name="btnCancelAudiveris" Content="⏹ Parar"
+                    Margin="0,0,4,0" Padding="10,7" Background="#991B1B"
+                    Click="BtnCancelAudiveris_Click" IsEnabled="False"
+                    ToolTip="Cancelar conversión Audiveris en curso"/>
                 <CheckBox x:Name="chkAutoConvertAudiveris"
                     Content="🔄 Auto-convertir" Margin="0,0,8,0" VerticalAlignment="Center"
                     IsChecked="True"
+                    Checked="ChkAutoConvert_Changed" Unchecked="ChkAutoConvert_Changed"
                     ToolTip="Lanzar Audiveris automáticamente al finalizar cada lote de descargas"/>
+                <Button x:Name="btnConvertOemer" Content="🎵 oemer"
+                    Margin="0,0,4,0" Padding="10,7" Background="#164E63"
+                    Click="BtnConvertOemer_Click"
+                    ToolTip="Convertir PDF/imagen con oemer (pip install oemer) a MusicXML"/>
+                <Button x:Name="btnCancelOemer" Content="⏹ Parar"
+                    Margin="0,0,4,0" Padding="10,7" Background="#991B1B"
+                    Click="BtnCancelOemer_Click" IsEnabled="False"
+                    ToolTip="Cancelar conversión oemer en curso"/>
+                <CheckBox x:Name="chkAutoConvertOemer"
+                    Content="🔄 Auto-oemer" Margin="0,0,8,0" VerticalAlignment="Center"
+                    IsChecked="False"
+                    Checked="ChkAutoConvert_Changed" Unchecked="ChkAutoConvert_Changed"
+                    ToolTip="Lanzar oemer automáticamente al finalizar cada lote de descargas"/>
                 <Button x:Name="btnDeleteAndRedownload" Content="🗑️ Re-descargar"
                     Margin="0,0,4,0" Padding="10,7" Background="#7F1D1D"
                     Click="BtnDeleteAndRedownload_Click"
@@ -614,6 +642,10 @@
                     Margin="0,0,4,0" Padding="10,7" Background="#7C2D12"
                     Click="BtnGenerateVideo_Click"
                     ToolTip="Generar vídeo MP4 animado de partituras MSCZ/MXL/XML con score-util (requiere Node.js)"/>
+                <Button x:Name="btnCancelVideo" Content="⏹ Parar"
+                    Margin="0,0,4,0" Padding="10,7" Background="#991B1B"
+                    Click="BtnCancelVideo_Click" IsEnabled="False"
+                    ToolTip="Cancelar generación de vídeo en curso"/>
                 <Button Content="🚪 Salir"
                     Padding="10,7" Background="#374151"
                     Click="BtnExit_Click" ToolTip="Cerrar la aplicación"/>
@@ -687,6 +719,9 @@
                             <RowDefinition Height="Auto"/>
                             <RowDefinition Height="Auto"/>
                             <RowDefinition Height="*" MinHeight="60"/>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="*" MinHeight="60"/>
                         </Grid.RowDefinitions>
                         <TextBlock Grid.Row="0" Text="📥 Cola de descarga" Foreground="#A78BFA" Margin="8,6,8,4" FontWeight="SemiBold"/>
                         <ListBox x:Name="lstQueue" Grid.Row="1" Margin="6,0,6,6" BorderThickness="0">
@@ -741,6 +776,25 @@
                                     <StackPanel Margin="2,2">
                                         <TextBlock Text="{Binding FileName}" Foreground="#E5E7EB" TextTrimming="CharacterEllipsis" FontSize="11"/>
                                         <TextBlock Text="{Binding Status}" Foreground="#6EE7B7" FontSize="10" TextTrimming="CharacterEllipsis"/>
+                                    </StackPanel>
+                                </DataTemplate>
+                            </ListBox.ItemTemplate>
+                        </ListBox>
+                        <DockPanel Grid.Row="7" Margin="8,0,8,4">
+                            <Button x:Name="btnResetOemerCooldown" DockPanel.Dock="Right"
+                                    Content="🔄" FontSize="9" Padding="4,1" Background="Transparent"
+                                    Foreground="#6B7280" BorderThickness="0" Cursor="Hand"
+                                    ToolTip="Limpiar cooldown y strikes de oemer"
+                                    Click="BtnResetOemerCooldown_Click"/>
+                            <TextBlock Text="🎵 oemer procesados" Foreground="#7DD3FC" FontWeight="SemiBold" VerticalAlignment="Center"/>
+                        </DockPanel>
+                        <TextBlock x:Name="txtOemerStatus" Grid.Row="8" Foreground="#6B7280" FontSize="9" Margin="8,0,8,2" TextTrimming="CharacterEllipsis"/>
+                        <ListBox x:Name="lstOemerLog" Grid.Row="9" Margin="6,0,6,6" BorderThickness="0">
+                            <ListBox.ItemTemplate>
+                                <DataTemplate>
+                                    <StackPanel Margin="2,2">
+                                        <TextBlock Text="{Binding FileName}" Foreground="#E5E7EB" TextTrimming="CharacterEllipsis" FontSize="11"/>
+                                        <TextBlock Text="{Binding Status}" Foreground="#7DD3FC" FontSize="10" TextTrimming="CharacterEllipsis"/>
                                     </StackPanel>
                                 </DataTemplate>
                             </ListBox.ItemTemplate>
