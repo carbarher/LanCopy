@@ -296,7 +296,6 @@
                       Background="#2D2D44" Foreground="White" BorderBrush="#555"
                       ToolTip="Fuente de búsqueda">
                 <ComboBoxItem>Mutopia</ComboBoxItem>
-                <ComboBoxItem>CPDL</ComboBoxItem>
                 <ComboBoxItem>Musopen</ComboBoxItem>
                 <ComboBoxItem>OpenScore</ComboBoxItem>
                 <ComboBoxItem>Offline</ComboBoxItem>
@@ -572,14 +571,14 @@
                     Margin="0,0,8,0" VerticalAlignment="Center"
                     IsChecked="True" Checked="SourceToggle_Changed" Unchecked="SourceToggle_Changed"
                     ToolTip="Habilitar Mutopia en catálogo/descarga"/>
-                <CheckBox x:Name="chkEnableCpdl" Content="CPDL"
-                    Margin="0,0,8,0" VerticalAlignment="Center"
-                    IsChecked="False" Checked="SourceToggle_Changed" Unchecked="SourceToggle_Changed"
-                    ToolTip="Habilitar CPDL en catálogo/descarga"/>
                 <CheckBox x:Name="chkEnableMusopen" Content="Musopen"
                     Margin="0,0,8,0" VerticalAlignment="Center"
                     IsChecked="True" Checked="SourceToggle_Changed" Unchecked="SourceToggle_Changed"
                     ToolTip="Habilitar Musopen en catálogo/descarga"/>
+                <CheckBox x:Name="chkEnableOpenScore" Content="OpenScore"
+                    Margin="0,0,8,0" VerticalAlignment="Center"
+                    IsChecked="True" Checked="SourceToggle_Changed" Unchecked="SourceToggle_Changed"
+                    ToolTip="Habilitar OpenScore (CC0 MusicXML) en catálogo/descarga"/>
                 <Separator Style="{StaticResource {x:Static ToolBar.SeparatorStyleKey}}" Margin="4,0"/>
                 <CheckBox x:Name="chkOnlyPdf" Content="Solo PDF"
                     Margin="0,0,8,0" VerticalAlignment="Center"
@@ -595,16 +594,19 @@
                     Margin="0,0,8,0" VerticalAlignment="Center"
                     Foreground="#A78BFA"
                     Checked="FilterChanged" Unchecked="FilterChanged"
-                    ToolTip="Descargar solo archivos MusicXML/MXL"/>
+                    ToolTip="Descargar solo archivos MusicXML/MXL y compatibles MuseScore (MSCZ/MSCX)"/>
+                <CheckBox x:Name="chkOnlyClassical" Content="Solo clásica"
+                    Margin="0,0,8,0" VerticalAlignment="Center"
+                    Foreground="#A78BFA"
+                    IsChecked="True"
+                    Checked="FilterChanged" Unchecked="FilterChanged"
+                    ToolTip="Filtrar resultados por repertorio clásico (compositor/título)"/>
                 <Button x:Name="btnExportHtmlBottom" Content="🌐 HTML"
                     Margin="0,0,4,0" Padding="10,7" Background="#334155"
                     Click="BtnExportHtml_Click" ToolTip="Exportar resultados a HTML"/>
                 <Button x:Name="btnCancelAllDownloads" Content="⏹ Cancelar"
                     Margin="0,0,4,0" Padding="10,7" Background="#7F1D1D" IsEnabled="False"
                     Click="BtnCancelAllDownloads_Click" ToolTip="Cancelar descargas en curso"/>
-                <Button x:Name="btnCpdlSession" Content="🔐 CPDL sesión"
-                    Margin="0,0,4,0" Padding="10,7" Background="#1E3A8A"
-                    Click="BtnCpdlSession_Click" ToolTip="Abrir navegador embebido para sesión CPDL"/>
                 <Button x:Name="btnMusopenSession" Content="🔐 Musopen sesión"
                     Margin="0,0,4,0" Padding="10,7" Background="#1E3A8A"
                     Click="BtnMusopenSession_Click" ToolTip="Iniciar sesión en Musopen para poder descargar partituras"/>
@@ -827,5 +829,338 @@
                 </Grid>
             </Grid>
         </Grid>
+
+        <!-- Panel de selección de partituras para vídeo -->
+        <Border x:Name="pnlVideoSelect"
+                Grid.Row="3" Grid.RowSpan="2"
+                Panel.ZIndex="10"
+                Visibility="Collapsed"
+                Background="#0D1117"
+                BorderBrush="#3D3D5C" BorderThickness="0,1,0,0">
+            <Grid>
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="*"/>
+                    <RowDefinition Height="5"/>
+                    <RowDefinition Height="Auto"/>
+                </Grid.RowDefinitions>
+
+                <!-- Cabecera -->
+                <Border Grid.Row="0" Background="#13131F" Padding="12,10">
+                    <Grid>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="Auto"/>
+                        </Grid.RowDefinitions>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+                        <StackPanel Grid.Row="0" Grid.Column="0">
+                            <TextBlock Text="🎥 Seleccionar partituras para vídeo"
+                                       FontSize="15" FontWeight="Bold" Foreground="#A78BFA"/>
+                            <TextBlock x:Name="txtVideoSelectHint"
+                                       Foreground="#9CA3AF" FontSize="11" Margin="0,3,0,0"/>
+                        </StackPanel>
+                        <Button Grid.Row="0" Grid.Column="1" x:Name="btnVideoSelectBack"
+                                Content="← Volver" Padding="12,6"
+                                Background="#374151" Foreground="White"
+                                Click="BtnVideoSelectBack_Click"
+                                ToolTip="Volver a la pantalla principal. Para primero si hay generación activa. (Escape)"/>
+                        <!-- Fila 2: Filtro + Regenerar + ETA -->
+                        <Grid Grid.Row="1" Grid.Column="0" Grid.ColumnSpan="2" Margin="0,8,0,0">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto"/>
+                                <ColumnDefinition Width="220"/>
+                                <ColumnDefinition Width="Auto"/>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Grid.Column="0" Text="🔍" VerticalAlignment="Center"
+                                       Margin="0,0,5,0" Foreground="#9CA3AF"/>
+                            <Grid Grid.Column="1">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="Auto"/>
+                                </Grid.ColumnDefinitions>
+                                <TextBox x:Name="txtVideoFilter"
+                                         Grid.Column="0"
+                                         Background="#1E293B" Foreground="#E5E7EB"
+                                         BorderBrush="#374151" Padding="6,4"
+                                         TextChanged="TxtVideoFilter_TextChanged"
+                                         KeyDown="TxtVideoFilter_KeyDown"
+                                         ToolTip="Filtrar por nombre, carpeta o formato (MSCZ/MXL…) · Ctrl+F enfoca filtro · Enter selecciona primer resultado · Escape limpia el filtro"/>
+                                <TextBlock Grid.Column="0" Text="nombre, carpeta o formato…" Foreground="#4B5563"
+                                           IsHitTestVisible="False" Margin="8,0" VerticalAlignment="Center"
+                                           FontStyle="Italic">
+                                    <TextBlock.Style>
+                                        <Style TargetType="TextBlock">
+                                            <Setter Property="Visibility" Value="Collapsed"/>
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding Text, ElementName=txtVideoFilter}" Value="">
+                                                    <Setter Property="Visibility" Value="Visible"/>
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </TextBlock.Style>
+                                </TextBlock>
+                                <Button Grid.Column="1" x:Name="btnVideoFilterClear"
+                                        Content="✕" Padding="6,3" Margin="2,0,0,0"
+                                        Background="#374151" Foreground="#9CA3AF"
+                                        BorderThickness="0" Cursor="Hand"
+                                        Click="BtnVideoFilterClear_Click"
+                                        ToolTip="Limpiar filtro (Escape)"
+                                        Visibility="Collapsed"/>
+                            </Grid>
+                            <CheckBox Grid.Column="2" x:Name="chkVideoRegenerate"
+                                      Content="🔁 Re-generar" Margin="16,0,0,0"
+                                      VerticalAlignment="Center" Foreground="#9CA3AF"
+                                      IsChecked="False"
+                                      Checked="ChkVideoRegenerate_Changed"
+                                      Unchecked="ChkVideoRegenerate_Changed"
+                                      ToolTip="Incluir partituras que ya tienen MP4 para regenerarlas (Ctrl+R)"/>
+                            <TextBlock Grid.Column="4" x:Name="txtVideoEta"
+                                       Foreground="#F59E0B" FontSize="11"
+                                       VerticalAlignment="Center" Margin="12,0,0,0"
+                                       ToolTip="Tiempo estimado restante y velocidad media por partitura"/>
+                        </Grid>
+                    </Grid>
+                </Border>
+
+                <!-- Lista de partituras -->
+                <Grid Grid.Row="1">
+                <ListView x:Name="lstVideoSelect"
+                          BorderThickness="0" Background="#0D1117"
+                          SelectionMode="Extended"
+                          ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                          VirtualizingPanel.IsVirtualizingWhenGrouping="True"
+                          VirtualizingPanel.ScrollUnit="Pixel"
+                          MouseDoubleClick="LstVideoSelect_MouseDoubleClick"
+                          GridViewColumnHeader.Click="LstVideoSelect_ColumnHeaderClick"
+                          PreviewMouseRightButtonDown="LstVideoSelect_PreviewMouseRightButtonDown"
+                          KeyDown="LstVideoSelect_KeyDown">
+                    <ListView.GroupStyle>
+                        <GroupStyle>
+                            <GroupStyle.HeaderTemplate>
+                                <DataTemplate>
+                                    <StackPanel Orientation="Horizontal">
+                                        <TextBlock Text="{Binding Name}" Foreground="#9CA3AF"
+                                                   FontSize="10" FontWeight="SemiBold"
+                                                   Padding="6,6,4,2" Background="#111827"
+                                                   TextTrimming="CharacterEllipsis"
+                                                   ToolTip="{Binding Name}"/>
+                                        <TextBlock Foreground="#4B5563" FontSize="10"
+                                                   Padding="0,6,0,2" Background="#111827"
+                                                   Text="{Binding ItemCount, StringFormat=({0})}"/>
+                                    </StackPanel>
+                                </DataTemplate>
+                            </GroupStyle.HeaderTemplate>
+                        </GroupStyle>
+                    </ListView.GroupStyle>
+                    <ListView.ContextMenu>
+                        <ContextMenu>
+                            <MenuItem x:Name="mnuCtxVideoOpen" Header="▶ Abrir vídeo MP4" Click="CtxVideoOpen_Click"/>
+                            <MenuItem x:Name="mnuCtxVideoOpenInMuseScore" Header="🎼 Abrir en MuseScore" Click="CtxVideoOpenInMuseScore_Click"/>
+                            <MenuItem Header="📂 Abrir carpeta del ítem" Click="CtxVideoOpenItemFolder_Click"/>
+                            <MenuItem x:Name="mnuCtxVideoCopyPath" Header="📋 Copiar ruta" Click="CtxVideoCopyPath_Click"/>
+                            <MenuItem x:Name="mnuCtxVideoCopyMp4Path" Header="📋 Copiar ruta de MP4" Click="CtxVideoCopyMp4Path_Click"/>
+                            <MenuItem x:Name="mnuCtxVideoCopyAllMp4" Header="📋 Copiar rutas MP4 visibles" Click="CtxVideoCopyAllMp4Paths_Click"/>
+                            <MenuItem x:Name="mnuCtxVideoGenerateSingle" Header="🎥 Generar este(os)" Click="CtxVideoGenerateSingle_Click"/>
+                            <Separator/>
+                            <MenuItem x:Name="mnuCtxVideoSelect" Header="☑ Seleccionar" Click="CtxVideoSelectOne_Click"/>
+                            <MenuItem x:Name="mnuCtxVideoDeselect" Header="☐ Deseleccionar" Click="CtxVideoDeselectOne_Click"/>
+                            <MenuItem x:Name="mnuCtxVideoSelectFolder" Header="📁 Seleccionar toda la carpeta" Click="CtxVideoSelectFolder_Click"/>
+                            <Separator/>
+                            <MenuItem x:Name="mnuCtxVideoDelete" Header="🗑 Eliminar MP4 existente" Click="CtxVideoDelete_Click"/>
+                            <MenuItem x:Name="mnuCtxVideoClearError" Header="↩ Limpiar error" Click="CtxVideoClearError_Click"/>
+                        </ContextMenu>
+                    </ListView.ContextMenu>
+                    <ListView.View>
+                        <GridView>
+                            <GridViewColumn Width="36">
+                                <GridViewColumn.CellTemplate>
+                                    <DataTemplate>
+                                        <CheckBox IsChecked="{Binding IsSelected, Mode=TwoWay}"
+                                                  Checked="VideoSelectItem_CheckChanged"
+                                                  Unchecked="VideoSelectItem_CheckChanged"
+                                                  HorizontalAlignment="Center"/>
+                                    </DataTemplate>
+                                </GridViewColumn.CellTemplate>
+                                <GridViewColumn.Header>
+                                    <CheckBox x:Name="chkVideoSelectHeader"
+                                              IsThreeState="True"
+                                              ToolTip="Seleccionar / deseleccionar todas las visibles"
+                                              Checked="ChkVideoSelectHeader_Checked"
+                                              Unchecked="ChkVideoSelectHeader_Unchecked"
+                                              Indeterminate="ChkVideoSelectHeader_Indeterminate"/>
+                                </GridViewColumn.Header>
+                            </GridViewColumn>
+                            <GridViewColumn Width="28">
+                                <GridViewColumn.Header>
+                                    <TextBlock Text="Est" ToolTip="Estado de generación: ⏳ En curso · ✅ OK · ❌ Error"/>
+                                </GridViewColumn.Header>
+                                <GridViewColumn.CellTemplate>
+                                    <DataTemplate>
+                                        <TextBlock Text="{Binding StatusIcon}"
+                                                   Foreground="{Binding StatusColor}"
+                                                   FontSize="13" HorizontalAlignment="Center"
+                                                   ToolTip="{Binding StatusLabel}"/>
+                                    </DataTemplate>
+                                </GridViewColumn.CellTemplate>
+                            </GridViewColumn>
+                            <GridViewColumn Width="56">
+                                <GridViewColumn.Header>
+                                    <TextBlock Text="Formato" ToolTip="Formato del archivo de partitura. Prioridad: MSCZ &gt; MXL &gt; MusicXML"/>
+                                </GridViewColumn.Header>
+                                <GridViewColumn.CellTemplate>
+                                    <DataTemplate>
+                                        <Border Background="{Binding FormatColor}" CornerRadius="3" Padding="5,1">
+                                            <TextBlock Text="{Binding FormatTag}" FontSize="10"
+                                                       FontWeight="Bold" Foreground="White"
+                                                       HorizontalAlignment="Center"/>
+                                        </Border>
+                                    </DataTemplate>
+                                </GridViewColumn.CellTemplate>
+                            </GridViewColumn>
+                            <GridViewColumn Width="340">
+                                <GridViewColumn.Header>
+                                    <TextBlock Text="Nombre" ToolTip="Nombre del archivo de partitura. Tooltip muestra ruta completa."/>
+                                </GridViewColumn.Header>
+                                <GridViewColumn.CellTemplate>
+                                    <DataTemplate>
+                                        <TextBlock Text="{Binding DisplayName}" Foreground="#E5E7EB"
+                                                   TextTrimming="CharacterEllipsis"
+                                                   ToolTip="{Binding BestFile}"/>
+                                    </DataTemplate>
+                                </GridViewColumn.CellTemplate>
+                            </GridViewColumn>
+                            <GridViewColumn Width="30">
+                                <GridViewColumn.CellTemplate>
+                                    <DataTemplate>
+                                        <TextBlock Text="{Binding HasVideoMark}"
+                                                   Foreground="#22C55E" FontWeight="Bold"
+                                                   HorizontalAlignment="Center"
+                                                   ToolTip="{Binding Mp4SizeToolTip}"/>
+                                    </DataTemplate>
+                                </GridViewColumn.CellTemplate>
+                                <GridViewColumn.Header>
+                                    <TextBlock Text="▶" Foreground="#22C55E" FontSize="10"
+                                               ToolTip="Ya tiene vídeo MP4 generado"/>
+                                </GridViewColumn.Header>
+                            </GridViewColumn>
+                            <GridViewColumn x:Name="colCarpeta" Width="220">
+                                <GridViewColumn.Header>
+                                    <TextBlock Text="Carpeta" ToolTip="Subcarpeta relativa a la carpeta destino (máx. 45 caracteres)"/>
+                                </GridViewColumn.Header>
+                                <GridViewColumn.CellTemplate>
+                                    <DataTemplate>
+                                        <TextBlock Text="{Binding FolderShort}" Foreground="#6B7280"
+                                                   FontSize="10" TextTrimming="CharacterEllipsis"
+                                                   ToolTip="{Binding FolderFull}"/>
+                                    </DataTemplate>
+                                </GridViewColumn.CellTemplate>
+                            </GridViewColumn>
+                        </GridView>
+                    </ListView.View>
+                    <ListView.ItemContainerStyle>
+                        <Style TargetType="ListViewItem">
+                            <Setter Property="Background" Value="Transparent"/>
+                            <Setter Property="Foreground" Value="#E5E7EB"/>
+                            <Setter Property="BorderThickness" Value="0"/>
+                            <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
+                            <Setter Property="Padding" Value="2,4"/>
+                            <Style.Triggers>
+                                <Trigger Property="IsMouseOver" Value="True">
+                                    <Setter Property="Background" Value="#1E293B"/>
+                                </Trigger>
+                                <Trigger Property="IsSelected" Value="True">
+                                    <Setter Property="Background" Value="#1E3A5F"/>
+                                </Trigger>
+                                <DataTrigger Binding="{Binding HasVideo}" Value="True">
+                                    <Setter Property="Foreground" Value="#9CA3AF"/>
+                                </DataTrigger>
+                                <DataTrigger Binding="{Binding Status}" Value="Running">
+                                    <Setter Property="Background" Value="#1C2A1C"/>
+                                </DataTrigger>
+                                <DataTrigger Binding="{Binding Status}" Value="Done">
+                                    <Setter Property="Background" Value="#0F2318"/>
+                                </DataTrigger>
+                                <DataTrigger Binding="{Binding Status}" Value="Error">
+                                    <Setter Property="Background" Value="#2A0F0F"/>
+                                </DataTrigger>
+                            </Style.Triggers>
+                        </Style>
+                    </ListView.ItemContainerStyle>
+                </ListView>
+                <TextBlock x:Name="txtVideoEmpty"
+                           Text="Sin coincidencias para el filtro actual"
+                           HorizontalAlignment="Center" VerticalAlignment="Center"
+                           Foreground="#6B7280" FontSize="14" FontStyle="Italic"
+                           IsHitTestVisible="False" Panel.ZIndex="1"
+                           Visibility="Collapsed"/>
+                </Grid>
+
+                <!-- Barra de progreso general -->
+                <ProgressBar x:Name="pbVideoGeneral" Grid.Row="2"
+                             Minimum="0" Maximum="100" Value="0"
+                             Foreground="#7C3AED" Background="#1E293B" BorderThickness="0"
+                             ToolTip="Progreso de generación de vídeos. Naranja = hay errores"/>
+
+                <!-- Pie de botones -->
+                <Border Grid.Row="3" Background="#13131F" Padding="10,8">
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+                        <WrapPanel Grid.Column="0" VerticalAlignment="Center">
+                            <Button x:Name="btnVideoSelectAll" Content="☑ Todas"
+                                    Margin="0,0,6,0" Padding="10,6" Background="#374151"
+                                    Click="BtnVideoSelectAll_Click"
+                                    ToolTip="Seleccionar todas las partituras visibles (Ctrl+A)"/>
+                            <Button x:Name="btnVideoSelectNone" Content="☐ Ninguna"
+                                    Margin="0,0,6,0" Padding="10,6" Background="#374151"
+                                    Click="BtnVideoSelectNone_Click"
+                                    ToolTip="Deseleccionar todas, incluidas las ocultas por filtro"/>
+                            <Button x:Name="btnVideoSelectInvert" Content="⇄ Invertir"
+                                    Margin="0,0,6,0" Padding="10,6" Background="#374151"
+                                    Click="BtnVideoSelectInvert_Click"
+                                    ToolTip="Invertir selección actual (Ctrl+I)"/>
+                            <Button x:Name="btnVideoSelectPending" Content="⏳ Pendientes"
+                                    Margin="0,0,6,0" Padding="10,6" Background="#1E3A5F"
+                                    Click="BtnVideoSelectPending_Click"
+                                    ToolTip="Seleccionar partituras sin vídeo MP4 (o todas si Re-generar activo) · Ctrl+P"/>
+                            <Button x:Name="btnVideoSelectErrors" Content="⚠ Errores"
+                                    Margin="0,0,6,0" Padding="10,6" Background="#4A1010"
+                                    IsEnabled="False"
+                                    Click="BtnVideoSelectErrors_Click"
+                                    ToolTip="Seleccionar solo partituras con error de generación (Ctrl+E)"/>
+                            <Button x:Name="btnVideoSelectOpenFolder" Content="📂 Carpeta"
+                                    Margin="0,0,6,0" Padding="10,6" Background="#1C3A2B"
+                                    Click="BtnVideoSelectOpenFolder_Click"
+                                    ToolTip="Abrir carpeta de destino en el Explorador (Ctrl+O)"/>
+                            <Button x:Name="btnVideoSelectRefresh" Content="🔄 Actualizar"
+                                    Margin="0,0,6,0" Padding="10,6" Background="#374151"
+                                    Click="BtnVideoSelectRefresh_Click"
+                                    ToolTip="Volver a escanear la carpeta de destino (F5)"/>
+                            <TextBlock x:Name="txtVideoSelectCount" VerticalAlignment="Center"
+                                       Foreground="#9CA3AF" FontSize="11" Margin="8,0,0,0"/>
+                        </WrapPanel>
+                        <WrapPanel Grid.Column="1" VerticalAlignment="Center">
+                            <Button x:Name="btnVideoSelectGenerate" Content="🎥 Generar (0)"
+                                    Margin="0,0,6,0" Padding="14,6" Background="#7C2D12"
+                                    FontWeight="SemiBold"
+                                    Click="BtnVideoSelectGenerate_Click"
+                                    ToolTip="Generar vídeos para las partituras seleccionadas (Ctrl+G)"/>
+                            <Button x:Name="btnVideoSelectCancelGen" Content="⏹ Parar"
+                                    Padding="10,6" Background="#991B1B" IsEnabled="False"
+                                    Click="BtnCancelVideo_Click"
+                                    ToolTip="Cancelar generación de vídeo en curso (Escape)"/>
+                        </WrapPanel>
+                    </Grid>
+                </Border>
+            </Grid>
+        </Border>
+
     </Grid>
 </Window>

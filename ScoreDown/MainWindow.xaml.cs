@@ -5,8 +5,11 @@ using System.Collections.Concurrent;
 using System.Collections.ObjectModel;
 using System.ComponentModel;
 using System.Diagnostics;
+using System.IO.Compression;
 using System.IO;
+using System.Text;
 using System.Text.Json;
+using System.Xml;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Data;
@@ -41,7 +44,6 @@ public partial class MainWindow : Window, IAsyncDisposable
     }
 
     private readonly MutopiaService _mutopia = new();
-    private readonly CpdlService _cpdl = new();
     private readonly MusopenService _musopen = new();
     private readonly OpenScoreService _openScore = new();
     private readonly DownloadService _downloader = new();
@@ -101,8 +103,9 @@ public partial class MainWindow : Window, IAsyncDisposable
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
         "ScoreDown", "oemer-timeout-telemetry.json");
     private bool _enableMutopia = ReadFeatureFlag("SCOREDOWN_ENABLE_MUTOPIA", true);
-    private bool _enableCpdl = ReadFeatureFlag("SCOREDOWN_ENABLE_CPDL", false);
     private bool _enableMusopen = ReadFeatureFlag("SCOREDOWN_ENABLE_MUSOPEN", true);
+    private bool _enableOpenScore = ReadFeatureFlag("SCOREDOWN_ENABLE_OPENSCORE", true);
+    private bool _onlyClassical = ReadFeatureFlag("SCOREDOWN_ONLY_CLASSICAL", true);
     private readonly ConcurrentDictionary<string, int> _liveErrorTypes = new(StringComparer.OrdinalIgnoreCase);
     private int _cacheHits;
     private int _cacheMisses;
@@ -114,10 +117,10 @@ public partial class MainWindow : Window, IAsyncDisposable
     private CancellationTokenSource? _searchCts;
     private CancellationTokenSource? _downloadCts;
     private CancellationTokenSource? _catalogCts;
-    // Sesión WebView2 para CPDL — rutar peticiones por WebView2 preserva TLS fingerprint de Cloudflare
-    private Infrastructure.CpdlWebSession? _cpdlWebSession;
+    // CPDL removido.
     // Dedup set para catálogo — O(1) lookup vs O(N²) .Any()
-    private readonly HashSet<string> _catalogSeenKeys = new(StringComparer.OrdinalIgnoreCase);
+    // NOTE: was a field (_catalogSeenKeys) — moved to local variable inside DoFetchCatalogAsync
+    // to eliminate Clear()-vs-Add() race when a previous run is cancelled mid-flight.
     // Cache de compositores conocidos en resultados actuales — evita iterar _allResults por tecla
     private readonly HashSet<string> _knownComposersCache = new(StringComparer.OrdinalIgnoreCase);
     // Cache de lista merged para sugerencias de compositor — invalida cuando cambia _knownComposersCache
@@ -235,11 +238,12 @@ public partial class MainWindow : Window, IAsyncDisposable
         _circuitBreaker = new GlobalCircuitBreaker();
         _fileLogger.Log("=== ScoreDown Started ===");
 
-        _cpdl.RequestInteractiveSessionAsync = OpenCpdlSessionAsync;
+        // _cpdl.RequestInteractiveSessionAsync = OpenCpdlSessionAsync;  // CPDL removido
 
         chkEnableMutopia.IsChecked = _enableMutopia;
-        chkEnableCpdl.IsChecked = _enableCpdl;
         chkEnableMusopen.IsChecked = _enableMusopen;
+        chkEnableOpenScore.IsChecked = _enableOpenScore;
+        chkOnlyClassical.IsChecked = _onlyClassical;
 
         _currentDestFolder = txtDestFolder.Text?.Trim() ?? string.Empty;
         LoadSearchHistory();
@@ -270,9 +274,59 @@ public partial class MainWindow : Window, IAsyncDisposable
         switch (e.Key)
         {
             case WinInput.Key.F:
-                txtSearch.Focus();
-                txtSearch.SelectAll();
+                if (pnlVideoSelect.Visibility == System.Windows.Visibility.Visible)
+                {
+                    txtVideoFilter.Focus();
+                    txtVideoFilter.SelectAll();
+                }
+                else
+                {
+                    txtSearch.Focus();
+                    txtSearch.SelectAll();
+                }
                 e.Handled = true;
+                break;
+            case WinInput.Key.R:
+                // Ctrl+R → toggle Re-generar cuando el panel de vídeo está abierto
+                if (pnlVideoSelect.Visibility == System.Windows.Visibility.Visible && !_videoRunning)
+                {
+                    chkVideoRegenerate.IsChecked = !(chkVideoRegenerate.IsChecked == true);
+                    e.Handled = true;
+                }
+                break;
+            case WinInput.Key.G:
+                // Ctrl+G → disparar generación cuando el panel está abierto y hay selección
+                if (pnlVideoSelect.Visibility == System.Windows.Visibility.Visible
+                    && btnVideoSelectGenerate.IsEnabled)
+                {
+                    BtnVideoSelectGenerate_Click(btnVideoSelectGenerate, new RoutedEventArgs());
+                    e.Handled = true;
+                }
+                break;
+            case WinInput.Key.P:
+                // Ctrl+P → seleccionar pendientes cuando el panel de vídeo está abierto
+                if (pnlVideoSelect.Visibility == System.Windows.Visibility.Visible && !_videoRunning)
+                {
+                    BtnVideoSelectPending_Click(btnVideoSelectPending, new RoutedEventArgs());
+                    e.Handled = true;
+                }
+                break;
+            case WinInput.Key.I:
+                // Ctrl+I → invertir selección cuando el panel de vídeo está abierto
+                if (pnlVideoSelect.Visibility == System.Windows.Visibility.Visible && !_videoRunning)
+                {
+                    BtnVideoSelectInvert_Click(btnVideoSelectInvert, new RoutedEventArgs());
+                    e.Handled = true;
+                }
+                break;
+            case WinInput.Key.E:
+                // Ctrl+E → seleccionar errores cuando el panel de vídeo está abierto
+                if (pnlVideoSelect.Visibility == System.Windows.Visibility.Visible
+                    && btnVideoSelectErrors.IsEnabled && !_videoRunning)
+                {
+                    BtnVideoSelectErrors_Click(btnVideoSelectErrors, new RoutedEventArgs());
+                    e.Handled = true;
+                }
                 break;
             case WinInput.Key.K:
                 txtLog.Clear();
@@ -357,9 +411,11 @@ public partial class MainWindow : Window, IAsyncDisposable
         _searchCts = null;
         _downloadCts = null;
 
-        try { _cpdlWebSession?.Dispose(); } catch { }
-        _cpdlWebSession = null;
-        _cpdl.WebViewFetchAsync = null;
+        // try { _cpdlWebSession?.Dispose(); } catch { }  // CPDL removido
+        // _cpdlWebSession = null;
+        // _cpdl.WebViewFetchAsync = null;
+
+        try { _downloader.Dispose(); } catch { }
 
         try
         {
@@ -892,7 +948,7 @@ public partial class MainWindow : Window, IAsyncDisposable
     /// Fase 1: cataloga metadatos de la fuente seleccionada (sin añadir a _allResults para evitar
     ///         O(N²) y freezes de UI con 150k+ items).
     /// Fase 2: descarga automáticamente todos los archivos, saltando los ya existentes en disco.
-    ///         Mutopia / CPDL: descarga completa automática.
+    ///         Mutopia / OpenScore: descarga completa automática.
     /// </summary>
     private async Task DoFetchCatalogAsync(bool forceAllSources = false)
     {
@@ -916,18 +972,13 @@ public partial class MainWindow : Window, IAsyncDisposable
             source = "Todas";
         if (source == "Offline")
         {
-            Log("⚠️ Selecciona Mutopia, CPDL, Musopen o Todas para descargar catálogo");
+            Log("⚠️ Selecciona Mutopia, OpenScore, Musopen o Todas para descargar catálogo");
             return;
         }
 
-        if (!_enableCpdl && source == "CPDL")
-        {
-            Log("⏸️ CPDL está desactivado temporalmente (Cloudflare). Usa Mutopia o Todas.");
-            return;
-        }
         if (!_enableMutopia && source == "Mutopia")
         {
-            Log("⏸️ Mutopia está desactivado por configuración. Usa CPDL o Todas.");
+            Log("⏸️ Mutopia está desactivado por configuración. Usa otra fuente o Todas.");
             return;
         }
         _catalogCts?.Cancel();
@@ -940,7 +991,9 @@ public partial class MainWindow : Window, IAsyncDisposable
         btnCancelCatalog.IsEnabled = true;
         btnCancelAllDownloads.IsEnabled = true;
         ClearResults();
-        _catalogSeenKeys.Clear();
+        // NOTE: local to this run — ConcurrentDictionary avoids lock() in OnItem hot path
+        // and eliminates the Clear()-vs-Add() race that existed when this was a field.
+        var catalogSeenKeys = new System.Collections.Concurrent.ConcurrentDictionary<string, byte>(StringComparer.OrdinalIgnoreCase);
 
         IProgress<string> progress = new Progress<string>(msg =>
         {
@@ -959,11 +1012,11 @@ public partial class MainWindow : Window, IAsyncDisposable
 
         void OnItem(PartituraItem item)
         {
+            if (_onlyClassical && !IsClassicalItem(item))
+                return;
+
             var key = $"{item.Source}|{item.Title}|{item.Composer}";
-            lock (_catalogSeenKeys)
-            {
-                if (!_catalogSeenKeys.Add(key)) return;  // O(1), ignora duplicados en esta sesión
-            }
+            if (!catalogSeenKeys.TryAdd(key, 0)) return;  // lock-free O(1) dedup
             catalogItems.Add(item);
             var n = System.Threading.Interlocked.Increment(ref totalFound);
             if (n % 500 == 0)
@@ -986,16 +1039,16 @@ public partial class MainWindow : Window, IAsyncDisposable
             var fetchTasks = new List<Task>();
             if (_enableMutopia && (source is "Mutopia" or "Todas"))
                 fetchTasks.Add(GuardedFetch("Mutopia", _mutopia.FetchAllAsync(OnItem, progress, ct), progress));
-            if (_enableCpdl && (source is "CPDL" or "Todas"))
-                fetchTasks.Add(GuardedFetch("CPDL", _cpdl.FetchAllAsync(OnItem, progress, ct), progress));
             if (_enableMusopen && _musopen.HasApiKey && (source is "Musopen" or "Todas"))
                 fetchTasks.Add(GuardedFetch("Musopen", _musopen.FetchAllAsync(OnItem, progress, ct), progress));
+            if (_enableOpenScore && (source is "OpenScore" or "Todas"))
+                fetchTasks.Add(GuardedFetch("OpenScore", _openScore.FetchAllAsync(OnItem, progress, ct), progress));
             if (source == "Todas")
             {
                 var disabled = new List<string>();
-                if (!_enableCpdl) disabled.Add("CPDL");
                 if (!_enableMutopia) disabled.Add("Mutopia");
                 if (!_enableMusopen) disabled.Add("Musopen");
+                if (!_enableOpenScore) disabled.Add("OpenScore");
                 if (disabled.Count > 0)
                     Log($"ℹ️ Fuentes desactivadas por configuración: {string.Join(", ", disabled)}");
             }
@@ -1028,7 +1081,6 @@ public partial class MainWindow : Window, IAsyncDisposable
             downloadable = downloadable
                 .Where(i =>
                     (_enableMutopia || !string.Equals(i.Source, "Mutopia", StringComparison.OrdinalIgnoreCase))
-                    && (_enableCpdl || !string.Equals(i.Source, "CPDL", StringComparison.OrdinalIgnoreCase))
                     && (_enableMusopen || !string.Equals(i.Source, "Musopen", StringComparison.OrdinalIgnoreCase)))
                 .ToList();
 
@@ -1247,7 +1299,8 @@ public partial class MainWindow : Window, IAsyncDisposable
                                         using var loadCts = CancellationTokenSource.CreateLinkedTokenSource(itemCt);
                                         loadCts.CancelAfter(TimeSpan.FromSeconds(25));
 
-                                        loaded = await _cpdl.LoadFilesAsync(item, loadCts.Token).ConfigureAwait(false);
+                                        // CPDL removido - LoadFiles deshabilitado
+                                        loaded = false;  // await _cpdl.LoadFilesAsync(item, loadCts.Token).ConfigureAwait(false);
 
                                         if (loaded)
                                             System.Threading.Volatile.Write(ref consecutiveErrors, 0);
@@ -1305,7 +1358,7 @@ public partial class MainWindow : Window, IAsyncDisposable
                                 {
                                     var (cookieHeader, userAgent) = item.Source switch
                                     {
-                                        "CPDL" => _cpdl.GetSessionHeaders(),
+                                        // "CPDL" => _cpdl.GetSessionHeaders(),  // CPDL removido
                                         "Musopen" => _musopen.GetSessionHeaders(),
                                         _ => ((string?)null, (string?)null)
                                     };
@@ -1450,7 +1503,7 @@ public partial class MainWindow : Window, IAsyncDisposable
         }
         finally
         {
-            _cpdl.FlushNoFilesBlacklist();
+            // _cpdl.FlushNoFilesBlacklist();  // CPDL removido
             btnFetchCatalog.IsEnabled = true;
             btnDownloadAll.IsEnabled = true;
             btnCancelCatalog.IsEnabled = false;
@@ -1502,7 +1555,8 @@ public partial class MainWindow : Window, IAsyncDisposable
                 bool loaded;
                 try
                 {
-                    loaded = await _cpdl.LoadFilesAsync(item, ct).ConfigureAwait(false);
+                    // CPDL removido - esta sección se salta
+                    loaded = false;  // item.Source == "CPDL"
                 }
                 catch (OperationCanceledException) { throw; }
                 catch
@@ -1536,7 +1590,8 @@ public partial class MainWindow : Window, IAsyncDisposable
 
     private void BtnCpdlSession_Click(object sender, RoutedEventArgs e)
     {
-        Forget(OpenCpdlSessionAsync(), "sesión CPDL");
+        // CPDL removido - método deshabilitado
+        Log("ℹ️ CPDL ha sido desactivado. Usa Mutopia, OpenScore, Musopen u otras fuentes.");
     }
 
     private void BtnMusopenSession_Click(object sender, RoutedEventArgs e)
@@ -1590,33 +1645,8 @@ public partial class MainWindow : Window, IAsyncDisposable
 
     private Task<bool> OpenCpdlSessionAsync()
     {
-        return Dispatcher.InvokeAsync<bool>(() =>
-        {
-            try
-            {
-                var dlg = new CpdlSessionDialog { Owner = this };
-                var ok = dlg.ShowDialog();
-                if (ok == true && !string.IsNullOrWhiteSpace(dlg.CookieHeader))
-                {
-                    _cpdl.SetManualSession(dlg.CookieHeader, dlg.UserAgent);
-                    // Crear/reemplazar sesión WebView2 — mismo perfil = mismo TLS fingerprint que resolvió el challenge.
-                    _cpdlWebSession?.Dispose();
-                    _cpdlWebSession = new Infrastructure.CpdlWebSession();
-                    _cpdl.WebViewFetchAsync = _cpdlWebSession.FetchAsync;
-
-                    Log("🔐 CPDL sesión interactiva guardada. Reintentando...");
-                    txtStatus.Text = "CPDL sesión activa (WebView2)";
-                    return true;
-                }
-                Log("ℹ️ CPDL sesión cancelada o sin cookies válidas.");
-                return false;
-            }
-            catch (Exception ex)
-            {
-                Log($"❌ Error en sesión CPDL: {ex.Message}");
-                return false;
-            }
-        }).Task;
+        // CPDL removido - método deshabilitado
+        return Task.FromResult(false);
     }
 
     private void BtnExit_Click(object sender, RoutedEventArgs e) => RequestAppShutdown();
@@ -1666,11 +1696,6 @@ public partial class MainWindow : Window, IAsyncDisposable
                 results = await FetchWithCacheAsync("Mutopia", query,
                     (p, token) => _mutopia.SearchAsync(query, p, token), progress, ct);
             }
-            else if (source == "CPDL")
-            {
-                results = await FetchWithCacheAsync("CPDL", query,
-                    (p, token) => _cpdl.SearchAsync(query, p, token), progress, ct);
-            }
             else if (source == "Musopen")
             {
                 results = await FetchWithCacheAsync("Musopen", query,
@@ -1713,9 +1738,6 @@ public partial class MainWindow : Window, IAsyncDisposable
                 progress.Report("🔍 Buscando en Mutopia Project...");
                 var mutopiaTask = SafeSearchAsync("Mutopia", () =>
                     FetchWithCacheAsync("Mutopia", query, (p, token) => _mutopia.SearchAsync(query, p, token), null, ct));
-                progress.Report("🔍 Buscando en CPDL...");
-                var cpdlTask = SafeSearchAsync("CPDL", () =>
-                    FetchWithCacheAsync("CPDL", query, (p, token) => _cpdl.SearchAsync(query, p, token), null, ct));
                 var musopenTask = _enableMusopen && _musopen.HasApiKey
                     ? SafeSearchAsync("Musopen", () =>
                         FetchWithCacheAsync("Musopen", query, (p, token) => _musopen.SearchAsync(query, p, token), null, ct))
@@ -1723,12 +1745,14 @@ public partial class MainWindow : Window, IAsyncDisposable
                 var openScoreTask = SafeSearchAsync("OpenScore", () =>
                     FetchWithCacheAsync("OpenScore", query, (p, token) => _openScore.SearchAsync(query, p, token), null, ct));
 
-                var all = await Task.WhenAll(mutopiaTask, cpdlTask, musopenTask, openScoreTask);
+                var all = await Task.WhenAll(mutopiaTask, musopenTask, openScoreTask);
                 results.AddRange(all[0]);
                 results.AddRange(all[1]);
                 results.AddRange(all[2]);
-                results.AddRange(all[3]);
             }
+
+            if (_onlyClassical)
+                results = results.Where(IsClassicalItem).ToList();
 
             foreach (var item in results)
                 _allResults.Add(item);
@@ -1795,7 +1819,9 @@ public partial class MainWindow : Window, IAsyncDisposable
     private void FilterChanged(object sender, RoutedEventArgs e)
     {
         if (!IsInitialized) return;
+        _onlyClassical = chkOnlyClassical.IsChecked == true;
         ApplyFilter();
+        UpdateSourceDashboard();
         SaveUiState();
     }
 
@@ -1821,9 +1847,9 @@ public partial class MainWindow : Window, IAsyncDisposable
             return;
         }
         var m = _enableMutopia ? "ON" : "OFF";
-        var c = _enableCpdl ? "ON" : "OFF";
         var mu = _enableMusopen ? (_musopen.HasSession ? "ON+🔐" : "ON") : "OFF";
-        txtSourceStatus.Text = $"Fuentes M:{m} C:{c} MO:{mu}";
+        var c = _onlyClassical ? "ON" : "OFF";
+        txtSourceStatus.Text = $"Fuentes M:{m} MO:{mu} C:{c}";
     }
 
     private static List<PartituraItem> MergePendingLists(IEnumerable<PartituraItem> a, IEnumerable<PartituraItem> b)
@@ -1861,20 +1887,16 @@ public partial class MainWindow : Window, IAsyncDisposable
     {
         if (!IsInitialized) return;
         _enableMutopia = chkEnableMutopia.IsChecked == true;
-        _enableCpdl = chkEnableCpdl.IsChecked == true;
         _enableMusopen = chkEnableMusopen.IsChecked == true;
+        _enableOpenScore = chkEnableOpenScore.IsChecked == true;
 
         // Mantener al menos una fuente activa para evitar corridas vacías.
-        if (!_enableMutopia && !_enableCpdl && !_enableMusopen)
+        if (!_enableMutopia && !_enableMusopen && !_enableOpenScore)
         {
             _enableMutopia = true;
             chkEnableMutopia.IsChecked = true;
             Log("ℹ️ Debe quedar al menos una fuente activa; Mutopia reactivado.");
         }
-
-        btnCpdlSession.IsEnabled = _enableCpdl;
-        if (!_enableCpdl)
-            _cpdl.SetManualSession(null, null);
 
         SaveUiState();
         UpdateSourceDashboard();
@@ -1900,6 +1922,7 @@ public partial class MainWindow : Window, IAsyncDisposable
         bool onlyPdf = chkOnlyPdf.IsChecked == true;
         bool onlyMidi = chkOnlyMidi.IsChecked == true;
         bool onlyXml = chkOnlyXml.IsChecked == true;
+        bool onlyClassical = chkOnlyClassical.IsChecked == true;
         var tagFilter = txtTagFilter.Text?.Trim() ?? string.Empty;
         var titleQuery = txtTitleSearch.Text?.Trim() ?? string.Empty;
         var composerQuery = txtComposerSearch.Text?.Trim() ?? string.Empty;
@@ -1911,6 +1934,7 @@ public partial class MainWindow : Window, IAsyncDisposable
             if (obj is not PartituraItem item) return false;
             if (!string.Equals(sourceFilter, "Todas", StringComparison.OrdinalIgnoreCase)
                 && !string.Equals(item.Source, sourceFilter, StringComparison.OrdinalIgnoreCase)) return false;
+            if (onlyClassical && !IsClassicalItem(item)) return false;
             if (!string.IsNullOrWhiteSpace(tagFilter) && !item.UserTag.Contains(tagFilter, StringComparison.OrdinalIgnoreCase)) return false;
             if (!string.IsNullOrWhiteSpace(titleQuery) && !item.Title.Contains(titleQuery, StringComparison.OrdinalIgnoreCase)) return false;
             if (!string.IsNullOrWhiteSpace(composerQuery) && !item.Composer.Contains(composerQuery, StringComparison.OrdinalIgnoreCase)) return false;
@@ -1918,7 +1942,12 @@ public partial class MainWindow : Window, IAsyncDisposable
             {
                 var hasPdf = item.Files.Any(f => string.Equals(f.Format, "PDF", StringComparison.OrdinalIgnoreCase));
                 var hasMidi = item.Files.Any(f => string.Equals(f.Format, "MIDI", StringComparison.OrdinalIgnoreCase));
-                var hasXml = item.Files.Any(f => f.Format is "XML" or "MXL");
+                var hasXml = item.Files.Any(f =>
+                    string.Equals(f.Format, "XML", StringComparison.OrdinalIgnoreCase)
+                    || string.Equals(f.Format, "MXL", StringComparison.OrdinalIgnoreCase)
+                    || string.Equals(f.Format, "MUSICXML", StringComparison.OrdinalIgnoreCase)
+                    || string.Equals(f.Format, "MSCZ", StringComparison.OrdinalIgnoreCase)
+                    || string.Equals(f.Format, "MSCX", StringComparison.OrdinalIgnoreCase));
                 bool formatOk = (onlyPdf && hasPdf) || (onlyMidi && hasMidi) || (onlyXml && hasXml);
                 if (!formatOk) return false;
             }
@@ -2159,7 +2188,8 @@ public partial class MainWindow : Window, IAsyncDisposable
                     if (warmupCts.Token.IsCancellationRequested)
                         throw new OperationCanceledException();
 
-                    await _cpdl.LoadFilesAsync(item, warmupCts.Token);
+                    // CPDL LoadFiles removido
+                    await Task.Delay(0, warmupCts.Token);  // placeholder
 
                     loadedOk++;
                 }
@@ -2187,7 +2217,12 @@ public partial class MainWindow : Window, IAsyncDisposable
                     if (!onlyPdf && !onlyMidi && !onlyXml) return true;
                     var isPdf = string.Equals(f.Format, "PDF", StringComparison.OrdinalIgnoreCase);
                     var isMidi = string.Equals(f.Format, "MIDI", StringComparison.OrdinalIgnoreCase);
-                    var isXml = f.Format is "XML" or "MXL";
+                    var isXml =
+                        string.Equals(f.Format, "XML", StringComparison.OrdinalIgnoreCase)
+                        || string.Equals(f.Format, "MXL", StringComparison.OrdinalIgnoreCase)
+                        || string.Equals(f.Format, "MUSICXML", StringComparison.OrdinalIgnoreCase)
+                        || string.Equals(f.Format, "MSCZ", StringComparison.OrdinalIgnoreCase)
+                        || string.Equals(f.Format, "MSCX", StringComparison.OrdinalIgnoreCase);
                     return (onlyPdf && isPdf) || (onlyMidi && isMidi) || (onlyXml && isXml);
                 })
                 .Select(f => (item: i, file: f)))
@@ -2244,7 +2279,7 @@ public partial class MainWindow : Window, IAsyncDisposable
                 file => _pausedQueueFiles.ContainsKey(file.DownloadUrl),
                 source => (source ?? string.Empty).Trim().ToUpperInvariant() switch
                 {
-                    "CPDL" => _cpdl.GetSessionHeaders(),
+                    // "CPDL" => _cpdl.GetSessionHeaders(),  // CPDL removido
                     _ => (null, null)
                 },
                 ct);
@@ -4025,12 +4060,45 @@ public partial class MainWindow : Window, IAsyncDisposable
 
     private volatile bool _videoRunning;
     private CancellationTokenSource? _videoCts;
-    private readonly int _videoTimeoutSeconds = ReadFeatureFlagInt("SCOREDOWN_VIDEO_TIMEOUT_SEC", 600, 30, 7200);
+    private readonly int _videoTimeoutSeconds = ReadFeatureFlagInt("SCOREDOWN_VIDEO_TIMEOUT_SEC", 1200, 30, 7200);
     private readonly int _videoParallel = ReadFeatureFlagInt("SCOREDOWN_VIDEO_PARALLEL", 1, 1, 4);
+    private readonly int _videoTrimTailSeconds = ReadFeatureFlagInt("SCOREDOWN_VIDEO_TRIM_TAIL_SEC", 6, 0, 30);
+    private readonly int _videoSubtitleFontPt = ReadFeatureFlagInt("SCOREDOWN_VIDEO_SUBTITLE_FONT_PT", 11, 6, 36);
+    private readonly bool _videoLuxuryTitleEnabled = ReadFeatureFlag("SCOREDOWN_VIDEO_LUXURY_TITLE", true);
+    private readonly int _videoLuxuryTitleSeconds = ReadFeatureFlagInt("SCOREDOWN_VIDEO_LUXURY_DURATION_SEC", 5, 1, 30);
+    private readonly bool _videoHideOriginalScoreTitle = ReadFeatureFlag("SCOREDOWN_VIDEO_HIDE_ORIGINAL_TITLE", true);
+    private readonly int _videoFadeOutSeconds = ReadFeatureFlagInt("SCOREDOWN_VIDEO_FADE_OUT_SEC", 2, 0, 10);
+
+    private readonly System.Collections.ObjectModel.ObservableCollection<VideoSelectItem> _videoSelectItems = new();
+    private string? _videoPanelMuseScoreExe;
+    private IReadOnlyList<string>? _videoPanelExtraArgs;
+    private string? _videoPanelDestFolder;
+
+    // Panel de vídeo: filtro, ordenación y ETA
+    private System.ComponentModel.ICollectionView? _videoSelectView;
+    private string _videoFilterText = string.Empty;
+    private bool _videoIncludeRegenerate;
+    private string _videoSortColumn = string.Empty;
+    private bool _videoSortAscending = true;
+    private bool _videoRefreshing;
+    private bool _suppressVideoHeaderEvents;
+    private bool _suppressItemCheckEvents;   // evita O(N²) UpdateVideoSelectButton en operaciones batch
+    private VideoSelectItem? _ctxMenuTargetItem;
+    private int _videoTotalSelected;          // contador O(1) de items con IsSelected=true
+    private CancellationTokenSource? _videoPopulateCts;
+    private System.Windows.Controls.GridViewColumnHeader? _lastSortHeader;
+    private object? _lastSortOriginalContent;
+
+    // ETA y progreso durante generación
+    private int _videoEtaTotal;
+    private int _videoEtaCompleted;
+    private int _videoEtaFailed;       // contador de fallos para el mensaje ETA final
+    private DateTimeOffset _videoEtaStart;
 
     private async void BtnGenerateVideo_Click(object sender, RoutedEventArgs e)
     {
         if (_audiverisRunning) { Log("⚠️ Hay una conversión Audiveris en proceso. Espera a que termine."); return; }
+        if (_videoRunning) { Log("⚠️ Ya hay una generación de vídeo en curso."); return; }
 
         var destFolder = txtDestFolder.Text?.Trim();
         if (string.IsNullOrWhiteSpace(destFolder) || !Directory.Exists(destFolder))
@@ -4048,70 +4116,510 @@ public partial class MainWindow : Window, IAsyncDisposable
             return;
         }
 
-        var extraVideoArgs = ResolveMuseScoreVideoArgs();
+        _videoPanelMuseScoreExe = museScoreExe;
+        _videoPanelExtraArgs = ResolveMuseScoreVideoArgs();
+        _videoPanelDestFolder = destFolder;
+
+        // Cancelar populate anterior si el panel ya estaba abierto con otra carpeta
+        _videoPopulateCts?.Cancel();
+        _videoPopulateCts?.Dispose();
+        _videoPopulateCts = null;
+
+        try
+        {
+            await PopulateVideoSelectPanelAsync(destFolder).ConfigureAwait(true);
+        }
+        catch (Exception ex)
+        {
+            Log($"❌ Error al cargar partituras para vídeo: {ex.Message}");
+            return;
+        }
+        pnlVideoSelect.Visibility = System.Windows.Visibility.Visible;
+    }
+
+    private async Task PopulateVideoSelectPanelAsync(string destFolder)
+    {
+        if (string.IsNullOrWhiteSpace(destFolder)) return;   // guardia de seguridad
+        // Guardar sort activo para restaurarlo tras el populate
+        var savedSortColumn = _videoSortColumn;
+        var savedSortAscending = _videoSortAscending;
+
+        // Resetear indicador visual de ordenación (el header del populate nuevo empieza sin flechas)
+        if (_lastSortHeader is not null && _lastSortOriginalContent is not null)
+            _lastSortHeader.Content = _lastSortOriginalContent;
+        _lastSortHeader = null;
+        _lastSortOriginalContent = null;
+        _videoSortColumn = string.Empty;
+        _videoSortAscending = true;
+        _videoSelectView?.SortDescriptions.Clear();  // evita sort "fantasma" tras refresh
+
+        // Cancelar populate anterior si aún corría
+        _videoPopulateCts?.Cancel();
+        _videoPopulateCts?.Dispose();
+        _videoPopulateCts = new CancellationTokenSource();
+        var localCts = _videoPopulateCts;
+
+        txtStatus.Text = "🔍 Escaneando partituras...";
+
+        // Capturar selección previa en hilo UI (ObservableCollection no es thread-safe)
+        bool isFirstLoad = _videoSelectItems.Count == 0;
+        var previouslySelected = isFirstLoad
+            ? null
+            : new HashSet<string>(
+                _videoSelectItems.Where(i => i.IsSelected).Select(i => i.BestFile),
+                StringComparer.OrdinalIgnoreCase);
+
+        List<(string File, string Ext, string Tag, bool HasVideo, string FolderShort, string Mp4ToolTip)> computed;
+        try
+        {
+            computed = await Task.Run(() =>
+            {
+                var allInputs = SafeEnumerateFilesCached(destFolder,
+                    f => VideoInputExtensions.Contains(Path.GetExtension(f))).ToList();
+
+                // Precompute MP4 set del caché existente → evita File.Exists por archivo
+                var mp4Set = new HashSet<string>(
+                    GetRawFilesFromDir(destFolder)
+                        .Where(f => Path.GetExtension(f).Equals(".mp4", StringComparison.OrdinalIgnoreCase)),
+                    StringComparer.OrdinalIgnoreCase);
+                bool hasMp4(string f) => VideoSiblingCandidates(f).Any(c => mp4Set.Contains(c));
+
+                return allInputs
+                    .GroupBy(f => Path.Combine(
+                        Path.GetDirectoryName(f) ?? string.Empty,
+                        Path.GetFileNameWithoutExtension(f)),
+                        StringComparer.OrdinalIgnoreCase)
+                    .Select(g => g.OrderBy(f =>
+                    {
+                        var idx = Array.IndexOf(VideoFormatPriority, Path.GetExtension(f).ToLowerInvariant());
+                        return idx < 0 ? 999 : idx;
+                    }).First())
+                    .Select(file =>
+                    {
+                        localCts.Token.ThrowIfCancellationRequested();
+                        var ext = Path.GetExtension(file).ToLowerInvariant();
+                        var hv = hasMp4(file);   // HashSet lookup, sin IO adicional
+                        var dir = Path.GetDirectoryName(file) ?? string.Empty;
+                        // Ruta relativa al destFolder para FolderShort (más informativo que truncado de cola)
+                        string folderShort;
+                        if (dir.StartsWith(destFolder, StringComparison.OrdinalIgnoreCase))
+                        {
+                            var rel = dir.Substring(destFolder.Length).TrimStart(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+                            folderShort = string.IsNullOrEmpty(rel) ? "(raíz)"
+                                : rel.Length > 45 ? "…" + rel[^44..] : rel;
+                        }
+                        else
+                        {
+                            folderShort = dir.Length > 45 ? "…" + dir[^44..] : dir;
+                        }
+                        return (
+                            File: file,
+                            Ext: ext,
+                            Tag: ext.TrimStart('.').ToUpperInvariant(),
+                            HasVideo: hv,
+                            FolderShort: folderShort,
+                            Mp4ToolTip: hv ? ComputeMp4SizeToolTip(file) : string.Empty
+                        );
+                    })
+                    .OrderBy(d => d.FolderShort, StringComparer.OrdinalIgnoreCase)
+                    .ThenBy(d => !d.HasVideo)
+                    .ThenBy(d => Path.GetFileNameWithoutExtension(d.File), StringComparer.OrdinalIgnoreCase)
+                    .ToList();
+            }).ConfigureAwait(true);
+        }
+        catch (OperationCanceledException) { return; }  // populate más nuevo en camino, ignorar silencioso
+
+        // Actualizar UI en hilo principal
+        if (localCts.IsCancellationRequested) return;   // populate más nuevo en camino
+        btnVideoSelectGenerate.IsEnabled = false;        // bloquear hasta que UpdateVideoSelectButton fije el estado correcto
+        _videoTotalSelected = 0;
+        _suppressItemCheckEvents = true;    // evitar O(N²) UpdateVideoSelectButton durante el llenado
+        _videoSelectItems.Clear();
+        foreach (var d in computed)
+        {
+            System.Windows.Media.Brush color = d.Ext switch
+            {
+                ".mscz" => BrushMscz,
+                ".mxl" => BrushMxl,
+                ".musicxml" => BrushMusicXml,
+                ".xml" => BrushMusicXml,   // MusicXML con extensión .xml
+                _ => System.Windows.Media.Brushes.DimGray
+            };
+            var isSelected = previouslySelected is null ? !d.HasVideo : previouslySelected.Contains(d.File);
+            var item = new VideoSelectItem
+            {
+                BestFile = d.File,
+                DisplayName = Path.GetFileNameWithoutExtension(d.File),
+                FormatTag = d.Tag,
+                FormatColor = color,
+                HasVideo = d.HasVideo,
+                FolderShort = d.FolderShort,
+                Mp4SizeToolTip = d.Mp4ToolTip,
+            };
+            item.SelectionDelta = delta => _videoTotalSelected += delta;
+            item.IsSelected = isSelected;   // dispara delta → _videoTotalSelected
+            _videoSelectItems.Add(item);
+        }
+        _suppressItemCheckEvents = false;   // reactivar después del llenado
+
+        // Agrupar solo cuando hay más de una carpeta distinta (un solo grupo sería ruido visual)
+        var hasMultiFolders = _videoSelectItems
+            .Select(i => i.FolderShort)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Skip(1).Any();   // más eficiente que Count() > 1
+
+        // Crear o refrescar CollectionView (mantiene filtro/orden activos)
+        if (_videoSelectView is null || !ReferenceEquals(_videoSelectView.SourceCollection, _videoSelectItems))
+        {
+            _videoSelectView = System.Windows.Data.CollectionViewSource.GetDefaultView(_videoSelectItems);
+            _videoSelectView.Filter = FilterVideoItem;
+        }
+        // Sincronizar grouping con la realidad de carpetas del lote actual
+        _videoSelectView.GroupDescriptions.Clear();
+        if (hasMultiFolders)
+            _videoSelectView.GroupDescriptions.Add(
+                new System.Windows.Data.PropertyGroupDescription(nameof(VideoSelectItem.FolderShort)));
+        // Ocultar columna "Carpeta" cuando hay cabeceras de grupo (información redundante)
+        if (colCarpeta is not null) colCarpeta.Width = hasMultiFolders ? 0 : 220;
+
+        // Restaurar sort activo (si había uno antes del populate)
+        if (!string.IsNullOrEmpty(savedSortColumn) && _videoSelectView is not null)
+        {
+            _videoSortColumn = savedSortColumn;
+            _videoSortAscending = savedSortAscending;
+            if (_videoSelectView.GroupDescriptions.Count > 0 && savedSortColumn != nameof(VideoSelectItem.FolderShort))
+                _videoSelectView.SortDescriptions.Add(new System.ComponentModel.SortDescription(
+                    nameof(VideoSelectItem.FolderShort), System.ComponentModel.ListSortDirection.Ascending));
+            _videoSelectView.SortDescriptions.Add(new System.ComponentModel.SortDescription(
+                savedSortColumn, savedSortAscending
+                    ? System.ComponentModel.ListSortDirection.Ascending
+                    : System.ComponentModel.ListSortDirection.Descending));
+        }
+
+        _videoSelectView!.Refresh();
+        lstVideoSelect.ItemsSource = _videoSelectView;
+
+        txtVideoEta.Text = string.Empty;
+        pbVideoGeneral.Value = 0;
+        pbVideoGeneral.Foreground = System.Windows.Media.Brushes.MediumPurple;   // reset tras posibles errores
+
+        // Dispose del CTS ahora que populate terminó normalmente
+        if (!localCts.IsCancellationRequested)
+        {
+            _videoPopulateCts = null;
+            localCts.Dispose();
+        }
+
+        // Actualizar status tras populate exitoso
+        var pending = _videoSelectItems.Count(i => !i.HasVideo);
+        txtStatus.Text = $"🎥 {_videoSelectItems.Count} partitura(s) cargadas, {pending} sin vídeo";
+
+        // Scroll al inicio para que el usuario vea el comienzo de la lista
+        var firstVisible = VisibleItems.FirstOrDefault();
+        if (firstVisible is not null) lstVideoSelect.ScrollIntoView(firstVisible);
+
+        UpdateVideoSelectButton();
+        // Actualizar color del filtro: puede haber cambiado número de coincidencias tras el nuevo escaneo
+        TxtVideoFilter_TextChanged(txtVideoFilter, null!);
+    }
+
+    private static readonly System.Windows.Media.SolidColorBrush BrushMscz = MakeFrozenBrush(0x7C, 0x3A, 0xED);
+    private static readonly System.Windows.Media.SolidColorBrush BrushMxl = MakeFrozenBrush(0x0F, 0x76, 0x6E);
+    private static readonly System.Windows.Media.SolidColorBrush BrushMusicXml = MakeFrozenBrush(0x1E, 0x40, 0xAF);
+
+    private static System.Windows.Media.SolidColorBrush MakeFrozenBrush(byte r, byte g, byte b)
+    {
+        var brush = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(r, g, b));
+        brush.Freeze();
+        return brush;
+    }
+
+    private bool FilterVideoItem(object obj)
+    {
+        if (obj is not VideoSelectItem item) return false;
+        // Errores y ítems en curso siempre visibles, independientemente de filtros
+        if (item.Status == VideoStatus.Error || item.Status == VideoStatus.Running) return true;
+        // Filtrar por texto: nombre O carpeta O formato
+        if (!string.IsNullOrEmpty(_videoFilterText)
+            && !item.DisplayName.Contains(_videoFilterText, StringComparison.OrdinalIgnoreCase)
+            && !item.FolderShort.Contains(_videoFilterText, StringComparison.OrdinalIgnoreCase)
+            && !item.FormatTag.Contains(_videoFilterText, StringComparison.OrdinalIgnoreCase))
+            return false;
+        // Si no se quiere regenerar, ocultar los que ya tienen vídeo
+        if (!_videoIncludeRegenerate && item.HasVideo && item.Status == VideoStatus.None)
+            return false;
+        return true;
+    }
+
+    private void UpdateVideoSelectButton()
+    {
+        // Un solo bucle sobre _videoSelectItems para todos los contadores O(N)
+        int allErrors = 0, allPending = 0;
+        foreach (var i in _videoSelectItems)
+        {
+            if (i.Status == VideoStatus.Error) allErrors++;
+            if (!i.HasVideo && i.Status != VideoStatus.Running) allPending++;
+        }
+
+        // Un solo bucle sobre VisibleItems para sel, total y visiblePending
+        int sel = 0, total = 0, visiblePending = 0;
+        foreach (var i in VisibleItems)
+        {
+            total++;
+            if (i.IsSelected) sel++;
+            if (!i.HasVideo && i.Status == VideoStatus.None) visiblePending++;
+        }
+
+        // hiddenSel: seleccionados ocultos por el filtro (O(1) via _videoTotalSelected)
+        var hiddenSel = _videoTotalSelected - sel;
+        var totalSel = _videoTotalSelected;
+        btnVideoSelectGenerate.Content = totalSel > sel
+            ? $"🎥 Generar ({totalSel})"  // muestra total real incluyendo ocultos
+            : $"🎥 Generar ({sel})";
+        btnVideoSelectGenerate.IsEnabled = totalSel > 0 && !_videoRunning;
+        if (btnVideoSelectErrors is not null)
+            btnVideoSelectErrors.IsEnabled = allErrors > 0 && !_videoRunning;
+        // Deshabilitar botones de selección masiva durante generación para evitar cambios involuntarios
+        var selectionEnabled = !_videoRunning;
+        if (btnVideoSelectAll is not null) btnVideoSelectAll.IsEnabled = selectionEnabled;
+        if (btnVideoSelectNone is not null) btnVideoSelectNone.IsEnabled = selectionEnabled;
+        if (btnVideoSelectInvert is not null) btnVideoSelectInvert.IsEnabled = selectionEnabled;
+        if (btnVideoSelectPending is not null) btnVideoSelectPending.IsEnabled = selectionEnabled;
+        if (btnVideoSelectRefresh is not null) btnVideoSelectRefresh.IsEnabled = selectionEnabled && !_videoRefreshing;
+        string countText = allErrors > 0
+            ? $"{sel}/{total} sel  •  {allErrors}⚠ error(es)"
+            : $"{sel}/{total} seleccionada(s)";
+        if (hiddenSel > 0) countText += $"  +{hiddenSel} oculta(s) sel.";
+        txtVideoSelectCount.Text = countText;
+
+        // Sync checkbox de cabecera (sin disparar eventos)
+        _suppressVideoHeaderEvents = true;
+        chkVideoSelectHeader.IsChecked = sel == 0 ? false : sel == total ? true : (bool?)null;
+        _suppressVideoHeaderEvents = false;
+
+        // Mensaje vacío cuando la vista filtrada no tiene ítems
+        if (txtVideoEmpty is not null)
+        {
+            if (_videoSelectItems.Count == 0)
+            {
+                txtVideoEmpty.Text = "No se encontraron partituras (.mscz / .mxl / .musicxml) en la carpeta seleccionada";
+                txtVideoEmpty.Visibility = System.Windows.Visibility.Visible;
+            }
+            else if (total == 0)
+            {
+                string emptyMsg;
+                bool hasFilterText = !string.IsNullOrEmpty(_videoFilterText);
+                // Detectar si Re-generar oculta ítems que coinciden con el filtro
+                bool filterMatchesHiddenVideo = hasFilterText && !_videoIncludeRegenerate
+                    && _videoSelectItems.Any(i => i.HasVideo && i.Status == VideoStatus.None
+                        && (i.DisplayName.Contains(_videoFilterText, StringComparison.OrdinalIgnoreCase)
+                         || i.FolderShort.Contains(_videoFilterText, StringComparison.OrdinalIgnoreCase)
+                         || i.FormatTag.Contains(_videoFilterText, StringComparison.OrdinalIgnoreCase)));
+                if (hasFilterText && filterMatchesHiddenVideo)
+                {
+                    emptyMsg = hiddenSel > 0
+                        ? $"Resultados ocultos por Re-generar  •  Activa 🔁 para verlos  •  {hiddenSel} sel. oculta(s)"
+                        : "Resultados ocultos por Re-generar. Activa 🔁 Re-generar para verlos";
+                }
+                else if (hasFilterText)
+                {
+                    emptyMsg = hiddenSel > 0
+                        ? $"Sin coincidencias para el filtro actual  •  {hiddenSel} seleccionada(s) oculta(s)"
+                        : "Sin coincidencias para el filtro actual";
+                }
+                else
+                {
+                    emptyMsg = hiddenSel > 0
+                        ? $"Todas ya tienen vídeo MP4. Activa 🔁 Re-generar para mostrarlas  •  {hiddenSel} seleccionada(s) oculta(s)"
+                        : "Todas las partituras ya tienen vídeo MP4. Activa 🔁 Re-generar para mostrarlas";
+                }
+                txtVideoEmpty.Text = emptyMsg;
+                txtVideoEmpty.Visibility = System.Windows.Visibility.Visible;
+            }
+            else
+            {
+                txtVideoEmpty.Visibility = System.Windows.Visibility.Collapsed;
+            }
+        }
+
+        // Hint: refleja recuento filtrado vs total
+        if (_videoPanelDestFolder is not null)
+        {
+            var allTotal = _videoSelectItems.Count;
+            // Nombre corto de carpeta (solo último segmento, más manejable en la barra de hint)
+            var folderName = Path.GetFileName(_videoPanelDestFolder.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
+            if (string.IsNullOrEmpty(folderName)) folderName = _videoPanelDestFolder;  // raíz de disco
+            // Cuando hay filtro activo, mostrar pendientes visibles; si no, pendientes globales
+            var pendingLabel = total < allTotal
+                ? $"{visiblePending} sin vídeo (filtrado)"
+                : $"{allPending} sin vídeo";
+            var hintBase = total < allTotal
+                ? $"📂 {folderName}   |   {total}/{allTotal} visible(s), {pendingLabel}"
+                : $"📂 {folderName}   |   {allTotal} partitura(s), {pendingLabel}";
+            txtVideoSelectHint.Text = allErrors > 0 ? $"{hintBase}  •  {allErrors}⚠️" : hintBase;
+            txtVideoSelectHint.ToolTip = _videoPanelDestFolder;
+        }
+    }
+
+    // Vista filtrada o colección completa si la vista aún no existe
+    private IEnumerable<VideoSelectItem> VisibleItems =>
+        _videoSelectView?.Cast<VideoSelectItem>() ?? _videoSelectItems;
+
+    private async Task RunVideoGenerationAsync(IReadOnlyList<string> pending, string museScoreExe, IReadOnlyList<string> extraVideoArgs, string destFolder, CancellationToken externalCt)
+    {
+        // Guardia temprana: no debería ocurrir, pero mejor salir limpio antes de tocar UI
+        if (pending.Count == 0) { Log("⚠️ Video: sin partituras que generar."); return; }
+
         var soundProfile = GetArgValue(extraVideoArgs, "--sound-profile") ?? "MuseSounds";
-
-        var inputs = SafeEnumerateFilesCached(destFolder, f => VideoInputExtensions.Contains(Path.GetExtension(f)))
-            .ToList();
-
-        if (inputs.Count == 0)
-        {
-            Log("🎥 Video: no hay partituras MSCZ/MXL/XML/MusicXML para convertir.");
-            return;
-        }
-
-        var pending = inputs.Where(f => !HasVideoSibling(f)).ToList();
-        if (pending.Count == 0)
-        {
-            Log("🎥 Video: todo ya tiene vídeo MP4 generado.");
-            return;
-        }
-
-        Log($"🎥 Video: ejecución automática para {pending.Count} partitura(s). Perfil audio: {soundProfile}");
+        Log($"🎥 Video: inicio para {pending.Count} partitura(s). Perfil audio: {soundProfile}");
 
         _videoRunning = true;
-        _videoCts = new CancellationTokenSource();
+        _videoCts = externalCt.CanBeCanceled
+            ? CancellationTokenSource.CreateLinkedTokenSource(externalCt)
+            : new CancellationTokenSource();
         btnGenerateVideo.IsEnabled = false;
+        btnVideoSelectGenerate.IsEnabled = false;
+        btnVideoSelectCancelGen.IsEnabled = true;
         btnCancelVideo.IsEnabled = true;
-        btnSearch.IsEnabled = false;
-        btnDownload.IsEnabled = false;
-        txtStatus.Text = "🎥 Generando vídeos...";
+        txtVideoFilter.IsEnabled = false;
+        chkVideoRegenerate.IsEnabled = false;
 
         int ok = 0, fail = 0, processed = 0;
+
+        // Lookup rápido para actualizar badges de estado en vivo (solo los ítems pendientes)
+        var pendingSet = new HashSet<string>(pending, StringComparer.OrdinalIgnoreCase);
+        var itemLookup = _videoSelectItems
+            .Where(i => pendingSet.Contains(i.BestFile))
+            .ToDictionary(i => i.BestFile, i => i, StringComparer.OrdinalIgnoreCase);
+
+        // Inicializar progreso + ETA
+        _videoEtaTotal = pending.Count;
+        _videoEtaCompleted = 0;
+        _videoEtaFailed = 0;
+        _videoEtaStart = DateTimeOffset.UtcNow;
+        await Dispatcher.InvokeAsync(() =>
+        {
+            pbVideoGeneral.Maximum = pending.Count;
+            pbVideoGeneral.Value = 0;
+            pbVideoGeneral.Foreground = System.Windows.Media.Brushes.MediumPurple;
+            txtVideoEta.Text = string.Empty;
+        });
+
         try
         {
             await Parallel.ForEachAsync(
                 pending,
                 new ParallelOptions { MaxDegreeOfParallelism = _videoParallel, CancellationToken = _videoCts.Token },
-                async (input, ct) =>
+                async (input, innerCt) =>
                 {
                     var name = Path.GetFileName(input);
                     var idx = Interlocked.Increment(ref processed);
                     var outputMp4 = Path.Combine(
                         Path.GetDirectoryName(input) ?? destFolder,
                         Path.GetFileNameWithoutExtension(input) + ".mp4");
+                    var startedAt = DateTimeOffset.UtcNow;
 
                     await Dispatcher.InvokeAsync(() =>
                         txtStatus.Text = $"🎥 Video [{idx}/{pending.Count}] {name}");
-                    LogDebug($"Video [{idx}/{pending.Count}] {name}");
+                    Log($"🎬 Video [{idx}/{pending.Count}] inicio: {name} -> {Path.GetFileName(outputMp4)}");
+
+                    // Badge: en curso
+                    await Dispatcher.InvokeAsync(() =>
+                    {
+                        if (itemLookup.TryGetValue(input, out var si))
+                            si.Status = VideoStatus.Running;
+                    });
 
                     bool generated;
                     try
                     {
-                        generated = await RunMuseScoreVideoAsync(museScoreExe, input, outputMp4, extraVideoArgs, ct).ConfigureAwait(false);
+                        generated = await RunMuseScoreVideoAsync(museScoreExe, input, outputMp4, extraVideoArgs, innerCt).ConfigureAwait(false);
                     }
                     catch (Exception ex) when (ex is not OperationCanceledException)
                     {
                         Interlocked.Increment(ref fail);
+                        Interlocked.Increment(ref _videoEtaFailed);
                         Log($"❌ Video error en {name}: {ex.Message}");
+                        await Dispatcher.InvokeAsync(() =>
+                        {
+                            if (itemLookup.TryGetValue(input, out var si))
+                                si.Status = VideoStatus.Error;
+                            pbVideoGeneral.Foreground = System.Windows.Media.Brushes.OrangeRed;
+                            pbVideoGeneral.Value = Interlocked.Increment(ref _videoEtaCompleted);
+                            UpdateVideoEtaLabel();
+                            UpdateVideoSelectButton();   // actualizar recuento de errores en vivo
+                        });
                         return;
                     }
 
-                    if (generated) Interlocked.Increment(ref ok);
-                    else { Interlocked.Increment(ref fail); Log($"⚠️ Sin vídeo generado: {name}"); }
+                    var elapsed = DateTimeOffset.UtcNow - startedAt;
+                    if (generated)
+                    {
+                        if (_videoLuxuryTitleEnabled && File.Exists(outputMp4))
+                        {
+                            var decorated = await TryApplyLuxuryTitleOverlayAsync(outputMp4, input, innerCt).ConfigureAwait(false);
+                            if (decorated)
+                                Log($"✨ Intro portada aplicada ({name}): título + autor(es)");
+                        }
+
+                        if (_videoTrimTailSeconds > 0 && File.Exists(outputMp4))
+                        {
+                            var trimmed = await TryTrimVideoTailAsync(outputMp4, _videoTrimTailSeconds, innerCt).ConfigureAwait(false);
+                            if (trimmed)
+                                Log($"✂️ Recorte aplicado ({name}): -{_videoTrimTailSeconds}s al final");
+                        }
+
+                        if (_videoFadeOutSeconds > 0 && File.Exists(outputMp4))
+                        {
+                            var fadedOut = await TryApplyFadeOutAsync(outputMp4, _videoFadeOutSeconds, innerCt).ConfigureAwait(false);
+                            if (fadedOut)
+                                Log($"🌑 Fundido a negro aplicado ({name}): {_videoFadeOutSeconds}s al final");
+                        }
+
+                        var okNow = Interlocked.Increment(ref ok);
+                        long sizeBytes = 0;
+                        try { sizeBytes = new FileInfo(outputMp4).Length; } catch { }
+                        var mb = sizeBytes > 0 ? $", {sizeBytes / (1024.0 * 1024.0):F1} MB" : string.Empty;
+                        Log($"✅ Video OK: {name} en {elapsed.TotalSeconds:F1}s{mb} (ok={okNow}, fail={Volatile.Read(ref fail)})");
+
+                        // Calcular tooltip de tamaño en hilo worker (evita FileInfo en UI thread)
+                        var mp4ToolTip = ComputeMp4SizeToolTip(input);
+
+                        // Refresh badge + HasVideo + ETA
+                        await Dispatcher.InvokeAsync(() =>
+                        {
+                            if (itemLookup.TryGetValue(input, out var si))
+                            {
+                                si.HasVideo = true;
+                                si.IsSelected = false;
+                                si.Status = VideoStatus.Done;
+                                si.Mp4SizeToolTip = mp4ToolTip;
+                            }
+                            pbVideoGeneral.Value = Interlocked.Increment(ref _videoEtaCompleted);
+                            UpdateVideoEtaLabel();
+                            UpdateVideoSelectButton();
+                        });
+                    }
+                    else
+                    {
+                        var failNow = Interlocked.Increment(ref fail);
+                        Interlocked.Increment(ref _videoEtaFailed);
+                        Log($"⚠️ Sin vídeo generado: {name} tras {elapsed.TotalSeconds:F1}s (ok={Volatile.Read(ref ok)}, fail={failNow})");
+                        await Dispatcher.InvokeAsync(() =>
+                        {
+                            if (itemLookup.TryGetValue(input, out var si))
+                                si.Status = VideoStatus.Error;
+                            pbVideoGeneral.Foreground = System.Windows.Media.Brushes.OrangeRed;
+                            pbVideoGeneral.Value = Interlocked.Increment(ref _videoEtaCompleted);
+                            UpdateVideoEtaLabel();
+                            UpdateVideoSelectButton();   // actualizar recuento de errores en vivo
+                        });
+                    }
                 }).ConfigureAwait(true);
 
-            var msg = $"🎥 Vídeos completados: {ok} OK, {fail} sin generar";
+            var msg = fail == 0
+                ? $"🎥 Vídeos completados: {ok} OK"
+                : $"🎥 Vídeos completados: {ok} OK, {fail} sin generar";
             txtStatus.Text = msg;
             Log(msg);
         }
@@ -4120,12 +4628,20 @@ public partial class MainWindow : Window, IAsyncDisposable
             var msg = $"⏹️ Vídeo cancelado por usuario (ok={ok}, fail={fail})";
             txtStatus.Text = msg;
             Log(msg);
+            var elapsedSec = (DateTimeOffset.UtcNow - _videoEtaStart).TotalSeconds;
+            var elapsedStr = elapsedSec >= 60
+                ? $"{(int)(elapsedSec / 60)}m {(int)(elapsedSec % 60):D2}s"
+                : $"{(int)elapsedSec}s";
+            txtVideoEta.Text = fail > 0
+                ? $"⏹️ Cancelado ({ok}/{_videoEtaTotal}, ⚠{fail})  {elapsedStr}"
+                : $"⏹️ Cancelado ({ok}/{_videoEtaTotal})  {elapsedStr}";
         }
         catch (Exception ex)
         {
             txtStatus.Text = "Error en generación de vídeo";
             Log($"❌ Video error: {ex.Message}");
             DarkDialogService.ShowMessage(this, $"Error generando vídeos: {ex.Message}", "Vídeo", MessageBoxButton.OK, MessageBoxImage.Error);
+            txtVideoEta.Text = "❌ Error";
         }
         finally
         {
@@ -4134,26 +4650,883 @@ public partial class MainWindow : Window, IAsyncDisposable
             _videoCts = null;
             btnGenerateVideo.IsEnabled = true;
             btnCancelVideo.IsEnabled = false;
-            btnSearch.IsEnabled = true;
-            UpdateDownloadButton();
+            btnVideoSelectCancelGen.IsEnabled = false;
+            txtVideoFilter.IsEnabled = true;
+            chkVideoRegenerate.IsEnabled = true;
+            // Invalidar caché para que un Refresh posterior detecte los MP4 nuevos/borrados
+            if (!string.IsNullOrEmpty(_videoPanelDestFolder))
+                InvalidateRawFilesCache(_videoPanelDestFolder);
+            // Mantener barra de progreso en el valor final (no resetear a 0)
+            // Se reseteará automáticamente al iniciar la siguiente generación.
+            // Resetear cualquier ítem que quedó en curso (cancelado o error fatal)
+            foreach (var item in _videoSelectItems)
+                if (item.Status == VideoStatus.Running) item.Status = VideoStatus.None;
+            // Refrescar vista sin reconstruir (badges ya actualizados en tiempo real)
+            _videoSelectView?.Refresh();
+            UpdateVideoSelectButton();
+            // Scroll al primer error para que el usuario lo vea
+            var firstError = _videoSelectItems.FirstOrDefault(i => i.Status == VideoStatus.Error);
+            if (firstError is not null)
+                lstVideoSelect.ScrollIntoView(firstError);
         }
+    }
+
+    // Calcula y muestra el ETA restante. Llamar desde el hilo de UI.
+    private void UpdateVideoEtaLabel()
+    {
+        var completed = Volatile.Read(ref _videoEtaCompleted);
+        var failed = Volatile.Read(ref _videoEtaFailed);
+        var total = _videoEtaTotal;
+        if (completed <= 0 || total <= 0) return;   // no borrar ETA visible (ej. "⏹️ Cancelado")
+        var elapsed = (DateTimeOffset.UtcNow - _videoEtaStart).TotalSeconds;
+        if (elapsed < 0.1) return;                  // evitar división por cero / estimación no fiable
+        var avgSec = elapsed / completed;
+        var remaining = Math.Max(0, total - completed);
+        if (remaining == 0)
+        {
+            var totalStr = elapsed >= 3600
+                ? $"{(int)(elapsed / 3600)}h {(int)(elapsed % 3600 / 60):D2}m {(int)(elapsed % 60):D2}s"
+                : elapsed >= 60
+                    ? $"{(int)(elapsed / 60)}m {(int)(elapsed % 60):D2}s"
+                    : $"{(int)elapsed}s";
+            var doneText = failed > 0
+                ? $"✅ Listo ({completed - failed} ok, ⚠{failed} error)  {totalStr}  (~{avgSec:F0}s/partitura)"
+                : $"✅ Listo ({completed})  {totalStr}  (~{avgSec:F0}s/partitura)";
+            txtVideoEta.Text = doneText;
+            return;
+        }
+        var etaSec = avgSec * remaining;
+        var ts = TimeSpan.FromSeconds(etaSec);
+        var etaStr = ts.TotalHours >= 1
+            ? $"{(int)ts.TotalHours}h {ts.Minutes:D2}m {ts.Seconds:D2}s"
+            : ts.TotalMinutes >= 1
+                ? $"{(int)ts.TotalMinutes}m {ts.Seconds:D2}s"
+                : $"{ts.Seconds}s";
+        var failStr = failed > 0 ? $"  •  {failed}⚠" : string.Empty;
+        var pct = total > 0 ? (int)Math.Round(completed * 100.0 / total) : 0;
+        txtVideoEta.Text = $"⏱ {completed}/{total} ({pct}%)  ETA {etaStr}  (~{avgSec:F0}s/partitura){failStr}";
     }
 
     private void BtnCancelVideo_Click(object sender, RoutedEventArgs e)
     {
         _videoCts?.Cancel();
         if (btnCancelVideo != null) btnCancelVideo.IsEnabled = false;
+        if (btnVideoSelectCancelGen != null) btnVideoSelectCancelGen.IsEnabled = false;
         Log("⏹️ Cancelando generación de vídeo...");
     }
 
-    private static bool HasVideoSibling(string inputPath)
+    // ── Panel selección de vídeo: handlers ─────────────────────────────────────
+
+    private void BtnVideoSelectBack_Click(object sender, RoutedEventArgs e)
+    {
+        if (_videoRunning)
+        {
+            DarkDialogService.ShowMessage(this,
+                "Hay una generación de vídeo en curso. Para antes de volver.",
+                "Vídeo en proceso", MessageBoxButton.OK, MessageBoxImage.Warning);
+            return;
+        }
+        // Cancelar populate si aún está en curso
+        _videoPopulateCts?.Cancel();
+        _videoPopulateCts?.Dispose();
+        _videoPopulateCts = null;
+        // Limpiar filtro para que el próximo populate arranque sin restricciones
+        _videoFilterText = string.Empty;
+        txtVideoFilter.Clear();
+        // Liberar memoria: la colección puede ser grande (miles de archivos)
+        _videoSelectItems.Clear();
+        _videoTotalSelected = 0;
+        _videoSelectView = null;
+        lstVideoSelect.ItemsSource = null;
+        txtVideoEta.Text = string.Empty;   // limpiar ETA de la última ejecución
+        pbVideoGeneral.Value = 0;              // resetear barra al cerrar el panel
+        txtStatus.Text = "Listo";  // restaurar status genérico tras cerrar panel
+        pnlVideoSelect.Visibility = System.Windows.Visibility.Collapsed;
+    }
+
+    private void BtnVideoSelectAll_Click(object sender, RoutedEventArgs e)
+    {
+        _suppressItemCheckEvents = true;
+        foreach (var item in VisibleItems) item.IsSelected = true;
+        _suppressItemCheckEvents = false;
+        UpdateVideoSelectButton();
+    }
+
+    private void BtnVideoSelectNone_Click(object sender, RoutedEventArgs e)
+    {
+        _suppressItemCheckEvents = true;
+        foreach (var item in _videoSelectItems) item.IsSelected = false;  // todos, no solo visibles
+        _suppressItemCheckEvents = false;
+        _videoTotalSelected = 0;    // reset directo: más seguro que depender de deltas
+        UpdateVideoSelectButton();
+    }
+
+    private void BtnVideoSelectInvert_Click(object sender, RoutedEventArgs e)
+    {
+        _suppressItemCheckEvents = true;
+        foreach (var item in VisibleItems) item.IsSelected = !item.IsSelected;
+        _suppressItemCheckEvents = false;
+        UpdateVideoSelectButton();
+    }
+
+    private void BtnVideoSelectPending_Click(object sender, RoutedEventArgs e)
+    {
+        // Cuando Re-generar está activo, "Pendientes" incluye también los que ya tienen vídeo.
+        // Excluir siempre los que están generando ahora (Running) para no cancelarles al generar.
+        _suppressItemCheckEvents = true;
+        foreach (var item in VisibleItems)
+            item.IsSelected = _videoIncludeRegenerate
+                ? item.Status != VideoStatus.Error && item.Status != VideoStatus.Running
+                : !item.HasVideo && item.Status != VideoStatus.Error && item.Status != VideoStatus.Running;
+        _suppressItemCheckEvents = false;
+        UpdateVideoSelectButton();
+    }
+
+    private void BtnVideoSelectErrors_Click(object sender, RoutedEventArgs e)
+    {
+        var allErrors = _videoSelectItems.Count(i => i.Status == VideoStatus.Error);
+        // Forzar Re-generar para que los errores se puedan reintentar aunque tengan HasVideo=true parcial
+        if (!_videoIncludeRegenerate && allErrors > 0)
+        {
+            _videoIncludeRegenerate = true;
+            chkVideoRegenerate.IsChecked = true;
+            _videoSelectView?.Refresh();
+            // ChkVideoRegenerate_Changed no disparará el recálculo del color de filtro (guard de igualdad)
+            TxtVideoFilter_TextChanged(txtVideoFilter, null!);
+        }
+        // FilterVideoItem siempre deja pasar los errores, así que todos son visibles.
+        _suppressItemCheckEvents = true;
+        foreach (var item in VisibleItems) item.IsSelected = item.Status == VideoStatus.Error;
+        _suppressItemCheckEvents = false;
+        UpdateVideoSelectButton();
+    }
+
+    private void BtnVideoSelectOpenFolder_Click(object sender, RoutedEventArgs e)
+    {
+        var folder = _videoPanelDestFolder;
+        if (!string.IsNullOrWhiteSpace(folder) && Directory.Exists(folder))
+            System.Diagnostics.Process.Start("explorer.exe", folder);
+    }
+
+    private async void BtnVideoSelectRefresh_Click(object sender, RoutedEventArgs e)
+    {
+        // Bloquear refresco durante generación: itemLookup en RunVideoGenerationAsync
+        // referencia los mismos objetos VideoSelectItem de _videoSelectItems; si
+        // repoblaráramos ahora, esos objetos quedarían desconectados de la UI.
+        if (_videoPanelDestFolder is null || _videoRefreshing || _videoRunning) return;
+        _videoRefreshing = true;
+        // Invalidar caché antes del populate manual: el usuario espera ver el estado real del disco
+        InvalidateRawFilesCache(_videoPanelDestFolder);
+        UpdateVideoSelectButton();   // deshabilitar Refresh/selección via _videoRefreshing
+        // Capturar estado del checkbox ANTES del populate para restaurarlo después
+        var savedRegenerate = _videoIncludeRegenerate;
+        try { await PopulateVideoSelectPanelAsync(_videoPanelDestFolder).ConfigureAwait(true); }
+        finally
+        {
+            _videoRefreshing = false;
+            // Restaurar Re-generar si populate lo reseteó implícitamente
+            if (_videoIncludeRegenerate != savedRegenerate)
+            {
+                _videoIncludeRegenerate = savedRegenerate;
+                chkVideoRegenerate.IsChecked = savedRegenerate;
+                _videoSelectView?.Refresh();
+                TxtVideoFilter_TextChanged(txtVideoFilter, null!);   // recalcular color del filtro
+            }
+            UpdateVideoSelectButton();   // restaurar botones según estado real
+        }
+    }
+
+    private async void BtnVideoSelectGenerate_Click(object sender, RoutedEventArgs e)
+    {
+        if (_videoRunning) return;
+
+        var selected = _videoSelectItems.Where(i => i.IsSelected).Select(i => i.BestFile).ToList();
+        if (selected.Count == 0) { Log("🎥 Video: no hay partituras seleccionadas."); return; }
+
+        var museScoreExe = _videoPanelMuseScoreExe;
+        var extraArgs = _videoPanelExtraArgs ?? ResolveMuseScoreVideoArgs();
+        var destFolder = _videoPanelDestFolder ?? string.Empty;
+
+        if (string.IsNullOrWhiteSpace(museScoreExe))
+        {
+            DarkDialogService.ShowMessage(this,
+                "MuseScore no disponible. Vuelve a abrir el panel.",
+                "MuseScore no disponible", MessageBoxButton.OK, MessageBoxImage.Warning);
+            return;
+        }
+
+        txtStatus.Text = "🎥 Generando vídeos...";
+        txtVideoEta.Text = string.Empty;
+        await RunVideoGenerationAsync(selected, museScoreExe, extraArgs, destFolder,
+            CancellationToken.None).ConfigureAwait(true);
+    }
+
+    private void VideoSelectItem_CheckChanged(object sender, RoutedEventArgs e)
+    {
+        if (_suppressItemCheckEvents) return;   // ignorar cambios individuales durante operaciones batch
+        UpdateVideoSelectButton();
+    }
+
+    private void ChkVideoSelectHeader_Checked(object sender, RoutedEventArgs e)
+    {
+        if (_suppressVideoHeaderEvents) return;
+        _suppressItemCheckEvents = true;
+        foreach (var item in VisibleItems) item.IsSelected = true;
+        _suppressItemCheckEvents = false;
+        UpdateVideoSelectButton();
+    }
+
+    private void ChkVideoSelectHeader_Unchecked(object sender, RoutedEventArgs e)
+    {
+        if (_suppressVideoHeaderEvents) return;
+        _suppressItemCheckEvents = true;
+        foreach (var item in VisibleItems) item.IsSelected = false;
+        _suppressItemCheckEvents = false;
+        UpdateVideoSelectButton();
+    }
+
+    private void ChkVideoSelectHeader_Indeterminate(object sender, RoutedEventArgs e)
+    {
+        if (_suppressVideoHeaderEvents) return;
+        // Indeterminate manual → seleccionar todos (ciclo: null→todos)
+        _suppressItemCheckEvents = true;
+        foreach (var item in VisibleItems) item.IsSelected = true;
+        _suppressItemCheckEvents = false;
+        _suppressVideoHeaderEvents = true;
+        chkVideoSelectHeader.IsChecked = true;
+        _suppressVideoHeaderEvents = false;
+        UpdateVideoSelectButton();
+    }
+
+    private void LstVideoSelect_MouseDoubleClick(object sender, System.Windows.Input.MouseButtonEventArgs e)
+    {
+        if (lstVideoSelect.SelectedItem is not VideoSelectItem item) return;
+
+        // Doble clic en ítem en curso: no hacer nada (el MP4 puede estar incompleto)
+        if (item.Status == VideoStatus.Running)
+        {
+            Log($"⏳ {item.DisplayName}: generación en curso...");
+            return;
+        }
+
+        // Doble clic en error: informar y seleccionar para reintento
+        if (item.Status == VideoStatus.Error)
+        {
+            item.IsSelected = true;
+            UpdateVideoSelectButton();
+            Log($"⚠️ Error en: {item.DisplayName}. Ítem seleccionado para reintentar.");
+            return;
+        }
+
+        // Doble clic en partitura con MP4: abrir el vídeo
+        if (item.HasVideo)
+        {
+            var mp4 = ResolveVideoSiblingPath(item.BestFile);
+            if (mp4 is not null && File.Exists(mp4))
+            {
+                try { System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(mp4) { UseShellExecute = true }); }
+                catch (Exception ex) { Log($"❌ No se pudo abrir el MP4: {ex.Message}"); }
+                return;
+            }
+            // MP4 marcado pero no encontrado en disco: corregir estado automáticamente
+            Log($"⚠️ No se encontró el MP4 en disco para: {item.DisplayName}. Marcando como pendiente.");
+            item.HasVideo = false;
+            item.Status = VideoStatus.None;
+            _videoSelectView?.Refresh();
+            UpdateVideoSelectButton();
+            return;
+        }
+
+        item.IsSelected = !item.IsSelected;
+        UpdateVideoSelectButton();
+    }
+
+    // ── Filtro y ordenación ─────────────────────────────────────────────────────
+
+    private void TxtVideoFilter_TextChanged(object sender, System.Windows.Controls.TextChangedEventArgs e)
+    {
+        _videoFilterText = txtVideoFilter.Text;
+        _videoSelectView?.Refresh();
+        UpdateVideoSelectButton();
+        // Mostrar/ocultar botón × según haya texto en el filtro
+        btnVideoFilterClear.Visibility = string.IsNullOrEmpty(_videoFilterText)
+            ? System.Windows.Visibility.Collapsed
+            : System.Windows.Visibility.Visible;
+        // Feedback visual: fondo rojo suave cuando el filtro no produce resultados
+        if (!string.IsNullOrEmpty(_videoFilterText) && !VisibleItems.Any())
+            txtVideoFilter.Background = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(0x4A, 0x1A, 0x1A));
+        else
+            txtVideoFilter.Background = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(0x1E, 0x29, 0x3B));
+        // Scroll al primer resultado cuando el filtro cambia (para no quedar con vista vacía)
+        if (!string.IsNullOrEmpty(_videoFilterText))
+        {
+            var first = VisibleItems.FirstOrDefault();
+            if (first is not null) lstVideoSelect.ScrollIntoView(first);
+        }
+    }
+
+    private void BtnVideoFilterClear_Click(object sender, RoutedEventArgs e)
+    {
+        txtVideoFilter.Clear();
+        txtVideoFilter.Focus();
+    }
+
+    private void TxtVideoFilter_KeyDown(object sender, System.Windows.Input.KeyEventArgs e)
+    {
+        if (e.Key == System.Windows.Input.Key.Escape)
+        {
+            // Escape en el cuadro de filtro: limpiar texto y devolver foco a la lista
+            if (!string.IsNullOrEmpty(txtVideoFilter.Text))
+            {
+                txtVideoFilter.Clear();
+                lstVideoSelect.Focus();
+                e.Handled = true;
+                return;
+            }
+        }
+        if (e.Key != System.Windows.Input.Key.Enter) return;
+        var first = VisibleItems.FirstOrDefault();
+        if (first is not null)
+        {
+            lstVideoSelect.SelectedItem = first;
+            lstVideoSelect.ScrollIntoView(first);
+            lstVideoSelect.Focus();
+        }
+        e.Handled = true;
+    }
+
+    private void ChkVideoRegenerate_Changed(object sender, RoutedEventArgs e)
+    {
+        var newVal = chkVideoRegenerate.IsChecked == true;
+        if (_videoIncludeRegenerate == newVal) return;  // evita doble refresh cuando se pone desde código
+        _videoIncludeRegenerate = newVal;
+        _videoSelectView?.Refresh();
+        UpdateVideoSelectButton();
+        // Recalcular color del fondo del filtro: puede haber cambiado visibilidad
+        TxtVideoFilter_TextChanged(txtVideoFilter, null!);
+    }
+
+    private void LstVideoSelect_ColumnHeaderClick(object sender, RoutedEventArgs e)
+    {
+        if (e.OriginalSource is not System.Windows.Controls.GridViewColumnHeader header
+            || header.Column is null) return;
+
+        // Restaurar el indicador de la columna anterior antes de leer el contenido actual
+        if (_lastSortHeader is not null && _lastSortOriginalContent is not null)
+            _lastSortHeader.Content = _lastSortOriginalContent;
+
+        // Extraer texto del header (puede ser string o TextBlock con tooltip)
+        var rawContent = header.Content;
+        var content = rawContent is System.Windows.Controls.TextBlock tb
+            ? tb.Text
+            : rawContent?.ToString() ?? string.Empty;
+        // Quitar indicador de orden anterior si el header fue previamente marcado
+        if (content.EndsWith(" ▲", StringComparison.Ordinal) || content.EndsWith(" ▼", StringComparison.Ordinal))
+            content = content[..^2];
+        var propName = content switch
+        {
+            "Est" => nameof(VideoSelectItem.Status),
+            "Nombre" => nameof(VideoSelectItem.DisplayName),
+            "Formato" => nameof(VideoSelectItem.FormatTag),
+            "Carpeta" => nameof(VideoSelectItem.FolderShort),
+            "▶" => nameof(VideoSelectItem.HasVideo),   // ordenar por tiene/no-tiene MP4
+            _ => null
+        };
+        if (propName is null || _videoSelectView is null) return;
+
+        if (_videoSortColumn == propName)
+            _videoSortAscending = !_videoSortAscending;
+        else
+        {
+            _videoSortColumn = propName;
+            _videoSortAscending = true;
+        }
+
+        // Guardar contenido original (puede ser TextBlock u objeto) y añadir indicador ▲/▼
+        _lastSortHeader = header;
+        _lastSortOriginalContent = rawContent;   // guardar el objeto original (TextBlock preserva tooltip)
+        header.Content = _videoSortAscending ? $"{content} ▲" : $"{content} ▼";
+
+        _videoSelectView.SortDescriptions.Clear();
+        // Cuando el grouping está activo, preservar FolderShort como primera clave de orden
+        // para que los grupos queden siempre ordenados alfabéticamente.
+        if (_videoSelectView.GroupDescriptions.Count > 0 && propName != nameof(VideoSelectItem.FolderShort))
+            _videoSelectView.SortDescriptions.Add(new System.ComponentModel.SortDescription(
+                nameof(VideoSelectItem.FolderShort), System.ComponentModel.ListSortDirection.Ascending));
+        _videoSelectView.SortDescriptions.Add(new System.ComponentModel.SortDescription(
+            propName, _videoSortAscending
+                ? System.ComponentModel.ListSortDirection.Ascending
+                : System.ComponentModel.ListSortDirection.Descending));
+    }
+
+    // ── Menú contextual ─────────────────────────────────────────────────────────
+
+    private void LstVideoSelect_PreviewMouseRightButtonDown(object sender, System.Windows.Input.MouseButtonEventArgs e)
+    {
+        // Solo forzar selección si el ítem bajo el cursor no estaba seleccionado;
+        // así se preserva la multi-selección cuando el usuario ya la tenía hecha.
+        var element = e.OriginalSource as System.Windows.DependencyObject;
+        while (element is not null && element is not System.Windows.Controls.ListViewItem)
+            element = System.Windows.Media.VisualTreeHelper.GetParent(element);
+        if (element is System.Windows.Controls.ListViewItem lvi)
+        {
+            _ctxMenuTargetItem = lvi.DataContext as VideoSelectItem;
+            if (!lvi.IsSelected) lvi.IsSelected = true;
+        }
+        else
+        {
+            _ctxMenuTargetItem = null;
+        }
+
+        // Actualizar estado de menú contextual según si el ítem bajo cursor tiene MP4
+        // Si hay multi-selección, habilitar si ALGUNO de los seleccionados tiene MP4
+        var allSelected = lstVideoSelect.SelectedItems.Cast<VideoSelectItem>().ToList();
+        bool anyHasVid = _ctxMenuTargetItem?.HasVideo == true
+                          || allSelected.Any(i => i.HasVideo);
+        bool anyRunning = _ctxMenuTargetItem?.Status == VideoStatus.Running
+                          || allSelected.Any(i => i.Status == VideoStatus.Running);
+        mnuCtxVideoOpen.IsEnabled = _ctxMenuTargetItem?.HasVideo ?? false;
+        mnuCtxVideoOpenInMuseScore.IsEnabled = _ctxMenuTargetItem is not null
+            && _ctxMenuTargetItem.Status != VideoStatus.Running
+            && !string.IsNullOrWhiteSpace(_videoPanelMuseScoreExe);
+        mnuCtxVideoDelete.IsEnabled = anyHasVid && !anyRunning;
+        // Limpiar error: solo cuando alguno de los afectados tiene Status==Error
+        bool anyError = _ctxMenuTargetItem?.Status == VideoStatus.Error
+                        || allSelected.Any(i => i.Status == VideoStatus.Error);
+        mnuCtxVideoClearError.IsEnabled = anyError && !anyRunning;
+        // Contar ítems con error para label dinámico
+        var clearErrCount = allSelected.Count(i => i.Status == VideoStatus.Error);
+        if (_ctxMenuTargetItem is not null && _ctxMenuTargetItem.Status == VideoStatus.Error && !allSelected.Contains(_ctxMenuTargetItem)) clearErrCount++;
+        mnuCtxVideoClearError.Header = clearErrCount > 1 ? $"↩ Limpiar error ({clearErrCount})" : "↩ Limpiar error";
+        mnuCtxVideoGenerateSingle.IsEnabled = !_videoRunning;
+        // Etiqueta dinámica: singular / plural según selección
+        var genCount = allSelected.Count;
+        if (_ctxMenuTargetItem is not null && !allSelected.Contains(_ctxMenuTargetItem)) genCount++;
+        mnuCtxVideoGenerateSingle.Header = genCount > 1 ? $"🎥 Generar estos ({genCount})" : "🎥 Generar este";
+        // Eliminar: contar ítems con MP4
+        var delCount = allSelected.Count(i => i.HasVideo);
+        if (_ctxMenuTargetItem is not null && _ctxMenuTargetItem.HasVideo && !allSelected.Contains(_ctxMenuTargetItem)) delCount++;
+        mnuCtxVideoDelete.Header = delCount > 1 ? $"🗑 Eliminar MP4 ({delCount})" : "🗑 Eliminar MP4";
+        mnuCtxVideoCopyMp4Path.IsEnabled = delCount > 0;
+        mnuCtxVideoCopyMp4Path.Header = delCount > 1 ? $"📋 Copiar rutas de MP4 ({delCount})" : "📋 Copiar ruta de MP4";
+        // Seleccionar toda la carpeta: sólo relevante cuando hay más de una carpeta y hay ítem target
+        if (mnuCtxVideoSelectFolder is not null)
+        {
+            var folder = _ctxMenuTargetItem?.FolderShort;
+            var folderCount = folder is not null
+                ? VisibleItems.Count(i => string.Equals(i.FolderShort, folder, StringComparison.OrdinalIgnoreCase))
+                : 0;
+            mnuCtxVideoSelectFolder.IsEnabled = folderCount > 0 && !_videoRunning;
+            mnuCtxVideoSelectFolder.Header = folderCount > 1
+                ? $"📁 Seleccionar carpeta ({folderCount})"
+                : "📁 Seleccionar toda la carpeta";
+        }
+        var visibleWithMp4 = VisibleItems.Count(i => i.HasVideo);
+        mnuCtxVideoCopyAllMp4.Header    = visibleWithMp4 > 0 ? $"📋 Copiar rutas MP4 visibles ({visibleWithMp4})" : "📋 Copiar rutas MP4 visibles";
+        mnuCtxVideoCopyAllMp4.IsEnabled = visibleWithMp4 > 0;
+        // Seleccionar / Deseleccionar: mostrar cuenta si hay multi-selección
+        var selDesCount = genCount;   // misma base que "Generar"
+        mnuCtxVideoSelect.Header   = selDesCount > 1 ? $"☑ Seleccionar ({selDesCount})"   : "☑ Seleccionar";
+        mnuCtxVideoDeselect.Header = selDesCount > 1 ? $"☐ Deseleccionar ({selDesCount})" : "☐ Deseleccionar";
+        // Copiar ruta: mostrar cuenta si hay multi-selección
+        mnuCtxVideoCopyPath.Header = selDesCount > 1 ? $"📋 Copiar rutas ({selDesCount})" : "📋 Copiar ruta";
+    }
+
+    private void CtxVideoOpen_Click(object sender, RoutedEventArgs e)
+    {
+        var item = _ctxMenuTargetItem ?? lstVideoSelect.SelectedItem as VideoSelectItem;
+        if (item is null) return;
+        var mp4 = ResolveVideoSiblingPath(item.BestFile);
+        if (mp4 is null || !File.Exists(mp4))
+        {
+            Log($"⚠️ No se encontró MP4 para: {item.DisplayName}. Marcando como pendiente.");
+            item.HasVideo = false;
+            item.Status = VideoStatus.None;
+            _videoSelectView?.Refresh();
+            UpdateVideoSelectButton();
+            return;
+        }
+        try { System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(mp4) { UseShellExecute = true }); }
+        catch (Exception ex) { Log($"❌ No se pudo abrir el MP4: {ex.Message}"); }
+    }
+
+    private void CtxVideoDelete_Click(object sender, RoutedEventArgs e)
+    {
+        // Incluir _ctxMenuTargetItem aunque no esté en SelectedItems (clic derecho sin seleccionar)
+        var targetSet = lstVideoSelect.SelectedItems.Cast<VideoSelectItem>().ToHashSet();
+        if (_ctxMenuTargetItem is not null) targetSet.Add(_ctxMenuTargetItem);
+        var targets = targetSet.Where(i => i.HasVideo && i.Status != VideoStatus.Running).ToList();
+        if (targets.Count == 0) { Log("⚠️ Ningún ítem seleccionado tiene MP4."); return; }
+        const int maxNamesInDialog = 5;
+        var nameLines = targets.Count <= maxNamesInDialog
+            ? string.Join("\n• ", targets.Select(i => i.DisplayName))
+            : string.Join("\n• ", targets.Take(maxNamesInDialog).Select(i => i.DisplayName))
+              + $"\n… y {targets.Count - maxNamesInDialog} más";
+        var result = DarkDialogService.ShowMessage(this,
+            $"¿Eliminar el MP4 de {targets.Count} partitura(s)?\n• {nameLines}",
+            "Confirmar eliminación", MessageBoxButton.YesNo, MessageBoxImage.Warning);
+        if (result != MessageBoxResult.Yes) return;
+
+        foreach (var item in targets)
+        {
+            var mp4 = ResolveVideoSiblingPath(item.BestFile);
+            if (mp4 is null || !File.Exists(mp4))
+            {
+                // MP4 ya no existe: corregir estado obsoleto
+                item.HasVideo = false;
+                item.Status = VideoStatus.None;
+                Log($"ℹ️ MP4 no encontrado para {item.DisplayName}. Estado corregido.");
+                continue;
+            }
+            try
+            {
+                File.Delete(mp4);
+                item.HasVideo = false;
+                item.Status = VideoStatus.None;
+                Log($"🗑 MP4 eliminado: {mp4}");
+            }
+            catch (Exception ex) { Log($"❌ No se pudo eliminar {mp4}: {ex.Message}"); }
+        }
+        _videoSelectView?.Refresh();
+        UpdateVideoSelectButton();
+        // Invalidar caché de archivos para que un Refresh posterior detecte los MP4 eliminados
+        if (!string.IsNullOrEmpty(_videoPanelDestFolder))
+            InvalidateRawFilesCache(_videoPanelDestFolder);
+    }
+
+    private async void CtxVideoGenerateSingle_Click(object sender, RoutedEventArgs e)
+    {
+        if (_videoRunning) return;
+        // Incluir el ítem bajo el cursor aunque no esté en la selección múltiple
+        var targetSet = lstVideoSelect.SelectedItems.Cast<VideoSelectItem>().ToHashSet();
+        if (_ctxMenuTargetItem is not null) targetSet.Add(_ctxMenuTargetItem);
+        var targets = targetSet
+            .Where(i => i.Status != VideoStatus.Running && (!i.HasVideo || _videoIncludeRegenerate))
+            .Select(i => i.BestFile).ToList();
+        if (targets.Count == 0)
+        {
+            // Si todos los ítems tienen vídeo y Re-generar está apagado, auto-habilitarlo
+            bool allHaveVideo = targetSet.All(i => i.HasVideo);
+            if (allHaveVideo && !_videoIncludeRegenerate)
+            {
+                Log("ℹ️ Re-generar activado automáticamente (todos los ítems ya tienen MP4).");
+                _videoIncludeRegenerate = true;
+                chkVideoRegenerate.IsChecked = true;
+                _videoSelectView?.Refresh();
+                TxtVideoFilter_TextChanged(txtVideoFilter, null!);   // recalcular color del filtro
+                targets = targetSet
+                    .Where(i => i.Status != VideoStatus.Running)
+                    .Select(i => i.BestFile).ToList();
+            }
+            if (targets.Count == 0)
+            {
+                Log("⚠️ Todos los ítems seleccionados ya están generando.");
+                return;
+            }
+        }
+
+        var museScoreExe = _videoPanelMuseScoreExe;
+        if (string.IsNullOrWhiteSpace(museScoreExe))
+        { Log("⚠️ MuseScore no disponible."); return; }
+
+        txtStatus.Text = $"🎥 Generando {targets.Count} vídeo(s)…";
+        txtVideoEta.Text = string.Empty;
+        await RunVideoGenerationAsync(targets, museScoreExe,
+            _videoPanelExtraArgs ?? ResolveMuseScoreVideoArgs(),
+            _videoPanelDestFolder ?? string.Empty,
+            CancellationToken.None).ConfigureAwait(true);
+    }
+
+    private void CtxVideoClearError_Click(object sender, RoutedEventArgs e)
+    {
+        var targets = lstVideoSelect.SelectedItems.Cast<VideoSelectItem>().ToHashSet();
+        if (_ctxMenuTargetItem is not null) targets.Add(_ctxMenuTargetItem);
+        var errors = targets.Where(i => i.Status == VideoStatus.Error).ToList();
+        if (errors.Count == 0) { Log("ℹ️ Ningún ítem seleccionado tiene error."); return; }
+        foreach (var item in errors)
+            item.Status = VideoStatus.None;
+        _videoSelectView?.Refresh();
+        UpdateVideoSelectButton();
+        Log($"↩ {errors.Count} ítem(s) con error restablecido(s) a pendiente.");
+    }
+
+    private void CtxVideoSelectFolder_Click(object sender, RoutedEventArgs e)
+    {
+        var folder = _ctxMenuTargetItem?.FolderShort;
+        if (folder is null) return;
+        _suppressItemCheckEvents = true;
+        foreach (var item in VisibleItems)
+        {
+            if (string.Equals(item.FolderShort, folder, StringComparison.OrdinalIgnoreCase))
+                item.IsSelected = true;
+        }
+        _suppressItemCheckEvents = false;
+        UpdateVideoSelectButton();
+        Log($"📁 Seleccionados todos los ítems de la carpeta: {folder}");
+    }
+
+    private void CtxVideoSelectOne_Click(object sender, RoutedEventArgs e)
+    {
+        var targets = lstVideoSelect.SelectedItems.Cast<VideoSelectItem>().ToHashSet();
+        if (_ctxMenuTargetItem is not null) targets.Add(_ctxMenuTargetItem);
+        _suppressItemCheckEvents = true;
+        foreach (var item in targets) item.IsSelected = true;
+        _suppressItemCheckEvents = false;
+        UpdateVideoSelectButton();
+    }
+
+    private void CtxVideoDeselectOne_Click(object sender, RoutedEventArgs e)
+    {
+        var targets = lstVideoSelect.SelectedItems.Cast<VideoSelectItem>().ToHashSet();
+        if (_ctxMenuTargetItem is not null) targets.Add(_ctxMenuTargetItem);
+        _suppressItemCheckEvents = true;
+        foreach (var item in targets) item.IsSelected = false;
+        _suppressItemCheckEvents = false;
+        UpdateVideoSelectButton();
+    }
+
+    private void CtxVideoOpenInMuseScore_Click(object sender, RoutedEventArgs e)
+    {
+        var item = _ctxMenuTargetItem ?? lstVideoSelect.SelectedItem as VideoSelectItem;
+        if (item is null) return;
+        var exe = _videoPanelMuseScoreExe;
+        if (string.IsNullOrWhiteSpace(exe)) { Log("⚠️ MuseScore no disponible."); return; }
+        try
+        {
+            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(exe, $"\"{item.BestFile}\"")
+            {
+                UseShellExecute = false
+            });
+            Log($"🎼 Abierto en MuseScore: {item.DisplayName}");
+        }
+        catch (Exception ex) { Log($"❌ No se pudo abrir en MuseScore: {ex.Message}"); }
+    }
+
+    private void CtxVideoOpenItemFolder_Click(object sender, RoutedEventArgs e)
+    {
+        var item = _ctxMenuTargetItem ?? lstVideoSelect.SelectedItem as VideoSelectItem;
+        if (item is null) return;
+        try
+        {
+            // /select resalta el fichero en lugar de solo abrir la carpeta
+            System.Diagnostics.Process.Start("explorer.exe", $"/select,\"{item.BestFile}\"");
+        }
+        catch (Exception ex) { Log($"❌ No se pudo abrir carpeta: {ex.Message}"); }
+    }
+
+    private void CtxVideoCopyPath_Click(object sender, RoutedEventArgs e)
+    {
+        var targets = lstVideoSelect.SelectedItems.Cast<VideoSelectItem>().ToHashSet();
+        if (_ctxMenuTargetItem is not null) targets.Add(_ctxMenuTargetItem);
+        if (targets.Count == 0) return;
+        try
+        {
+            var text = string.Join(Environment.NewLine, targets.Select(i => i.BestFile));
+            System.Windows.Clipboard.SetText(text);
+            if (targets.Count == 1)
+                Log($"📋 Ruta copiada: {targets.First().BestFile}");
+            else
+                Log($"📋 {targets.Count} rutas copiadas al portapapeles.");
+        }
+        catch (Exception ex) { Log($"❌ No se pudo copiar al portapapeles: {ex.Message}"); }
+    }
+
+    private void CtxVideoCopyMp4Path_Click(object sender, RoutedEventArgs e)
+    {
+        var targetSet = lstVideoSelect.SelectedItems.Cast<VideoSelectItem>().ToHashSet();
+        if (_ctxMenuTargetItem is not null) targetSet.Add(_ctxMenuTargetItem);
+        if (targetSet.Count == 0) return;
+
+        var copied = new List<string>();
+        var fixedState = 0;
+        foreach (var item in targetSet)
+        {
+            if (!item.HasVideo) continue;
+            var mp4 = ResolveVideoSiblingPath(item.BestFile);
+            if (mp4 is not null)
+            {
+                copied.Add(mp4);
+                continue;
+            }
+            Log($"⚠️ No se encontró ruta de MP4 para: {item.DisplayName}. Marcando como pendiente.");
+            item.HasVideo = false;
+            item.Status = VideoStatus.None;
+            fixedState++;
+        }
+
+        if (fixedState > 0)
+        {
+            _videoSelectView?.Refresh();
+            UpdateVideoSelectButton();
+        }
+
+        if (copied.Count == 0)
+        {
+            Log("⚠️ Ningún ítem seleccionado tiene ruta MP4 disponible.");
+            return;
+        }
+
+        try
+        {
+            var text = string.Join(Environment.NewLine, copied);
+            System.Windows.Clipboard.SetText(text);
+            if (copied.Count == 1)
+                Log($"📋 Ruta MP4 copiada: {copied[0]}");
+            else
+                Log($"📋 {copied.Count} rutas MP4 copiadas al portapapeles.");
+        }
+        catch (Exception ex) { Log($"❌ No se pudo copiar al portapapeles: {ex.Message}"); }
+    }
+
+    private void CtxVideoCopyAllMp4Paths_Click(object sender, RoutedEventArgs e)
+    {
+        var paths = VisibleItems
+            .Where(i => i.HasVideo)
+            .Select(i => ResolveVideoSiblingPath(i.BestFile))
+            .OfType<string>()
+            .Where(File.Exists)
+            .ToList();
+        if (paths.Count == 0) { Log("⚠️ Ningún ítem visible tiene MP4 en disco."); return; }
+        try
+        {
+            System.Windows.Clipboard.SetText(string.Join(Environment.NewLine, paths));
+            Log($"📋 {paths.Count} ruta(s) MP4 copiadas al portapapeles.");
+        }
+        catch (Exception ex) { Log($"❌ No se pudo copiar al portapapeles: {ex.Message}"); }
+    }
+
+    private void LstVideoSelect_KeyDown(object sender, System.Windows.Input.KeyEventArgs e)
+    {
+        if (e.Key == System.Windows.Input.Key.Delete)
+        {
+            CtxVideoDelete_Click(sender, new RoutedEventArgs());
+            e.Handled = true;
+        }
+        else if (e.Key == System.Windows.Input.Key.F5)
+        {
+            // F5: volver a escanear la carpeta (Actualizar)
+            if (btnVideoSelectRefresh.IsEnabled)
+                BtnVideoSelectRefresh_Click(btnVideoSelectRefresh, new RoutedEventArgs());
+            e.Handled = true;
+        }
+        else if (e.Key == System.Windows.Input.Key.Space)
+        {
+            var targets = lstVideoSelect.SelectedItems.Cast<VideoSelectItem>().ToList();
+            // Si alguno está desmarcado → marcar todos; si todos marcados → desmarcar todos
+            bool selectAll = targets.Any(i => !i.IsSelected);
+            _suppressItemCheckEvents = true;
+            foreach (var item in targets)
+                item.IsSelected = selectAll;
+            _suppressItemCheckEvents = false;
+            UpdateVideoSelectButton();
+            e.Handled = true;
+        }
+        else if (e.Key == System.Windows.Input.Key.A
+                 && (System.Windows.Input.Keyboard.Modifiers & System.Windows.Input.ModifierKeys.Control) != 0)
+        {
+            // Ctrl+A: seleccionar todos los ítems visibles en la lista
+            _suppressItemCheckEvents = true;
+            foreach (var item in VisibleItems) item.IsSelected = true;
+            _suppressItemCheckEvents = false;
+            UpdateVideoSelectButton();
+            e.Handled = true;
+        }
+        else if ((System.Windows.Input.Keyboard.Modifiers & System.Windows.Input.ModifierKeys.Control) != 0)
+        {
+            switch (e.Key)
+            {
+                case System.Windows.Input.Key.I:
+                    // Ctrl+I: invertir selección (solo visibles)
+                    if (btnVideoSelectInvert.IsEnabled)
+                        BtnVideoSelectInvert_Click(btnVideoSelectInvert, new RoutedEventArgs());
+                    e.Handled = true;
+                    break;
+                case System.Windows.Input.Key.P:
+                    // Ctrl+P: seleccionar pendientes
+                    if (btnVideoSelectPending.IsEnabled)
+                        BtnVideoSelectPending_Click(btnVideoSelectPending, new RoutedEventArgs());
+                    e.Handled = true;
+                    break;
+                case System.Windows.Input.Key.E:
+                    // Ctrl+E: seleccionar errores
+                    if (btnVideoSelectErrors.IsEnabled)
+                        BtnVideoSelectErrors_Click(btnVideoSelectErrors, new RoutedEventArgs());
+                    e.Handled = true;
+                    break;
+                case System.Windows.Input.Key.R:
+                    // Ctrl+R: activar/desactivar Re-generar (toggle)
+                    if (chkVideoRegenerate.IsEnabled)
+                    {
+                        chkVideoRegenerate.IsChecked = !_videoIncludeRegenerate;
+                        // ChkVideoRegenerate_Changed se dispara automáticamente
+                    }
+                    e.Handled = true;
+                    break;
+                case System.Windows.Input.Key.O:
+                    // Ctrl+O: abrir carpeta de destino en el Explorador
+                    if (btnVideoSelectOpenFolder.IsEnabled)
+                        BtnVideoSelectOpenFolder_Click(btnVideoSelectOpenFolder, new RoutedEventArgs());
+                    e.Handled = true;
+                    break;
+                case System.Windows.Input.Key.G:
+                    // Ctrl+G: generar
+                    if (btnVideoSelectGenerate.IsEnabled)
+                        BtnVideoSelectGenerate_Click(btnVideoSelectGenerate, new RoutedEventArgs());
+                    e.Handled = true;
+                    break;
+            }
+        }
+        else if (e.Key == System.Windows.Input.Key.Return)
+        {
+            // Enter: abrir MP4 del ítem enfocado (equivale a doble clic)
+            var item = lstVideoSelect.SelectedItem as VideoSelectItem;
+            if (item?.HasVideo == true)
+                LstVideoSelect_MouseDoubleClick(sender, null!);
+            e.Handled = true;
+        }
+        else if (e.Key == System.Windows.Input.Key.Escape)
+        {
+            if (!string.IsNullOrEmpty(txtVideoFilter.Text))
+                txtVideoFilter.Clear();
+            else if (_videoRunning && btnVideoSelectCancelGen.IsEnabled)
+                BtnCancelVideo_Click(btnVideoSelectCancelGen, new RoutedEventArgs());
+            else if (!_videoRunning)
+                BtnVideoSelectBack_Click(sender, new RoutedEventArgs());
+            e.Handled = true;
+        }
+    }
+
+    // Calcula el texto de tooltip del tamaño del MP4 para un archivo de partitura
+    private static string ComputeMp4SizeToolTip(string inputPath)
+    {
+        var mp4 = ResolveVideoSiblingPath(inputPath);
+        if (mp4 is null) return string.Empty;   // sin MP4 real, no mostrar texto engañoso
+        try
+        {
+            var bytes = new FileInfo(mp4).Length;
+            var mb = bytes / (1024.0 * 1024.0);
+            var size = mb >= 1024 ? $"{mb / 1024:F1} GB" : $"{mb:F1} MB";
+            return $"Ya tiene vídeo MP4 · {size}";
+        }
+        catch { return "Ya tiene vídeo MP4"; }
+    }
+
+    // Enumera las rutas candidatas del MP4 hermano (directa y en subcarpeta)
+    private static IEnumerable<string> VideoSiblingCandidates(string inputPath)
     {
         var dir = Path.GetDirectoryName(inputPath);
         var stem = Path.GetFileNameWithoutExtension(inputPath);
-        if (string.IsNullOrWhiteSpace(dir) || string.IsNullOrWhiteSpace(stem)) return false;
-        return File.Exists(Path.Combine(dir, stem + ".mp4"))
-            || File.Exists(Path.Combine(dir, stem, stem + ".mp4"));
+        if (string.IsNullOrWhiteSpace(dir) || string.IsNullOrWhiteSpace(stem)) yield break;
+        yield return Path.Combine(dir, stem + ".mp4");
+        yield return Path.Combine(dir, stem, stem + ".mp4");
     }
+
+    // Resuelve la ruta del MP4 hermano de un archivo de partitura
+    private static string? ResolveVideoSiblingPath(string inputPath)
+        => VideoSiblingCandidates(inputPath).FirstOrDefault(File.Exists);
+
+    private static bool HasVideoSibling(string inputPath)
+        => VideoSiblingCandidates(inputPath).Any(File.Exists);
 
     private static List<string> ResolveMuseScoreVideoArgs()
     {
@@ -4195,6 +5568,117 @@ public partial class MainWindow : Window, IAsyncDisposable
             if (string.Equals(args[i], key, StringComparison.OrdinalIgnoreCase))
                 return args[i + 1];
         return null;
+    }
+
+    private string? TryCreateSubtitleStyleOverrideFile()
+    {
+        if (_videoSubtitleFontPt <= 0)
+            return null;
+
+        try
+        {
+            var dir = Path.Combine(Path.GetTempPath(), "ScoreDown");
+            Directory.CreateDirectory(dir);
+            var path = Path.Combine(dir, $"video-subtitle-{_videoSubtitleFontPt}.mss");
+            var styleXml = $"""
+<?xml version="1.0" encoding="UTF-8"?>
+<museScore version="4.00">
+  <Style>
+    <subTitleFontSize>{_videoSubtitleFontPt}</subTitleFontSize>
+  </Style>
+</museScore>
+""";
+
+            if (!File.Exists(path) || !string.Equals(File.ReadAllText(path), styleXml, StringComparison.Ordinal))
+                File.WriteAllText(path, styleXml, Encoding.UTF8);
+            return path;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private static string StripMusicXmlVisualHeaderMetadata(string xmlText)
+    {
+        var doc = new XmlDocument { PreserveWhitespace = true };
+        doc.LoadXml(xmlText);
+
+        static void RemoveByXPath(XmlDocument d, string xpath)
+        {
+            var nodes = d.SelectNodes(xpath);
+            if (nodes is null) return;
+            var snapshot = new List<XmlNode>();
+            foreach (XmlNode n in nodes) snapshot.Add(n);
+            foreach (var n in snapshot)
+                n.ParentNode?.RemoveChild(n);
+        }
+
+        // Remove elements MuseScore usually renders as page-title/header/footer credits.
+        RemoveByXPath(doc, "//*[local-name()='work-title']");
+        RemoveByXPath(doc, "//*[local-name()='movement-title']");
+        RemoveByXPath(doc, "//*[local-name()='credit']");
+        RemoveByXPath(doc, "//*[local-name()='identification']/*[local-name()='creator']");
+        RemoveByXPath(doc, "//*[local-name()='identification']/*[local-name()='rights']");
+
+        using var sw = new StringWriter();
+        doc.Save(sw);
+        return sw.ToString();
+    }
+
+    private async Task<string?> TryCreateSanitizedVideoInputAsync(string inputPath, CancellationToken ct)
+    {
+        if (!_videoHideOriginalScoreTitle)
+            return null;
+
+        var ext = Path.GetExtension(inputPath);
+        var tempRoot = Path.Combine(Path.GetTempPath(), "ScoreDown", "video-input");
+        Directory.CreateDirectory(tempRoot);
+
+        if (ext.Equals(".xml", StringComparison.OrdinalIgnoreCase) || ext.Equals(".musicxml", StringComparison.OrdinalIgnoreCase))
+        {
+            var xmlText = await File.ReadAllTextAsync(inputPath, ct).ConfigureAwait(false);
+            var sanitized = StripMusicXmlVisualHeaderMetadata(xmlText);
+            var tmpPath = Path.Combine(tempRoot, $"{Path.GetFileNameWithoutExtension(inputPath)}.{Guid.NewGuid():N}{ext}");
+            await File.WriteAllTextAsync(tmpPath, sanitized, Encoding.UTF8, ct).ConfigureAwait(false);
+            return tmpPath;
+        }
+
+        if (!ext.Equals(".mxl", StringComparison.OrdinalIgnoreCase))
+            return null;
+
+        var tmpMxl = Path.Combine(tempRoot, $"{Path.GetFileNameWithoutExtension(inputPath)}.{Guid.NewGuid():N}.mxl");
+        using (var src = ZipFile.OpenRead(inputPath))
+        using (var dstFs = File.Create(tmpMxl))
+        using (var dst = new ZipArchive(dstFs, ZipArchiveMode.Create))
+        {
+            var scoreXmlEntry = src.Entries.FirstOrDefault(e =>
+                e.FullName.EndsWith(".xml", StringComparison.OrdinalIgnoreCase)
+                && !e.FullName.StartsWith("META-INF/", StringComparison.OrdinalIgnoreCase));
+
+            foreach (var entry in src.Entries)
+            {
+                var outEntry = dst.CreateEntry(entry.FullName, CompressionLevel.Optimal);
+                await using var inStream = entry.Open();
+                await using var outStream = outEntry.Open();
+
+                if (scoreXmlEntry is not null && string.Equals(entry.FullName, scoreXmlEntry.FullName, StringComparison.OrdinalIgnoreCase))
+                {
+                    using var reader = new StreamReader(inStream, Encoding.UTF8, detectEncodingFromByteOrderMarks: true);
+                    var xmlText = await reader.ReadToEndAsync(ct).ConfigureAwait(false);
+                    var sanitized = StripMusicXmlVisualHeaderMetadata(xmlText);
+                    await using var writer = new StreamWriter(outStream, new UTF8Encoding(false), 1024, leaveOpen: true);
+                    await writer.WriteAsync(sanitized.AsMemory(), ct).ConfigureAwait(false);
+                    await writer.FlushAsync(ct).ConfigureAwait(false);
+                }
+                else
+                {
+                    await inStream.CopyToAsync(outStream, ct).ConfigureAwait(false);
+                }
+            }
+        }
+
+        return tmpMxl;
     }
 
     private static async Task<string?> ResolveMuseScoreExecutableAsync()
@@ -4259,16 +5743,813 @@ public partial class MainWindow : Window, IAsyncDisposable
         }
     }
 
+    private static async Task<string?> ResolveFfmpegExecutableAsync()
+    {
+        var env = Environment.GetEnvironmentVariable("FFMPEG_EXE");
+        if (!string.IsNullOrWhiteSpace(env) && File.Exists(env))
+            return env;
+
+        var candidates = new[]
+        {
+            @"C:\ProgramData\chocolatey\bin\ffmpeg.exe",
+            @"C:\ffmpeg\bin\ffmpeg.exe",
+            @"C:\Program Files\ffmpeg\bin\ffmpeg.exe"
+        };
+
+        foreach (var path in candidates)
+            if (File.Exists(path))
+                return path;
+
+        if (await CanExecuteAsync("ffmpeg", "-version").ConfigureAwait(false))
+            return "ffmpeg";
+
+        return null;
+    }
+
+    private static async Task<string?> ResolveFfprobeExecutableAsync()
+    {
+        var env = Environment.GetEnvironmentVariable("FFPROBE_EXE");
+        if (!string.IsNullOrWhiteSpace(env) && File.Exists(env))
+            return env;
+
+        var candidates = new[]
+        {
+            @"C:\ProgramData\chocolatey\bin\ffprobe.exe",
+            @"C:\ffmpeg\bin\ffprobe.exe",
+            @"C:\Program Files\ffmpeg\bin\ffprobe.exe"
+        };
+
+        foreach (var path in candidates)
+            if (File.Exists(path))
+                return path;
+
+        if (await CanExecuteAsync("ffprobe", "-version").ConfigureAwait(false))
+            return "ffprobe";
+
+        return null;
+    }
+
+    private static async Task<double?> GetMediaDurationSecondsAsync(string ffprobeExe, string inputPath, CancellationToken ct)
+    {
+        try
+        {
+            var psi = new ProcessStartInfo
+            {
+                FileName = ffprobeExe,
+                UseShellExecute = false,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                CreateNoWindow = true
+            };
+            psi.ArgumentList.Add("-v");
+            psi.ArgumentList.Add("error");
+            psi.ArgumentList.Add("-show_entries");
+            psi.ArgumentList.Add("format=duration");
+            psi.ArgumentList.Add("-of");
+            psi.ArgumentList.Add("default=noprint_wrappers=1:nokey=1");
+            psi.ArgumentList.Add(inputPath);
+
+            using var p = new Process { StartInfo = psi };
+            if (!p.Start()) return null;
+
+            var stdoutTask = p.StandardOutput.ReadToEndAsync();
+            var stderrTask = p.StandardError.ReadToEndAsync();
+            await p.WaitForExitAsync(ct).ConfigureAwait(false);
+            var stdout = (await stdoutTask.ConfigureAwait(false)).Trim();
+            _ = await stderrTask.ConfigureAwait(false);
+
+            if (p.ExitCode != 0 || string.IsNullOrWhiteSpace(stdout))
+                return null;
+
+            if (double.TryParse(stdout, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var seconds))
+                return seconds;
+            return null;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private sealed record VideoPresentationMeta(string Title, string Subtitle, string Authors);
+
+    private enum VideoStatus { None, Running, Done, Error }
+
+    private sealed class VideoSelectItem : System.ComponentModel.INotifyPropertyChanged
+    {
+        private bool _isSelected;
+        private bool _hasVideo;
+        private VideoStatus _status;
+
+        public bool IsSelected
+        {
+            get => _isSelected;
+            set
+            {
+                if (_isSelected == value) return;
+                _isSelected = value;
+                SelectionDelta?.Invoke(value ? 1 : -1);
+                Notify(nameof(IsSelected));
+            }
+        }
+
+        // Callback para que el padre (MainWindow) mantenga _videoTotalSelected en O(1)
+        internal Action<int>? SelectionDelta;
+
+        public bool HasVideo
+        {
+            get => _hasVideo;
+            set
+            {
+                if (_hasVideo == value) return;
+                _hasVideo = value;
+                Notify(nameof(HasVideo));
+                Notify(nameof(HasVideoMark));
+                if (!value) { _mp4SizeToolTip = string.Empty; Notify(nameof(Mp4SizeToolTip)); }
+            }
+        }
+
+        public VideoStatus Status
+        {
+            get => _status;
+            set
+            {
+                if (_status == value) return;
+                _status = value;
+                Notify(nameof(Status));
+                Notify(nameof(StatusIcon));
+                Notify(nameof(StatusColor));
+                Notify(nameof(StatusLabel));
+            }
+        }
+
+        public string StatusIcon => _status switch
+        {
+            VideoStatus.Running => "⏳",
+            VideoStatus.Done => "✅",
+            VideoStatus.Error => "❌",
+            _ => string.Empty
+        };
+
+        public System.Windows.Media.Brush StatusColor => _status switch
+        {
+            VideoStatus.Running => System.Windows.Media.Brushes.Gold,
+            VideoStatus.Done => System.Windows.Media.Brushes.LimeGreen,
+            VideoStatus.Error => System.Windows.Media.Brushes.OrangeRed,
+            _ => System.Windows.Media.Brushes.Transparent
+        };
+
+        public string StatusLabel => _status switch
+        {
+            VideoStatus.Running => "En curso…",
+            VideoStatus.Done => "Completado",
+            VideoStatus.Error => "Error",
+            _ => string.Empty
+        };
+
+        public string BestFile { get; init; } = string.Empty;
+        public string DisplayName { get; init; } = string.Empty;
+        public string FormatTag { get; init; } = string.Empty;
+        public System.Windows.Media.Brush FormatColor { get; init; } = System.Windows.Media.Brushes.DimGray;
+        public string HasVideoMark => _hasVideo ? "✓" : string.Empty;
+        public string FolderShort { get; init; } = string.Empty;
+        public string FolderFull => Path.GetDirectoryName(BestFile) ?? string.Empty;
+
+        private string _mp4SizeToolTip = string.Empty;
+        public string Mp4SizeToolTip
+        {
+            get => _mp4SizeToolTip;
+            set { if (_mp4SizeToolTip == value) return; _mp4SizeToolTip = value; Notify(nameof(Mp4SizeToolTip)); }
+        }
+
+        public event System.ComponentModel.PropertyChangedEventHandler? PropertyChanged;
+        private void Notify(string name) =>
+            PropertyChanged?.Invoke(this, new System.ComponentModel.PropertyChangedEventArgs(name));
+    }
+
+    // Priority order for "best quality" file selection per score stem
+    private static readonly string[] VideoFormatPriority =
+        { ".mscz", ".mxl", ".musicxml", ".xml" };
+
+    private static string EscapeFfmpegDrawText(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value)) return string.Empty;
+        return value
+            .Replace("\\", "\\\\", StringComparison.Ordinal)
+            .Replace(":", "\\:", StringComparison.Ordinal)
+            .Replace("'", "\\'", StringComparison.Ordinal)
+            .Replace("%", "\\%", StringComparison.Ordinal)
+            .Replace("\r\n", "\n", StringComparison.Ordinal)
+            .Replace("\r", "\n", StringComparison.Ordinal)
+            .Replace("\n", "\\n", StringComparison.Ordinal);
+    }
+
+    private static string WrapTextForOverlay(string value, int maxCharsPerLine, int maxLines)
+    {
+        var text = (value ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(text))
+            return string.Empty;
+
+        var words = text.Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        var lines = new List<string>();
+        var current = new StringBuilder();
+
+        foreach (var word in words)
+        {
+            if (word.Length > maxCharsPerLine)
+            {
+                if (current.Length > 0)
+                {
+                    lines.Add(current.ToString());
+                    if (lines.Count >= maxLines)
+                        return string.Join("\n", lines);
+                    current.Clear();
+                }
+
+                lines.Add(word);
+                if (lines.Count >= maxLines)
+                    return string.Join("\n", lines);
+                continue;
+            }
+
+            if (current.Length == 0)
+            {
+                current.Append(word);
+                continue;
+            }
+
+            if (current.Length + 1 + word.Length <= maxCharsPerLine)
+            {
+                current.Append(' ').Append(word);
+                continue;
+            }
+
+            lines.Add(current.ToString());
+            if (lines.Count >= maxLines)
+                return string.Join("\n", lines);
+
+            current.Clear();
+            current.Append(word);
+        }
+
+        if (current.Length > 0 && lines.Count < maxLines)
+            lines.Add(current.ToString());
+
+        if (lines.Count == 0)
+            lines.Add(text);
+
+        if (lines.Count > maxLines)
+            lines = lines.Take(maxLines).ToList();
+
+        return string.Join("\n", lines);
+    }
+
+    private static string? ResolveElegantFontForDrawText()
+    {
+        var env = Environment.GetEnvironmentVariable("SCOREDOWN_VIDEO_TITLE_FONTFILE");
+        if (!string.IsNullOrWhiteSpace(env) && File.Exists(env))
+            return env.Replace("\\", "/", StringComparison.Ordinal).Replace(":", "\\:", StringComparison.Ordinal);
+
+        var candidates = new[]
+        {
+            @"C:\Windows\Fonts\GARA.TTF",
+            @"C:\Windows\Fonts\Garamond.ttf",
+            @"C:\Windows\Fonts\times.ttf",
+            @"C:\Windows\Fonts\BOD_R.TTF",
+            @"C:\Windows\Fonts\georgia.ttf"
+        };
+
+        foreach (var path in candidates)
+        {
+            if (File.Exists(path))
+                return path.Replace("\\", "/", StringComparison.Ordinal).Replace(":", "\\:", StringComparison.Ordinal);
+        }
+
+        return null;
+    }
+
+    private static string CreateTempOverlayTextFile(string content, string fileName)
+    {
+        var dir = Path.Combine(Path.GetTempPath(), "ScoreDown", "video-overlay-text");
+        Directory.CreateDirectory(dir);
+        var path = Path.Combine(dir, fileName);
+        File.WriteAllText(path, content, new UTF8Encoding(false));
+        return path.Replace("\\", "/", StringComparison.Ordinal).Replace(":", "\\:", StringComparison.Ordinal);
+    }
+
+    private static string EscapeFfmpegFilterPath(string path)
+        => path.Replace("\\", "/", StringComparison.Ordinal).Replace(":", "\\:", StringComparison.Ordinal);
+
+    private static string? ResolveLuxuryLogoOverlayFile()
+    {
+        var env = Environment.GetEnvironmentVariable("SCOREDOWN_VIDEO_LOGO_FILE");
+        if (!string.IsNullOrWhiteSpace(env) && File.Exists(env))
+            return env;
+
+        var candidates = new List<string>();
+
+        void AddCandidate(string? path)
+        {
+            if (string.IsNullOrWhiteSpace(path))
+                return;
+
+            candidates.Add(path);
+        }
+
+        var baseDir = AppContext.BaseDirectory;
+        AddCandidate(Path.Combine(baseDir, "logo_scores.png"));
+        AddCandidate(Path.Combine(baseDir, "preview", "logo_scores.png"));
+
+        var dir = new DirectoryInfo(baseDir);
+        for (var i = 0; i < 6 && dir is not null; i++, dir = dir.Parent)
+        {
+            AddCandidate(Path.Combine(dir.FullName, "preview", "logo_scores.png"));
+            AddCandidate(Path.Combine(dir.FullName, "ScoreDown", "preview", "logo_scores.png"));
+        }
+
+        foreach (var candidate in candidates.Distinct(StringComparer.OrdinalIgnoreCase))
+        {
+            if (File.Exists(candidate))
+                return candidate;
+        }
+
+        return null;
+    }
+
+    private static string ClipText(string value, int maxLen)
+    {
+        var text = (value ?? string.Empty).Trim();
+        if (text.Length <= maxLen) return text;
+        return text[..Math.Max(0, maxLen - 1)] + "…";
+    }
+
+    private static VideoPresentationMeta BuildVideoPresentationMeta(string inputPath)
+    {
+        var fallbackTitle = Path.GetFileNameWithoutExtension(inputPath);
+        var title = fallbackTitle;
+        var subtitle = string.Empty;
+        var authors = string.Empty;
+
+        try
+        {
+            string? xmlText = null;
+            var ext = Path.GetExtension(inputPath);
+            if (ext.Equals(".mxl", StringComparison.OrdinalIgnoreCase))
+            {
+                using var zip = ZipFile.OpenRead(inputPath);
+                var entry = zip.Entries.FirstOrDefault(e =>
+                    e.FullName.EndsWith(".xml", StringComparison.OrdinalIgnoreCase)
+                    && !e.FullName.StartsWith("META-INF/", StringComparison.OrdinalIgnoreCase));
+                if (entry is not null)
+                {
+                    using var stream = entry.Open();
+                    using var reader = new StreamReader(stream, Encoding.UTF8, detectEncodingFromByteOrderMarks: true);
+                    xmlText = reader.ReadToEnd();
+                }
+            }
+            else if (ext.Equals(".xml", StringComparison.OrdinalIgnoreCase) || ext.Equals(".musicxml", StringComparison.OrdinalIgnoreCase))
+            {
+                xmlText = File.ReadAllText(inputPath, Encoding.UTF8);
+            }
+
+            if (!string.IsNullOrWhiteSpace(xmlText))
+            {
+                var doc = new XmlDocument();
+                doc.LoadXml(xmlText);
+
+                var workTitle = doc.SelectSingleNode("//*[local-name()='work-title']")?.InnerText?.Trim();
+                var movementTitle = doc.SelectSingleNode("//*[local-name()='movement-title']")?.InnerText?.Trim();
+                if (!string.IsNullOrWhiteSpace(workTitle) && !string.IsNullOrWhiteSpace(movementTitle))
+                {
+                    title = workTitle;
+                    subtitle = movementTitle;
+                }
+                else if (!string.IsNullOrWhiteSpace(workTitle))
+                {
+                    title = workTitle;
+                }
+                else if (!string.IsNullOrWhiteSpace(movementTitle))
+                {
+                    title = movementTitle;
+                }
+
+                var creatorNodes = doc.SelectNodes("//*[local-name()='identification']/*[local-name()='creator']");
+                var preferred = new List<string>();
+                var secondary = new List<string>();
+                if (creatorNodes is not null)
+                {
+                    foreach (XmlNode node in creatorNodes)
+                    {
+                        var value = node.InnerText?.Trim();
+                        if (string.IsNullOrWhiteSpace(value)) continue;
+                        var type = (node.Attributes?["type"]?.Value ?? string.Empty).Trim().ToLowerInvariant();
+                        if (type is "composer" or "arranger")
+                            preferred.Add(value);
+                        else if (type is "lyricist" or "poet")
+                            secondary.Add(value);
+                    }
+                }
+
+                var authorsRaw = preferred.Count > 0 ? preferred : secondary;
+                if (authorsRaw.Count > 0)
+                {
+                    var unique = authorsRaw
+                        .Distinct(StringComparer.OrdinalIgnoreCase)
+                        .Take(6)
+                        .ToArray();
+                    authors = string.Join(" / ", unique);
+                }
+            }
+        }
+        catch
+        {
+            // fallback to filename-only title
+        }
+
+        title = ClipText(title, 220);
+        subtitle = ClipText(subtitle, 220);
+        authors = ClipText(authors, 180);
+        return new VideoPresentationMeta(title, subtitle, authors);
+    }
+
+    private async Task<bool> TryApplyLuxuryTitleOverlayAsync(string outputMp4, string inputPath, CancellationToken ct)
+    {
+        if (!File.Exists(outputMp4))
+            return false;
+
+        var ffmpegExe = await ResolveFfmpegExecutableAsync().ConfigureAwait(false);
+        if (string.IsNullOrWhiteSpace(ffmpegExe))
+            return false;
+
+        var meta = BuildVideoPresentationMeta(inputPath);
+        var titleText = WrapTextForOverlay(meta.Title, 22, 2);
+        var subtitleText = WrapTextForOverlay(meta.Subtitle, 34, 2);
+        var authorsText = string.IsNullOrWhiteSpace(meta.Authors) ? string.Empty : meta.Authors.Replace("\n", " ", StringComparison.Ordinal).Trim();
+        var showAuthors = !string.IsNullOrWhiteSpace(authorsText);
+        var secs = _videoLuxuryTitleSeconds;
+        var fontPath = ResolveElegantFontForDrawText();
+        var fontOpt = string.IsNullOrWhiteSpace(fontPath) ? string.Empty : $"fontfile='{fontPath}':";
+        var logoFile = ResolveLuxuryLogoOverlayFile();
+        var titleLines = string.IsNullOrWhiteSpace(titleText)
+            ? Array.Empty<string>()
+            : titleText.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        var subtitleLines = string.IsNullOrWhiteSpace(subtitleText)
+            ? Array.Empty<string>()
+            : subtitleText.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+
+        // Build drawtext filters for the portada PNG (static — no 'enable' filter needed)
+        var filters = new List<string>
+        {
+            "drawbox=x=0:y=0:w=iw:h=ih:color=0x0b0704@1.0:t=fill",
+            "drawbox=x=0:y=0:w=iw:h=6:color=0xD4AF37@0.95:t=fill",
+            "drawbox=x=0:y=ih-6:w=iw:h=6:color=0xD4AF37@0.95:t=fill"
+        };
+
+        for (var i = 0; i < titleLines.Length; i++)
+        {
+            var titleFile = CreateTempOverlayTextFile(titleLines[i], $"title-{i}.txt");
+            var titleY = 0.32 + (i * 0.12);
+            filters.Add($"drawtext={fontOpt}textfile='{titleFile}':x=(w-text_w)/2:y=h*{titleY.ToString(System.Globalization.CultureInfo.InvariantCulture)}:fontsize=240:fontcolor=0xF0D98C:borderw=8:bordercolor=black@0.99:shadowx=4:shadowy=4:shadowcolor=black@0.90");
+        }
+
+        if (subtitleLines.Length > 0)
+        {
+            for (var i = 0; i < subtitleLines.Length; i++)
+            {
+                var subtitleFile = CreateTempOverlayTextFile(subtitleLines[i], $"subtitle-{i}.txt");
+                var subtitleY = 0.62 + (i * 0.08);
+                filters.Add($"drawtext={fontOpt}textfile='{subtitleFile}':x=(w-text_w)/2:y=h*{subtitleY.ToString(System.Globalization.CultureInfo.InvariantCulture)}:fontsize=148:fontcolor=0xF0D98C:borderw=6:bordercolor=black@0.99:shadowx=4:shadowy=4:shadowcolor=black@0.86");
+            }
+        }
+
+        if (showAuthors)
+        {
+            var authorsFile = CreateTempOverlayTextFile(authorsText, "authors.txt");
+            filters.Add($"drawtext={fontOpt}textfile='{authorsFile}':x=(w-text_w)/2:y=h*0.83:fontsize=132:fontcolor=0xF0D98C:borderw=6:bordercolor=black@0.99:shadowx=4:shadowy=4:shadowcolor=black@0.86");
+        }
+
+        // Step 1: Generate portada PNG (3840×2160, dark background + text + logo)
+        var portadaPng = outputMp4 + ".portada.png";
+        try { if (File.Exists(portadaPng)) File.Delete(portadaPng); } catch { }
+
+        bool portadaOk;
+        if (logoFile is not null)
+        {
+            var fc = $"[0:v]{string.Join(",", filters)}[base];[1:v]scale=1260:-1:flags=lanczos[logo];[base][logo]overlay=x=(main_w-overlay_w)/2:y=50:format=auto[outv]";
+            portadaOk = await RunProcessAsync(ffmpegExe,
+                new List<string> { "-y", "-f", "lavfi", "-i", "color=c=0x0b0704:s=3840x2160:d=1", "-i", logoFile,
+                    "-filter_complex", fc, "-map", "[outv]", "-frames:v", "1", portadaPng },
+                "portada.png", "FFmpeg portada", TimeSpan.FromMinutes(2), ct).ConfigureAwait(false);
+        }
+        else
+        {
+            portadaOk = await RunProcessAsync(ffmpegExe,
+                new List<string> { "-y", "-f", "lavfi", "-i", "color=c=0x0b0704:s=3840x2160:d=1",
+                    "-vf", string.Join(",", filters), "-frames:v", "1", portadaPng },
+                "portada.png", "FFmpeg portada", TimeSpan.FromMinutes(2), ct).ConfigureAwait(false);
+        }
+
+        if (!portadaOk || !File.Exists(portadaPng))
+            return false;
+
+        // Step 2: Encode portada as intro video (1920×1080, 30 fps, fade-in 1s / fade-out 1s)
+        var introMp4 = outputMp4 + ".intro.tmp.mp4";
+        try { if (File.Exists(introMp4)) File.Delete(introMp4); } catch { }
+        var fadeOutSt = (secs - 1).ToString("F3", System.Globalization.CultureInfo.InvariantCulture);
+        var secsStr = secs.ToString("F3", System.Globalization.CultureInfo.InvariantCulture);
+        var introVf = $"scale=1920:1080,fps=30,fade=t=in:st=0:d=1,fade=t=out:st={fadeOutSt}:d=1,format=yuv420p";
+        var introOk = await RunProcessAsync(ffmpegExe,
+            new List<string> { "-y", "-loop", "1", "-i", portadaPng,
+                "-f", "lavfi", "-i", "anullsrc=channel_layout=stereo:sample_rate=44100",
+                "-vf", introVf, "-t", secsStr, "-r", "30",
+                "-c:v", "libx264", "-preset", "medium", "-crf", "18",
+                "-c:a", "aac", introMp4 },
+            "intro.mp4", "FFmpeg intro", TimeSpan.FromMinutes(2), ct).ConfigureAwait(false);
+
+        try { if (File.Exists(portadaPng)) File.Delete(portadaPng); } catch { }
+
+        if (!introOk || !File.Exists(introMp4))
+            return false;
+
+        // Step 3: Normalize score video to 1920×1080, 30 fps (to match intro)
+        var normMp4 = outputMp4 + ".norm.tmp.mp4";
+        try { if (File.Exists(normMp4)) File.Delete(normMp4); } catch { }
+        var normOk = await RunProcessAsync(ffmpegExe,
+            new List<string> { "-y", "-i", outputMp4,
+                "-vf", "scale=1920:1080,fps=30,format=yuv420p",
+                "-c:v", "libx264", "-preset", "medium", "-crf", "18",
+                "-c:a", "aac", "-ar", "44100", "-ac", "2", normMp4 },
+            "norm.mp4", "FFmpeg normalize", TimeSpan.FromMinutes(10), ct).ConfigureAwait(false);
+
+        if (!normOk || !File.Exists(normMp4))
+        {
+            try { if (File.Exists(introMp4)) File.Delete(introMp4); } catch { }
+            return false;
+        }
+
+        // Step 4: Concat intro + score via concat demuxer
+        var concatList = outputMp4 + ".concat.txt";
+        await File.WriteAllTextAsync(concatList,
+            $"file '{introMp4.Replace("\\", "/", StringComparison.Ordinal)}'\nfile '{normMp4.Replace("\\", "/", StringComparison.Ordinal)}'",
+            System.Text.Encoding.UTF8, ct).ConfigureAwait(false);
+
+        var tmp = outputMp4 + ".lux.tmp.mp4";
+        try { if (File.Exists(tmp)) File.Delete(tmp); } catch { }
+        var concatOk = await RunProcessAsync(ffmpegExe,
+            new List<string> { "-y", "-f", "concat", "-safe", "0", "-i", concatList,
+                "-c", "copy", "-movflags", "+faststart", tmp },
+            Path.GetFileName(outputMp4), "FFmpeg concat intro", TimeSpan.FromMinutes(5), ct).ConfigureAwait(true);
+
+        foreach (var f in new[] { introMp4, normMp4, concatList })
+            try { if (File.Exists(f)) File.Delete(f); } catch { }
+
+        if (!concatOk || !File.Exists(tmp))
+            return false;
+
+        try
+        {
+            File.Move(tmp, outputMp4, true);
+            return true;
+        }
+        catch
+        {
+            try { if (File.Exists(tmp)) File.Delete(tmp); } catch { }
+            return false;
+        }
+    }
+
+    private async Task<bool> TryTrimVideoTailAsync(string outputMp4, int trimTailSeconds, CancellationToken ct)
+    {
+        if (trimTailSeconds <= 0 || !File.Exists(outputMp4))
+            return false;
+
+        var ffmpegExe = await ResolveFfmpegExecutableAsync().ConfigureAwait(false);
+        if (string.IsNullOrWhiteSpace(ffmpegExe))
+        {
+            Log("ℹ️ ffmpeg no encontrado: omitiendo recorte de cola de vídeo.");
+            return false;
+        }
+
+        var ffprobeExe = await ResolveFfprobeExecutableAsync().ConfigureAwait(false);
+        if (string.IsNullOrWhiteSpace(ffprobeExe))
+            return false;
+
+        var duration = await GetMediaDurationSecondsAsync(ffprobeExe, outputMp4, ct).ConfigureAwait(false);
+        if (duration is null)
+            return false;
+
+        var target = duration.Value - trimTailSeconds;
+        if (target <= 2)
+            return false;
+
+        var tmp = outputMp4 + ".trim.tmp.mp4";
+        try { if (File.Exists(tmp)) File.Delete(tmp); } catch { }
+
+        var args = new List<string>
+        {
+            "-y",
+            "-i", outputMp4,
+            "-t", target.ToString("F3", System.Globalization.CultureInfo.InvariantCulture),
+            "-map", "0",
+            "-c", "copy",
+            "-movflags", "+faststart",
+            tmp
+        };
+
+        var ok = await RunProcessAsync(ffmpegExe, args, Path.GetFileName(outputMp4), "FFmpeg trim", TimeSpan.FromMinutes(2), ct).ConfigureAwait(true);
+        if (!ok || !File.Exists(tmp))
+            return false;
+
+        try
+        {
+            File.Move(tmp, outputMp4, true);
+            return true;
+        }
+        catch
+        {
+            try { if (File.Exists(tmp)) File.Delete(tmp); } catch { }
+            return false;
+        }
+    }
+
+    private async Task<bool> TryApplyFadeOutAsync(string outputMp4, int fadeSeconds, CancellationToken ct)
+    {
+        if (fadeSeconds <= 0 || !File.Exists(outputMp4))
+            return false;
+
+        var ffmpegExe = await ResolveFfmpegExecutableAsync().ConfigureAwait(false);
+        if (string.IsNullOrWhiteSpace(ffmpegExe))
+            return false;
+
+        var ffprobeExe = await ResolveFfprobeExecutableAsync().ConfigureAwait(false);
+        if (string.IsNullOrWhiteSpace(ffprobeExe))
+            return false;
+
+        var duration = await GetMediaDurationSecondsAsync(ffprobeExe, outputMp4, ct).ConfigureAwait(false);
+        if (duration is null || duration.Value <= fadeSeconds + 2)
+            return false;
+
+        var fadeStart = (duration.Value - fadeSeconds).ToString("F3", System.Globalization.CultureInfo.InvariantCulture);
+        var fadeDur = fadeSeconds.ToString("F3", System.Globalization.CultureInfo.InvariantCulture);
+        var tmp = outputMp4 + ".fadeout.tmp.mp4";
+        try { if (File.Exists(tmp)) File.Delete(tmp); } catch { }
+
+        var args = new List<string>
+        {
+            "-y",
+            "-i", outputMp4,
+            "-vf", $"fade=t=out:st={fadeStart}:d={fadeDur}",
+            "-af", $"afade=t=out:st={fadeStart}:d={fadeDur}",
+            "-c:v", "libx264",
+            "-preset", "medium",
+            "-crf", "18",
+            "-pix_fmt", "yuv420p",
+            "-c:a", "aac",
+            tmp
+        };
+
+        var ok = await RunProcessAsync(ffmpegExe, args, Path.GetFileName(outputMp4), "FFmpeg fade-out", TimeSpan.FromMinutes(8), ct).ConfigureAwait(true);
+        if (!ok || !File.Exists(tmp))
+            return false;
+
+        try
+        {
+            File.Move(tmp, outputMp4, true);
+            return true;
+        }
+        catch
+        {
+            try { if (File.Exists(tmp)) File.Delete(tmp); } catch { }
+            return false;
+        }
+    }
+
     private async Task<bool> RunMuseScoreVideoAsync(string museScoreExe, string inputPath, string outputMp4, IReadOnlyList<string> extraVideoArgs, CancellationToken ct = default)
     {
-        var args = new List<string>(extraVideoArgs.Count + 5);
-        args.Add("--score-video");
-        args.AddRange(extraVideoArgs);
-        args.Add("-o");
-        args.Add(outputMp4);
-        args.Add(inputPath);
-        var autoOk = await RunProcessAsync(museScoreExe, args, Path.GetFileName(inputPath), "MuseScore MP4", TimeSpan.FromSeconds(_videoTimeoutSeconds), ct).ConfigureAwait(true);
-        return autoOk && File.Exists(outputMp4);
+        static List<string> BuildCommandArgs(string input, string output, IReadOnlyList<string> renderArgs, string? stylePath)
+        {
+            var args = new List<string>(renderArgs.Count + 7);
+            args.Add("--score-video");
+            args.AddRange(renderArgs);
+            if (!string.IsNullOrWhiteSpace(stylePath))
+            {
+                args.Add("--style");
+                args.Add(stylePath);
+            }
+            args.Add("-o");
+            args.Add(output);
+            args.Add(input);
+            return args;
+        }
+
+        static List<string> BuildFastRetryArgs(IReadOnlyList<string> sourceArgs)
+        {
+            var result = new List<string>(sourceArgs);
+
+            static void UpsertArg(List<string> args, string key, string value)
+            {
+                for (int i = 0; i < args.Count - 1; i++)
+                {
+                    if (string.Equals(args[i], key, StringComparison.OrdinalIgnoreCase))
+                    {
+                        args[i + 1] = value;
+                        return;
+                    }
+                }
+                args.Add(key);
+                args.Add(value);
+            }
+
+            // Retry profile: lower render cost to avoid long stalls/timeouts.
+            UpsertArg(result, "--resolution", "1080p");
+            UpsertArg(result, "--fps", "30");
+            return result;
+        }
+
+        var inputName = Path.GetFileName(inputPath);
+        var stylePath = TryCreateSubtitleStyleOverrideFile();
+        var tempRenderInput = await TryCreateSanitizedVideoInputAsync(inputPath, ct).ConfigureAwait(false);
+        var renderInputPath = string.IsNullOrWhiteSpace(tempRenderInput) ? inputPath : tempRenderInput;
+
+        var primaryResolution = GetArgValue(extraVideoArgs, "--resolution") ?? "2160p";
+        var primaryFps = GetArgValue(extraVideoArgs, "--fps") ?? "60";
+        var primaryProfile = GetArgValue(extraVideoArgs, "--sound-profile") ?? "MuseSounds";
+        Log($"🎛️ Perfil vídeo primario ({inputName}): res={primaryResolution}, fps={primaryFps}, audio={primaryProfile}, timeout={_videoTimeoutSeconds}s");
+        if (!string.IsNullOrWhiteSpace(stylePath))
+            LogDebug($"🎨 Estilo vídeo ({inputName}): subtítulo {_videoSubtitleFontPt}pt");
+        if (!string.IsNullOrWhiteSpace(tempRenderInput))
+            LogDebug($"🧹 Título original ocultado ({inputName}) para render.");
+
+        int lastPrimaryPct = -1;
+        Action<int> primaryProgress = pct =>
+        {
+            var clamped = Math.Clamp(pct, 0, 100);
+            if (clamped == lastPrimaryPct) return;
+            if (lastPrimaryPct >= 0 && clamped < lastPrimaryPct) return;
+            if (lastPrimaryPct >= 0 && clamped - lastPrimaryPct < 2 && clamped != 100) return;
+            lastPrimaryPct = clamped;
+            _ = Dispatcher.InvokeAsync(() => txtStatus.Text = $"🎥 {inputName}: {clamped}%");
+            LogDebug($"⏳ Video progreso ({inputName}): {clamped}%");
+        };
+
+        try
+        {
+            var mainArgs = BuildCommandArgs(renderInputPath, outputMp4, extraVideoArgs, stylePath);
+            var primaryOk = await RunProcessAsync(
+                museScoreExe,
+                mainArgs,
+                inputName,
+                "MuseScore MP4",
+                TimeSpan.FromSeconds(_videoTimeoutSeconds),
+                ct,
+                primaryProgress).ConfigureAwait(true);
+
+            if (primaryOk && File.Exists(outputMp4))
+                return true;
+
+            if (ct.IsCancellationRequested)
+                return false;
+
+            // Fallback retry for heavy scores: faster settings + extended timeout.
+            var retryArgs = BuildFastRetryArgs(extraVideoArgs);
+            var retryTimeoutSec = Math.Min(_videoTimeoutSeconds * 2, 3600);
+            var retryResolution = GetArgValue(retryArgs, "--resolution") ?? "1080p";
+            var retryFps = GetArgValue(retryArgs, "--fps") ?? "30";
+            var retryProfile = GetArgValue(retryArgs, "--sound-profile") ?? primaryProfile;
+            Log($"ℹ️ Reintento vídeo modo rápido ({inputName}): res={retryResolution}, fps={retryFps}, audio={retryProfile}, timeout={retryTimeoutSec}s");
+
+            int lastRetryPct = -1;
+            Action<int> retryProgress = pct =>
+            {
+                var clamped = Math.Clamp(pct, 0, 100);
+                if (clamped == lastRetryPct) return;
+                if (lastRetryPct >= 0 && clamped < lastRetryPct) return;
+                if (lastRetryPct >= 0 && clamped - lastRetryPct < 2 && clamped != 100) return;
+                lastRetryPct = clamped;
+                _ = Dispatcher.InvokeAsync(() => txtStatus.Text = $"🎥 {inputName}: retry {clamped}%");
+                LogDebug($"⏳ Video progreso retry ({inputName}): {clamped}%");
+            };
+
+            try { if (File.Exists(outputMp4)) File.Delete(outputMp4); } catch { }
+
+            var retryOk = await RunProcessAsync(
+                museScoreExe,
+                BuildCommandArgs(renderInputPath, outputMp4, retryArgs, stylePath),
+                inputName,
+                "MuseScore MP4 (retry)",
+                TimeSpan.FromSeconds(retryTimeoutSec),
+                ct,
+                retryProgress).ConfigureAwait(true);
+
+            return retryOk && File.Exists(outputMp4);
+        }
+        finally
+        {
+            if (!string.IsNullOrWhiteSpace(tempRenderInput))
+            {
+                try { if (File.Exists(tempRenderInput)) File.Delete(tempRenderInput); } catch { }
+            }
+        }
     }
 
     private static bool IsMuseScoreInteractiveForced()
@@ -4316,8 +6597,9 @@ public partial class MainWindow : Window, IAsyncDisposable
         return false;
     }
 
-    private async Task<bool> RunProcessAsync(string exe, IEnumerable<string> args, string inputName, string stage, TimeSpan? timeout = null, CancellationToken ct = default)
+    private async Task<bool> RunProcessAsync(string exe, IEnumerable<string> args, string inputName, string stage, TimeSpan? timeout = null, CancellationToken ct = default, Action<int>? onPercent = null)
     {
+        var startedAt = DateTimeOffset.UtcNow;
         var psi = new System.Diagnostics.ProcessStartInfo
         {
             FileName = exe,
@@ -4329,15 +6611,41 @@ public partial class MainWindow : Window, IAsyncDisposable
         foreach (var arg in args)
             psi.ArgumentList.Add(arg);
 
+        LogDebug($"▶ {stage} start ({inputName}) exe={Path.GetFileName(exe)} timeout={(timeout?.TotalSeconds.ToString("0") ?? "∞")}s args={string.Join(' ', psi.ArgumentList)}");
+
         using var process = new System.Diagnostics.Process { StartInfo = psi };
         if (!process.Start())
             throw new InvalidOperationException($"No se pudo iniciar el proceso: {psi.FileName}");
-        var stdoutTask = process.StandardOutput.ReadToEndAsync();
-        var stderrTask = process.StandardError.ReadToEndAsync();
+
+        var stdoutSb = new StringBuilder();
+        var stderrSb = new StringBuilder();
+        var stdoutClosed = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var stderrClosed = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        void HandleOutputLine(StringBuilder sink, TaskCompletionSource<bool> closed, string? line)
+        {
+            if (line is null)
+            {
+                closed.TrySetResult(true);
+                return;
+            }
+
+            lock (sink)
+                sink.AppendLine(line);
+
+            if (onPercent is not null && TryParsePercentFromText(line, out var pct))
+                onPercent(pct);
+        }
+
+        process.OutputDataReceived += (_, e) => HandleOutputLine(stdoutSb, stdoutClosed, e.Data);
+        process.ErrorDataReceived += (_, e) => HandleOutputLine(stderrSb, stderrClosed, e.Data);
+        process.BeginOutputReadLine();
+        process.BeginErrorReadLine();
+
         var waitTask = process.WaitForExitAsync(ct);
 
         // Leer pipes en paralelo con WaitForExit para evitar deadlock por buffer lleno
-        var allDone = Task.WhenAll(waitTask, stdoutTask, stderrTask);
+        var allDone = Task.WhenAll(waitTask, stdoutClosed.Task, stderrClosed.Task);
         if (timeout.HasValue)
         {
             using var delayCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
@@ -4361,19 +6669,60 @@ public partial class MainWindow : Window, IAsyncDisposable
         catch (OperationCanceledException)
         {
             try { if (!process.HasExited) process.Kill(entireProcessTree: true); } catch { }
-            try { await Task.WhenAll(stdoutTask, stderrTask).ConfigureAwait(true); } catch { }
+            try { await Task.WhenAll(stdoutClosed.Task, stderrClosed.Task).ConfigureAwait(true); } catch { }
             throw;
         }
 
         if (process.ExitCode == 0)
+        {
+            var elapsedOk = DateTimeOffset.UtcNow - startedAt;
+            LogDebug($"✅ {stage} ok ({inputName}) en {elapsedOk.TotalSeconds:F1}s");
             return true;
+        }
 
-        var err = stderrTask.Result.Trim();
-        var stdout = stdoutTask.Result.Trim();
+        var err = stderrSb.ToString().Trim();
+        var stdout = stdoutSb.ToString().Trim();
         var msg = !string.IsNullOrWhiteSpace(err) ? err
             : !string.IsNullOrWhiteSpace(stdout) ? stdout
             : $"exit={process.ExitCode}";
-        Log($"⚠️ {stage} fallo ({inputName}): {msg}");
+        var elapsedFail = DateTimeOffset.UtcNow - startedAt;
+        Log($"⚠️ {stage} fallo ({inputName}) tras {elapsedFail.TotalSeconds:F1}s: {msg}");
+        return false;
+    }
+
+    private static bool TryParsePercentFromText(string text, out int percent)
+    {
+        percent = -1;
+        if (string.IsNullOrWhiteSpace(text)) return false;
+
+        for (int i = 0; i < text.Length; i++)
+        {
+            if (!char.IsDigit(text[i])) continue;
+
+            int start = i;
+            int value = 0;
+            while (i < text.Length && char.IsDigit(text[i]))
+            {
+                value = (value * 10) + (text[i] - '0');
+                if (value > 1000) break;
+                i++;
+            }
+
+            int j = i;
+            while (j < text.Length && char.IsWhiteSpace(text[j])) j++;
+            if (j < text.Length && text[j] == '%')
+            {
+                if (value >= 0 && value <= 100)
+                {
+                    percent = value;
+                    return true;
+                }
+                return false;
+            }
+
+            i = Math.Max(i, start);
+        }
+
         return false;
     }
 
@@ -5172,15 +7521,16 @@ public partial class MainWindow : Window, IAsyncDisposable
             _enableMutopia = state.EnableMutopia.Value;
             chkEnableMutopia.IsChecked = _enableMutopia;
         }
-        if (state.EnableCpdl.HasValue)
-        {
-            _enableCpdl = state.EnableCpdl.Value;
-            chkEnableCpdl.IsChecked = _enableCpdl;
-        }
+        // EnableCpdl removido
         if (state.EnableMusopen.HasValue)
         {
             _enableMusopen = state.EnableMusopen.Value;
             chkEnableMusopen.IsChecked = _enableMusopen;
+        }
+        if (state.OnlyClassical.HasValue)
+        {
+            _onlyClassical = state.OnlyClassical.Value;
+            chkOnlyClassical.IsChecked = _onlyClassical;
         }
         // Restaurar sesión Musopen persistida
         if (!string.IsNullOrWhiteSpace(state.MusopenCookieHeader))
@@ -5188,7 +7538,7 @@ public partial class MainWindow : Window, IAsyncDisposable
             _musopen.SetSession(state.MusopenCookieHeader, state.MusopenUserAgent);
             Log("🔐 Musopen sesión restaurada desde estado guardado.");
         }
-        btnCpdlSession.IsEnabled = _enableCpdl;
+        // btnCpdlSession.IsEnabled = false;  // CPDL removido - botón removido del XAML
         btnMusopenSession.IsEnabled = _enableMusopen;
         if (state.AutoConvertAudiveris.HasValue)
             chkAutoConvertAudiveris.IsChecked = state.AutoConvertAudiveris.Value;
@@ -5205,13 +7555,42 @@ public partial class MainWindow : Window, IAsyncDisposable
             Source = (cmbSource.SelectedItem as ComboBoxItem)?.Content?.ToString(),
             FilterSource = (cmbFilterSource.SelectedItem as ComboBoxItem)?.Content?.ToString(),
             EnableMutopia = _enableMutopia,
-            EnableCpdl = _enableCpdl,
+            // EnableCpdl removido
             EnableMusopen = _enableMusopen,
             MusopenCookieHeader = muCookie,
             MusopenUserAgent = muUA,
             AutoConvertAudiveris = chkAutoConvertAudiveris.IsChecked == true,
-            AutoConvertOemer = chkAutoConvertOemer.IsChecked == true
+            AutoConvertOemer = chkAutoConvertOemer.IsChecked == true,
+            OnlyClassical = chkOnlyClassical.IsChecked == true
         });
+    }
+
+    private static readonly string[] NonClassicalHints =
+    [
+        "jazz", "blues", "ragtime", "swing", "bossa", "salsa", "tango",
+        "rock", "metal", "punk", "pop", "hip hop", "rap", "electronic",
+        "edm", "techno", "house", "disco", "funk", "country", "flamenco"
+    ];
+
+    private static bool IsClassicalItem(PartituraItem item)
+    {
+        var composer = item.Composer ?? string.Empty;
+        var title = item.Title ?? string.Empty;
+        var haystack = (composer + " " + title).Trim();
+
+        if (string.IsNullOrWhiteSpace(haystack))
+            return false;
+
+        // Hard reject on explicit non-classical genre hints.
+        if (NonClassicalHints.Any(h => haystack.Contains(h, StringComparison.OrdinalIgnoreCase)))
+            return false;
+
+        // Strong positive signal by known classical composers.
+        if (KnownComposers.Any(c => composer.Contains(c, StringComparison.OrdinalIgnoreCase)))
+            return true;
+
+        // Source-level fallback for repositories already focused on classical repertoire.
+        return item.Source is "Mutopia" or "OpenScore";
     }
 
     private static void SelectComboItemByText(System.Windows.Controls.ComboBox combo, string? text)
@@ -5257,8 +7636,9 @@ public partial class MainWindow : Window, IAsyncDisposable
         Interlocked.Increment(ref _cacheMisses);
         UpdateCacheStats();
         var fresh = await fetch(progress, ct);
-        var newEntry = (Expires: now.Add(SearchCacheTtl), LastAccessed: now, Results: CloneItems(fresh));
-        _searchCache[key] = newEntry;
+        // Cache stores its own clone; caller receives the original (fresh is newly created by fetch,
+        // no other reference exists). This halves allocations vs CloneItems(fresh) twice.
+        _searchCache[key] = (Expires: now.Add(SearchCacheTtl), LastAccessed: now, Results: CloneItems(fresh));
 
         // LRU eviction: keep only MaxCacheEntries newest-accessed (best-effort; slight race is acceptable)
         if (_searchCache.Count > MaxCacheEntries)
@@ -5267,7 +7647,7 @@ public partial class MainWindow : Window, IAsyncDisposable
             _searchCache.TryRemove(oldest, out _);
         }
 
-        return CloneItems(fresh);
+        return fresh;
     }
 
     private static List<PartituraItem> CloneItems(IEnumerable<PartituraItem> items)
