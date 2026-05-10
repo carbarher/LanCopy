@@ -929,16 +929,22 @@
 
                 <!-- Lista de partituras -->
                 <Grid Grid.Row="1">
-                <ListView x:Name="lstVideoSelect"
-                          BorderThickness="0" Background="#0D1117"
-                          SelectionMode="Extended"
-                          ScrollViewer.HorizontalScrollBarVisibility="Disabled"
-                          VirtualizingPanel.IsVirtualizingWhenGrouping="True"
-                          VirtualizingPanel.ScrollUnit="Pixel"
-                          MouseDoubleClick="LstVideoSelect_MouseDoubleClick"
-                          GridViewColumnHeader.Click="LstVideoSelect_ColumnHeaderClick"
-                          PreviewMouseRightButtonDown="LstVideoSelect_PreviewMouseRightButtonDown"
-                          KeyDown="LstVideoSelect_KeyDown">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="*"/>
+                        <RowDefinition Height="120"/>
+                    </Grid.RowDefinitions>
+                    <!-- Listado (Row 0) -->
+                    <Grid Grid.Row="0">
+                        <ListView x:Name="lstVideoSelect"
+                                  BorderThickness="0" Background="#0D1117"
+                                  SelectionMode="Extended"
+                                  ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                                  VirtualizingPanel.IsVirtualizingWhenGrouping="True"
+                                  VirtualizingPanel.ScrollUnit="Pixel"
+                                  MouseDoubleClick="LstVideoSelect_MouseDoubleClick"
+                                  GridViewColumnHeader.Click="LstVideoSelect_ColumnHeaderClick"
+                                  PreviewMouseRightButtonDown="LstVideoSelect_PreviewMouseRightButtonDown"
+                                  KeyDown="LstVideoSelect_KeyDown">
                     <ListView.GroupStyle>
                         <GroupStyle>
                             <GroupStyle.HeaderTemplate>
@@ -1092,12 +1098,33 @@
                         </Style>
                     </ListView.ItemContainerStyle>
                 </ListView>
-                <TextBlock x:Name="txtVideoEmpty"
-                           Text="Sin coincidencias para el filtro actual"
-                           HorizontalAlignment="Center" VerticalAlignment="Center"
-                           Foreground="#6B7280" FontSize="14" FontStyle="Italic"
-                           IsHitTestVisible="False" Panel.ZIndex="1"
-                           Visibility="Collapsed"/>
+                        <TextBlock x:Name="txtVideoEmpty"
+                                   Text="Sin coincidencias para el filtro actual"
+                                   HorizontalAlignment="Center" VerticalAlignment="Center"
+                                   Foreground="#6B7280" FontSize="14" FontStyle="Italic"
+                                   IsHitTestVisible="False" Panel.ZIndex="1"
+                                   Visibility="Collapsed"/>
+                    </Grid>
+                    <!-- Log de actividad (Row 1) -->
+                    <Border Grid.Row="1" Background="#13131F" Padding="10,8" BorderThickness="0,1,0,0" BorderBrush="#3D3D5C">
+                        <Grid>
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="*"/>
+                            </Grid.RowDefinitions>
+                            <StackPanel Grid.Row="0" Orientation="Horizontal" Margin="0,0,0,4">
+                                <TextBlock Text="📋 Log vídeo" Foreground="#A78BFA" VerticalAlignment="Center" Margin="2,0,8,0" FontWeight="SemiBold"/>
+                                <Button Content="🗑 Limpiar" Padding="8,4"
+                                    Style="{StaticResource LogActionButtonStyle}"
+                                        Background="#1E293B" Click="BtnClearVideoLog_Click" ToolTip="Limpiar log de vídeo"/>
+                            </StackPanel>
+                            <TextBox x:Name="txtVideoLog" Grid.Row="1"
+                                     IsReadOnly="True" TextWrapping="Wrap"
+                                     VerticalScrollBarVisibility="Auto"
+                                     Background="#13131F" Foreground="#94A3B8"
+                                     FontFamily="Consolas" FontSize="10"/>
+                        </Grid>
+                    </Border>
                 </Grid>
 
                 <!-- Barra de progreso general -->

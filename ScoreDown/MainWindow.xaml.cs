@@ -4472,6 +4472,8 @@ public partial class MainWindow : Window, IAsyncDisposable
 
         var soundProfile = GetArgValue(extraVideoArgs, "--sound-profile") ?? "MuseSounds";
         Log($"🎥 Video: inicio para {pending.Count} partitura(s). Perfil audio: {soundProfile}");
+        VideoLog($"🎥 Iniciando generación de {pending.Count} partitura(s)...");
+        VideoLog($"Perfil de audio: {soundProfile}");
 
         _videoRunning = true;
         _videoCts = externalCt.CanBeCanceled
@@ -4522,6 +4524,7 @@ public partial class MainWindow : Window, IAsyncDisposable
                     await Dispatcher.InvokeAsync(() =>
                         txtStatus.Text = $"🎥 Video [{idx}/{pending.Count}] {name}");
                     Log($"🎬 Video [{idx}/{pending.Count}] inicio: {name} -> {Path.GetFileName(outputMp4)}");
+                    VideoLog($"[{idx}/{pending.Count}] Generando: {name}");
 
                     // Badge: en curso
                     await Dispatcher.InvokeAsync(() =>
@@ -4540,6 +4543,7 @@ public partial class MainWindow : Window, IAsyncDisposable
                         Interlocked.Increment(ref fail);
                         Interlocked.Increment(ref _videoEtaFailed);
                         Log($"❌ Video error en {name}: {ex.Message}");
+                        VideoLog($"❌ Error en {name}: {ex.Message}");
                         await Dispatcher.InvokeAsync(() =>
                         {
                             if (itemLookup.TryGetValue(input, out var si))
@@ -4559,21 +4563,30 @@ public partial class MainWindow : Window, IAsyncDisposable
                         {
                             var decorated = await TryApplyLuxuryTitleOverlayAsync(outputMp4, input, innerCt).ConfigureAwait(false);
                             if (decorated)
+                            {
                                 Log($"✨ Intro portada aplicada ({name}): título + autor(es)");
+                                VideoLog($"  ✨ Portada añadida");
+                            }
                         }
 
                         if (_videoTrimTailSeconds > 0 && File.Exists(outputMp4))
                         {
                             var trimmed = await TryTrimVideoTailAsync(outputMp4, _videoTrimTailSeconds, innerCt).ConfigureAwait(false);
                             if (trimmed)
+                            {
                                 Log($"✂️ Recorte aplicado ({name}): -{_videoTrimTailSeconds}s al final");
+                                VideoLog($"  ✂️ Recorte: -{_videoTrimTailSeconds}s");
+                            }
                         }
 
                         if (_videoFadeOutSeconds > 0 && File.Exists(outputMp4))
                         {
                             var fadedOut = await TryApplyFadeOutAsync(outputMp4, _videoFadeOutSeconds, innerCt).ConfigureAwait(false);
                             if (fadedOut)
+                            {
                                 Log($"🌑 Fundido a negro aplicado ({name}): {_videoFadeOutSeconds}s al final");
+                                VideoLog($"  🌑 Fundido: {_videoFadeOutSeconds}s");
+                            }
                         }
 
                         var okNow = Interlocked.Increment(ref ok);
@@ -4581,6 +4594,7 @@ public partial class MainWindow : Window, IAsyncDisposable
                         try { sizeBytes = new FileInfo(outputMp4).Length; } catch { }
                         var mb = sizeBytes > 0 ? $", {sizeBytes / (1024.0 * 1024.0):F1} MB" : string.Empty;
                         Log($"✅ Video OK: {name} en {elapsed.TotalSeconds:F1}s{mb} (ok={okNow}, fail={Volatile.Read(ref fail)})");
+                        VideoLog($"✅ Completado: {elapsed.TotalSeconds:F1}s{mb}");
 
                         // Calcular tooltip de tamaño en hilo worker (evita FileInfo en UI thread)
                         var mp4ToolTip = ComputeMp4SizeToolTip(input);
@@ -4605,6 +4619,7 @@ public partial class MainWindow : Window, IAsyncDisposable
                         var failNow = Interlocked.Increment(ref fail);
                         Interlocked.Increment(ref _videoEtaFailed);
                         Log($"⚠️ Sin vídeo generado: {name} tras {elapsed.TotalSeconds:F1}s (ok={Volatile.Read(ref ok)}, fail={failNow})");
+                        VideoLog($"⚠️ Sin vídeo: {name}");
                         await Dispatcher.InvokeAsync(() =>
                         {
                             if (itemLookup.TryGetValue(input, out var si))
@@ -4622,12 +4637,14 @@ public partial class MainWindow : Window, IAsyncDisposable
                 : $"🎥 Vídeos completados: {ok} OK, {fail} sin generar";
             txtStatus.Text = msg;
             Log(msg);
+            VideoLog($"\n📊 Resumen: {ok} OK · {fail} error");
         }
         catch (OperationCanceledException)
         {
             var msg = $"⏹️ Vídeo cancelado por usuario (ok={ok}, fail={fail})";
             txtStatus.Text = msg;
             Log(msg);
+            VideoLog($"\n⏹️ Generación cancelada por usuario");
             var elapsedSec = (DateTimeOffset.UtcNow - _videoEtaStart).TotalSeconds;
             var elapsedStr = elapsedSec >= 60
                 ? $"{(int)(elapsedSec / 60)}m {(int)(elapsedSec % 60):D2}s"
@@ -6851,6 +6868,24 @@ public partial class MainWindow : Window, IAsyncDisposable
     {
         // File only, no UI noise
         _fileLogger?.Log($"[DEBUG] {msg}");
+    }
+
+    private void VideoLog(string msg)
+    {
+        // Write only to video-specific log UI
+        Dispatcher.InvokeAsync(() =>
+        {
+            txtVideoLog.AppendText($"[{DateTime.Now:HH:mm:ss}] {msg}\n");
+            txtVideoLog.ScrollToEnd();
+        });
+    }
+
+    private void BtnClearVideoLog_Click(object sender, RoutedEventArgs e)
+    {
+        Dispatcher.InvokeAsync(() =>
+        {
+            txtVideoLog.Clear();
+        });
     }
 
     private static string NormalizeKey(string value)
