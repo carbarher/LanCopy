@@ -12,4 +12,7 @@ public sealed class UiState
     public int? AutoBatchLimit { get; set; }
     public string? MusopenCookieHeader { get; set; }
     public string? MusopenUserAgent { get; set; }
+    public bool? AutoConvertAudiveris { get; set; }
+    public bool? AutoConvertOemer { get; set; }
+    public bool? OnlyClassical { get; set; }
 }

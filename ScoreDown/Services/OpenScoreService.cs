@@ -20,12 +20,40 @@ public class OpenScoreService
         "https://raw.githubusercontent.com/OpenScore/Lieder/main/";
 
     private List<TreeEntry>? _cachedPaths;
+    private List<PartituraItem>? _cachedItems;   // built from _cachedPaths; invalidated together
     private DateTimeOffset _cacheExpiry = DateTimeOffset.MinValue;
     private static readonly TimeSpan CacheTtl = TimeSpan.FromHours(6);
+    private readonly SemaphoreSlim _fetchLock = new(1, 1);  // one in-flight fetch at a time
 
     public OpenScoreService()
     {
         _http = HttpClientProvider.GetDefault();
+    }
+
+    /// <summary>
+    /// Fetches all MXL entries from OpenScore Lieder and calls <paramref name="onItem"/> for each.
+    /// Used by the catalog download flow (equivalent to SearchAsync with no filter).
+    /// </summary>
+    public async Task FetchAllAsync(
+        Action<PartituraItem> onItem,
+        IProgress<string>? progress = null,
+        CancellationToken ct = default)
+    {
+        progress?.Report("🔍 Cargando índice OpenScore Lieder...");
+        var items = await GetCachedItemsAsync(progress, ct).ConfigureAwait(false);
+        if (items is null)
+        {
+            progress?.Report("⚠️ No se pudo obtener índice de OpenScore");
+            return;
+        }
+
+        progress?.Report($"📥 Enviando {items.Count} obras de OpenScore al catálogo...");
+        foreach (var item in items)
+        {
+            ct.ThrowIfCancellationRequested();
+            onItem(item);
+        }
+        progress?.Report($"✅ {items.Count} obras de OpenScore catalogadas");
     }
 
     public async Task<List<PartituraItem>> SearchAsync(
@@ -34,70 +62,87 @@ public class OpenScoreService
         CancellationToken ct = default)
     {
         progress?.Report("🔍 Cargando índice OpenScore Lieder...");
-
-        var paths = await GetCachedPathsAsync(ct).ConfigureAwait(false);
-        if (paths is null)
+        var items = await GetCachedItemsAsync(progress, ct).ConfigureAwait(false);
+        if (items is null)
         {
             progress?.Report("⚠️ No se pudo obtener índice de OpenScore");
             return [];
         }
 
-        progress?.Report($"🔍 Buscando '{query}' en OpenScore...");
-
         var terms = query.Split(' ', StringSplitOptions.RemoveEmptyEntries);
-
-        var matching = paths
-            .Where(p => p.Path.EndsWith(".mxl", StringComparison.OrdinalIgnoreCase))
-            .Where(p => terms.All(t =>
-                p.SearchKey.Contains(t, StringComparison.OrdinalIgnoreCase)))
+        var results = items
+            .Where(item => terms.All(t =>
+                item.Title.Contains(t, StringComparison.OrdinalIgnoreCase) ||
+                item.Composer.Contains(t, StringComparison.OrdinalIgnoreCase)))
             .ToList();
 
-        if (matching.Count == 0)
-        {
-            progress?.Report("⚠️ Sin resultados en OpenScore");
-            return [];
-        }
-
-        var items = BuildItems(matching);
-        progress?.Report($"✅ {items.Count} obras encontradas en OpenScore");
-        return items;
+        progress?.Report(results.Count == 0
+            ? "⚠️ Sin resultados en OpenScore"
+            : $"✅ {results.Count} obras encontradas en OpenScore");
+        return results;
     }
 
     // ─── Private helpers ─────────────────────────────────────────────────────
 
-    private async Task<List<TreeEntry>?> GetCachedPathsAsync(CancellationToken ct)
+    /// <summary>Returns the cached item list, fetching and building once if stale.</summary>
+    private async Task<List<PartituraItem>?> GetCachedItemsAsync(IProgress<string>? progress, CancellationToken ct)
     {
-        if (_cachedPaths is not null && DateTimeOffset.UtcNow < _cacheExpiry)
-            return _cachedPaths;
+        // Fast path — no lock needed when both are non-null and fresh.
+        if (_cachedItems is not null && DateTimeOffset.UtcNow < _cacheExpiry)
+            return _cachedItems;
 
+        await _fetchLock.WaitAsync(ct).ConfigureAwait(false);
         try
         {
+            // Re-check after acquiring lock in case another thread just populated.
+            if (_cachedItems is not null && DateTimeOffset.UtcNow < _cacheExpiry)
+                return _cachedItems;
+
             var json = await _http.GetStringAsync(LiederTreeUrl, ct).ConfigureAwait(false);
             using var doc = JsonDocument.Parse(json);
 
             if (!doc.RootElement.TryGetProperty("tree", out var treeEl))
+            {
+                progress?.Report("⚠️ OpenScore: respuesta de GitHub no contiene 'tree' (¿rate limit 403/429?)");
                 return null;
+            }
+
+            // Warn if GitHub truncated the tree (>100 k blobs).
+            if (doc.RootElement.TryGetProperty("truncated", out var trunc) && trunc.GetBoolean())
+                progress?.Report("⚠️ OpenScore: árbol truncado por GitHub; algunas obras pueden faltar");
 
             var entries = new List<TreeEntry>(4096);
-            foreach (var item in treeEl.EnumerateArray())
+            foreach (var node in treeEl.EnumerateArray())
             {
-                if (!item.TryGetProperty("type", out var t) || t.GetString() != "blob") continue;
-                if (!item.TryGetProperty("path", out var p)) continue;
+                if (!node.TryGetProperty("type", out var t) || t.GetString() != "blob") continue;
+                if (!node.TryGetProperty("path", out var p)) continue;
 
                 long size = 0;
-                if (item.TryGetProperty("size", out var s)) size = s.GetInt64();
+                if (node.TryGetProperty("size", out var s)) size = s.GetInt64();
 
                 var path = p.GetString() ?? "";
-                entries.Add(new TreeEntry(path, size));
+                if (path.EndsWith(".mxl", StringComparison.OrdinalIgnoreCase))
+                    entries.Add(new TreeEntry(path, size));
             }
 
             _cachedPaths = entries;
+            _cachedItems = BuildItems(entries);
             _cacheExpiry = DateTimeOffset.UtcNow.Add(CacheTtl);
-            return entries;
+            return _cachedItems;
+        }
+        catch (OperationCanceledException) { throw; }
+        catch (HttpRequestException ex)
+        {
+            progress?.Report($"⚠️ OpenScore: error HTTP al obtener índice — {ex.Message}");
+            return null;
         }
         catch
         {
             return null;
+        }
+        finally
+        {
+            _fetchLock.Release();
         }
     }
 
@@ -133,8 +178,11 @@ public class OpenScoreService
 
             var files = group.Select(x =>
             {
+                // Commas are safe in URI path segments (RFC 3986 sub-delims) and are
+                // used verbatim in GitHub raw URLs; EscapeDataString would percent-encode
+                // them unnecessarily. All other unsafe chars are still encoded correctly.
                 var rawUrl = LiederRawBase + string.Join("/",
-                    x.Parts.Select(Uri.EscapeDataString));
+                    x.Parts.Select(EscapePathSegment));
                 return new PartituraFile
                 {
                     Format = "MXL",
@@ -157,6 +205,11 @@ public class OpenScoreService
 
         return items;
     }
+
+    private static string EscapePathSegment(string s) =>
+        // Commas appear in composer/work directory names (e.g. "Schubert,_Franz").
+        // They are valid path segment characters in RFC 3986 and GitHub raw serves them fine unencoded.
+        Uri.EscapeDataString(s).Replace("%2C", ",", StringComparison.Ordinal);
 
     private static string FormatComposer(string raw)
     {
@@ -187,18 +240,5 @@ public class OpenScoreService
         return s_leadingNum.Replace(s, "");
     }
 
-    private record TreeEntry
-    {
-        public string Path { get; }
-        public long Size { get; }
-        // Pre-built search key (underscores replaced for query matching)
-        public string SearchKey { get; }
-
-        public TreeEntry(string path, long size)
-        {
-            Path = path;
-            Size = size;
-            SearchKey = path.Replace('_', ' ').Replace(',', ' ');
-        }
-    }
+    private record TreeEntry(string Path, long Size);
 }

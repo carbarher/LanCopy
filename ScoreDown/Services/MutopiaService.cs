@@ -16,6 +16,8 @@ public class MutopiaService
     private readonly HttpClient _http;
     private const string SearchUrl = "https://www.mutopiaproject.org/cgibin/make-table.cgi";
     private static readonly Regex s_nextStartAtRegex = new(@"[?&]startat=(\d+)", RegexOptions.Compiled | RegexOptions.IgnoreCase);
+    private static readonly Regex s_composerByPrefix = new(@"^\s*by\s+", RegexOptions.Compiled | RegexOptions.IgnoreCase);
+    private static readonly Regex s_composerYearSuffix = new(@"\s*\(\d{4}[^)]*\)\s*$", RegexOptions.Compiled);
 
     public MutopiaService()
     {
@@ -155,8 +157,8 @@ public class MutopiaService
             if (string.IsNullOrWhiteSpace(title) || title == "\u00a0") continue;
 
             var composerRaw = HtmlEntity.DeEntitize(headerTds[1].InnerText.Trim());
-            var composer = Regex.Replace(composerRaw, @"^\s*by\s+", "", RegexOptions.IgnoreCase);
-            composer = Regex.Replace(composer, @"\s*\(\d{4}[^)]*\)\s*$", "").Trim();
+            var composer = s_composerByPrefix.Replace(composerRaw, "");
+            composer = s_composerYearSuffix.Replace(composer, "").Trim();
 
             var files = new List<PartituraFile>();
             var links = table.SelectNodes(".//a[@href]");

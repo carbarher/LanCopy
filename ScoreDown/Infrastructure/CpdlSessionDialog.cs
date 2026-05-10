@@ -229,7 +229,16 @@ public sealed class CpdlSessionDialog : Window
             var (cookiePairs, _, _) = await CollectCookiesAsync();
             var title = await TryGetDocumentTitleAsync().WaitAsync(TimeSpan.FromSeconds(2));
             var requiredState = BuildRequiredCookieState(cookiePairs);
-            _txtStatus.Text = $"Cookies: {cookiePairs.Count}. Requeridas: {requiredState}. Título: {title}";
+            var hasRequired = _requiredCookieNames.Count == 0
+                || _requiredCookieNames.Any(req => cookiePairs.ContainsKey(req));
+            var inChallenge = IsLikelyChallengeTitle(title);
+
+            if (hasRequired && !inChallenge)
+                _txtStatus.Text = $"Sesion lista. Cookies: {cookiePairs.Count}. Requeridas: {requiredState}. Titulo: {title}. Pulsa 'Usar esta sesion'.";
+            else if (!hasRequired && inChallenge)
+                _txtStatus.Text = $"Sesion incompleta (challenge). Cookies: {cookiePairs.Count}. Requeridas: {requiredState}. Titulo: {title}.";
+            else
+                _txtStatus.Text = $"Cookies: {cookiePairs.Count}. Requeridas: {requiredState}. Titulo: {title}";
         }
         catch (Exception ex)
         {

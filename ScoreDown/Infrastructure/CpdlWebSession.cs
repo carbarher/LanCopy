@@ -40,9 +40,10 @@ public sealed class CpdlWebSession : IDisposable
     public async Task<string?> FetchAsync(string url, CancellationToken ct)
     {
         if (_disposed != 0) return null;
+        if (WpfApp.Current?.Dispatcher is not { } dispatcher) return null;
 
         // WebView2 must run on the WPF dispatcher.
-        return await WpfApp.Current.Dispatcher.InvokeAsync<Task<string?>>(async () =>
+        return await dispatcher.InvokeAsync<Task<string?>>(async () =>
     {
         try
         {

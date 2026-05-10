@@ -74,12 +74,15 @@ public class CpdlService
 
     public void FlushNoFilesBlacklist()
     {
+        List<int>? snapshot = null;
         lock (_noFilesLock)
         {
             if (_pendingNoFilesWrites <= 0) return;
-            SaveNoFilesBlacklistUnsafe();
+            snapshot = _knownNoFilesPageIds.OrderBy(id => id).ToList();
             _pendingNoFilesWrites = 0;
         }
+        if (snapshot is not null)
+            SaveNoFilesBlacklist(snapshot);
     }
 
     public async Task<List<PartituraItem>> SearchAsync(
@@ -381,7 +384,10 @@ public class CpdlService
                             ? $"{m.Groups[2].Value.Trim()} {m.Groups[1].Value.Trim()}"
                             : string.Empty;
                         var cleanTitle = s_composerSuffix.Replace(rawTitle, "").Trim();
-                        var pageUrl = $"{BaseUrl}/wiki/index.php/{rawTitle.Replace(' ', '_')}";  // solo espacios → _
+                        // Encode title for URL: spaces→_ (MediaWiki convention), then escape special chars
+                        var encodedTitle = Uri.EscapeDataString(rawTitle.Replace(' ', '_'))
+                            .Replace("%2F", "/");  // slashes are valid path separators in MediaWiki
+                        var pageUrl = $"{BaseUrl}/wiki/index.php/{encodedTitle}";
 
                         onItem(new PartituraItem
                         {
@@ -459,6 +465,7 @@ public class CpdlService
     {
         if (pageId <= 0) return;
 
+        List<int>? snapshot = null;
         lock (_noFilesLock)
         {
             if (!_knownNoFilesPageIds.Add(pageId)) return;
@@ -466,10 +473,13 @@ public class CpdlService
             _pendingNoFilesWrites++;
             if (_pendingNoFilesWrites >= NoFilesFlushBatch)
             {
-                SaveNoFilesBlacklistUnsafe();
+                snapshot = _knownNoFilesPageIds.OrderBy(id => id).ToList();
                 _pendingNoFilesWrites = 0;
             }
         }
+        // I/O outside lock — parallel LoadFilesAsync callers don't block on file write
+        if (snapshot is not null)
+            SaveNoFilesBlacklist(snapshot);
     }
 
     private void LoadNoFilesBlacklist()
@@ -496,14 +506,16 @@ public class CpdlService
         }
     }
 
-    private void SaveNoFilesBlacklistUnsafe()
+    private void SaveNoFilesBlacklist(List<int> payload)
     {
         var dir = Path.GetDirectoryName(_noFilesPageIdsPath);
         if (!string.IsNullOrWhiteSpace(dir))
             Directory.CreateDirectory(dir);
 
-        var payload = _knownNoFilesPageIds.OrderBy(id => id).ToList();
-        File.WriteAllText(_noFilesPageIdsPath, JsonSerializer.Serialize(payload));
+        // Atomic write: temp file + rename prevents corruption on crash
+        var tmp = _noFilesPageIdsPath + ".tmp";
+        File.WriteAllText(tmp, JsonSerializer.Serialize(payload));
+        File.Move(tmp, _noFilesPageIdsPath, overwrite: true);
     }
 
     private async Task<string?> FetchJsonAsync(string url, CancellationToken ct)
@@ -628,47 +640,62 @@ public class CpdlService
         if (pageIds.Count == 0) return null;
 
         var result = new CpdlPageFilterResult();
+        var chunks = pageIds.Chunk(100).ToList();
+
+        // Fetch all chunks in parallel (max 3 concurrent) — read-only API, safe to parallelize
+        using var chunkSem = new SemaphoreSlim(3);
         var successfulChunks = 0;
+        var chunkLock = new object();
 
-        foreach (var chunk in pageIds.Chunk(100))
+        await Task.WhenAll(chunks.Select(async chunk =>
         {
-            var url = $"{ApiUrl}?action=query&prop=categories|images&cllimit=max&imlimit=max&format=json&pageids={string.Join('|', chunk)}";
-            var json = await FetchJsonAsync(url, ct).ConfigureAwait(false);
-            if (json is null) continue;
-
-            JsonDocument doc;
+            await chunkSem.WaitAsync(ct).ConfigureAwait(false);
             try
             {
-                doc = JsonDocument.Parse(json);
-            }
-            catch
-            {
-                continue;
-            }
+                var url = $"{ApiUrl}?action=query&prop=categories|images&cllimit=max&imlimit=max&format=json&pageids={string.Join('|', chunk)}";
+                var json = await FetchJsonAsync(url, ct).ConfigureAwait(false);
+                if (json is null) return;
 
-            using (doc)
-            {
-                if (!doc.RootElement.TryGetProperty("query", out var query) ||
-                    !query.TryGetProperty("pages", out var pages))
-                    continue;
+                JsonDocument doc;
+                try { doc = JsonDocument.Parse(json); }
+                catch { return; }
 
-                successfulChunks++;
-
-                foreach (var page in pages.EnumerateObject())
+                using (doc)
                 {
-                    var value = page.Value;
-                    if (!value.TryGetProperty("pageid", out var pageIdEl) || !pageIdEl.TryGetInt32(out var pageId))
-                        continue;
+                    if (!doc.RootElement.TryGetProperty("query", out var query) ||
+                        !query.TryGetProperty("pages", out var pages))
+                        return;
 
-                    result.EvaluatedPageIds.Add(pageId);
+                    var allowed = new List<int>();
+                    var evaluated = new List<int>();
 
-                    var hasLikelyCategory = value.TryGetProperty("categories", out var categories) && HasLikelyWorkCategory(categories);
-                    var hasDownloadableMedia = value.TryGetProperty("images", out var images) && HasLikelyDownloadableMedia(images);
-                    if (hasLikelyCategory && hasDownloadableMedia)
-                        result.AllowedPageIds.Add(pageId);
+                    foreach (var page in pages.EnumerateObject())
+                    {
+                        var value = page.Value;
+                        if (!value.TryGetProperty("pageid", out var pageIdEl) || !pageIdEl.TryGetInt32(out var pageId))
+                            continue;
+
+                        evaluated.Add(pageId);
+
+                        var hasLikelyCategory = value.TryGetProperty("categories", out var categories) && HasLikelyWorkCategory(categories);
+                        var hasDownloadableMedia = value.TryGetProperty("images", out var images) && HasLikelyDownloadableMedia(images);
+                        if (hasLikelyCategory && hasDownloadableMedia)
+                            allowed.Add(pageId);
+                    }
+
+                    lock (chunkLock)
+                    {
+                        successfulChunks++;
+                        foreach (var id in evaluated) result.EvaluatedPageIds.Add(id);
+                        foreach (var id in allowed) result.AllowedPageIds.Add(id);
+                    }
                 }
             }
-        }
+            finally
+            {
+                chunkSem.Release();
+            }
+        })).ConfigureAwait(false);
 
         return successfulChunks > 0 ? result : null;
     }

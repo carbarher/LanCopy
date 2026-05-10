@@ -1,3 +1,4 @@
+using System.Buffers;
 using ScoreDown.Infrastructure;
 using ScoreDown.Models;
 using System.Collections.Concurrent;
@@ -9,10 +10,11 @@ using System.Text.RegularExpressions;
 
 namespace ScoreDown.Services;
 
-public class DownloadService
+public class DownloadService : IDisposable
 {
     private readonly HttpClient _http;
     private readonly HttpClient _httpNoRedirect;
+    private int _disposed;
     // Paralelismo para descargas en lote (DownloadAllAsync)
     private static int GetParallelism(string source) => (source ?? string.Empty).Trim().ToUpperInvariant() switch
     {
@@ -26,6 +28,17 @@ public class DownloadService
     private static readonly HashSet<char> s_invalidPathChars =
         new(Path.GetInvalidPathChars().Concat(Path.GetInvalidFileNameChars()));
 
+    // Pre-compiled regexes used in TryExtractRecoveryDownloadUrl (called per-file on HTML responses)
+    private static readonly Regex s_metaRefresh = new(
+        "<meta[^>]*http-equiv=[\"']?refresh[\"']?[^>]*content=[\"'][^\"']*url=([^\"'>]+)",
+        RegexOptions.Compiled | RegexOptions.IgnoreCase);
+    private static readonly Regex s_jsRedirect = new(
+        "(?:window\\.location(?:\\.href)?|location\\.href)\\s*=\\s*[\"']([^\"']+)[\"']",
+        RegexOptions.Compiled | RegexOptions.IgnoreCase);
+    private static readonly Regex s_hrefLinks = new(
+        "href=[\"']([^\"']+)[\"']",
+        RegexOptions.Compiled | RegexOptions.IgnoreCase);
+
     public DownloadService()
     {
         _http = HttpClientProvider.GetLongTimeout();  // Descargas pueden ser lentas/largas
@@ -37,6 +50,12 @@ public class DownloadService
         {
             Timeout = _http.Timeout
         };
+    }
+
+    public void Dispose()
+    {
+        if (Interlocked.Exchange(ref _disposed, 1) != 0) return;
+        _httpNoRedirect.Dispose();
     }
 
 
@@ -194,27 +213,35 @@ public class DownloadService
                     await using var stream = await response.Content.ReadAsStreamAsync(ct).ConfigureAwait(false);
                     await using var fileStream = File.Create(tempPath);
 
-                    var buffer = new byte[262144];
+                    const int BufferSize = 262144;
+                    var buffer = ArrayPool<byte>.Shared.Rent(BufferSize);
                     int read;
                     var sw = System.Diagnostics.Stopwatch.StartNew();
 
-                    while ((read = await stream.ReadAsync(buffer, ct).ConfigureAwait(false)) > 0)
+                    try
                     {
-                        if (shouldPause?.Invoke(file) == true)
+                        while ((read = await stream.ReadAsync(buffer.AsMemory(0, BufferSize), ct).ConfigureAwait(false)) > 0)
                         {
-                            progress?.Report((file, "paused", total > 0 ? downloaded * 100.0 / total : 0, 0.0));
-                            return new DownloadResult { Success = false, Paused = true, Error = "Pausado", BytesDownloaded = downloaded };
-                        }
+                            if (shouldPause?.Invoke(file) == true)
+                            {
+                                progress?.Report((file, "paused", total > 0 ? downloaded * 100.0 / total : 0, 0.0));
+                                return new DownloadResult { Success = false, Paused = true, Error = "Pausado", BytesDownloaded = downloaded };
+                            }
 
-                        await fileStream.WriteAsync(buffer.AsMemory(0, read), ct).ConfigureAwait(false);
-                        downloaded += read;
+                            await fileStream.WriteAsync(buffer.AsMemory(0, read), ct).ConfigureAwait(false);
+                            downloaded += read;
 
-                        if (total > 0)
-                        {
-                            var pct = downloaded * 100.0 / total;
-                            var speedKBps = sw.Elapsed.TotalSeconds > 0.1 ? downloaded / 1024.0 / sw.Elapsed.TotalSeconds : 0;
-                            progress?.Report((file, "downloading", pct, speedKBps));
+                            if (total > 0)
+                            {
+                                var pct = downloaded * 100.0 / total;
+                                var speedKBps = sw.Elapsed.TotalSeconds > 0.1 ? downloaded / 1024.0 / sw.Elapsed.TotalSeconds : 0;
+                                progress?.Report((file, "downloading", pct, speedKBps));
+                            }
                         }
+                    }
+                    finally
+                    {
+                        ArrayPool<byte>.Shared.Return(buffer);
                     }
 
                     fileStream.Close();
@@ -335,14 +362,22 @@ public class DownloadService
         var jobList = jobs.ToList();
         int done = 0, ok = 0, failed = 0, skipped = 0, cancelled = 0;
         long bytesDownloaded = 0;
-        var parallelism = jobList.Count == 0 ? 1
-            : jobList.Min(j => GetParallelism(j.item?.Source ?? "Other"));
-        var sem = new SemaphoreSlim(parallelism);
+        // Per-source semaphores: CPDL=2, others=4 — a mixed batch doesn't throttle all sources
+        // down to the lowest limit (previously jobList.Min() over all sources).
+        var sourceSems = new Dictionary<string, SemaphoreSlim>(StringComparer.OrdinalIgnoreCase);
+        SemaphoreSlim GetSourceSem(string src)
+        {
+            if (!sourceSems.TryGetValue(src, out var s))
+                sourceSems[src] = s = new SemaphoreSlim(GetParallelism(src));
+            return s;
+        }
         var batchLock = new object();
         var tasks = new List<Task>();
 
         foreach (var (item, file) in jobList)
         {
+            var sourceKey = (item?.Source ?? "Other").Trim();
+            var sem = GetSourceSem(sourceKey);
             try
             {
                 await sem.WaitAsync(ct).ConfigureAwait(false);
@@ -354,13 +389,14 @@ public class DownloadService
 
             var capturedItem = item;
             var capturedFile = file;
+            var capturedSem = sem;
 
             tasks.Add(Task.Run(async () =>
             {
                 try
                 {
                     var subFolder = Path.Combine(destFolder,
-                        SanitizeFolderName(string.IsNullOrEmpty(capturedItem.Composer) ? "Varios" : capturedItem.Composer));
+                        SanitizeFolderName(string.IsNullOrEmpty(capturedItem?.Composer) ? "Varios" : capturedItem.Composer));
 
                     var sourceKey = (capturedItem?.Source ?? string.Empty).Trim();
                     var (resolvedCookie, resolvedUa) = cookieResolver?.Invoke(sourceKey) ?? (null, null);
@@ -392,12 +428,13 @@ public class DownloadService
                 }
                 finally
                 {
-                    sem.Release();
+                    capturedSem.Release();
                 }
             }, ct));
         }
 
         await Task.WhenAll(tasks).ConfigureAwait(false);
+        foreach (var s in sourceSems.Values) s.Dispose();
         return new BatchResult { Total = jobList.Count, Ok = ok, Failed = failed, Skipped = skipped, Cancelled = cancelled, BytesDownloaded = bytesDownloaded };
     }
 
@@ -548,7 +585,7 @@ public class DownloadService
                 };
                 using var p = Process.Start(vPsi);
                 versionOutput = p?.StandardOutput.ReadToEnd() ?? string.Empty;
-                p?.WaitForExit();
+                p?.WaitForExit(3000);  // curl --version is instant; cap at 3s to avoid blocking
             }
             catch { }
 
@@ -720,21 +757,17 @@ public class DownloadService
             return null;
 
         // meta refresh: <meta http-equiv="refresh" content="0;url=...">
-        var meta = Regex.Match(html,
-            "<meta[^>]*http-equiv=[\"']?refresh[\"']?[^>]*content=[\"'][^\"']*url=([^\"'>]+)",
-            RegexOptions.IgnoreCase);
+        var meta = s_metaRefresh.Match(html);
         if (meta.Success)
             return MakeAbsoluteUrl(WebUtility.HtmlDecode(meta.Groups[1].Value), baseUrl);
 
         // JS redirects comunes
-        var js = Regex.Match(html,
-            "(?:window\\.location(?:\\.href)?|location\\.href)\\s*=\\s*[\"']([^\"']+)[\"']",
-            RegexOptions.IgnoreCase);
+        var js = s_jsRedirect.Match(html);
         if (js.Success)
             return MakeAbsoluteUrl(WebUtility.HtmlDecode(js.Groups[1].Value), baseUrl);
 
         // Fallback: primer href que apunte a PDF o endpoints de descarga directa.
-        var hrefs = Regex.Matches(html, "href=[\"']([^\"']+)[\"']", RegexOptions.IgnoreCase);
+        var hrefs = s_hrefLinks.Matches(html);
         foreach (Match m in hrefs)
         {
             var href = WebUtility.HtmlDecode(m.Groups[1].Value);
