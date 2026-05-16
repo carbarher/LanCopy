@@ -5,6 +5,7 @@ using System.Collections.Concurrent;
 using System.Collections.ObjectModel;
 using System.ComponentModel;
 using System.Diagnostics;
+using System.Globalization;
 using System.IO.Compression;
 using System.IO;
 using System.Text;
@@ -96,12 +97,46 @@ public partial class MainWindow : Window, IAsyncDisposable
     private readonly string _audiverisTimeoutStrikesPath = Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
         "ScoreDown", "audiveris-timeout-strikes.json");
+    private readonly string _audiverisSuccessStreakPath = Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+        "ScoreDown", "audiveris-success-streaks.json");
+    private readonly string _audiverisAllVariantsFailedPath = Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+        "ScoreDown", "audiveris-all-variants-failed.json");
     private readonly string _audiverisTelemetryPath = Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
         "ScoreDown", "audiveris-timeout-telemetry.json");
     private readonly string _oemerTelemetryPath = Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
         "ScoreDown", "oemer-timeout-telemetry.json");
+    private readonly string _omrMetricsLastPath = Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+        "ScoreDown", "omr-metrics-last.json");
+    private readonly string _omrMetricsHistoryCsvPath = Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+        "ScoreDown", "omr-metrics-history.csv");
+    private readonly object _omrMetricsLock = new();
+    private readonly object _hostileFoldersPersistLock = new();
+    private int _hostileFoldersSaveWorkerActive;
+    private int _hostileFoldersSavePending;
+    private readonly string _hostileFoldersPersistPath = Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+        "ScoreDown", "hostile-folders.json");
+    private readonly string _omrConductorStatePath = Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+        "ScoreDown", "omr-conductor-state.json");
+    private readonly string _omrLearningSummaryPath = Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+        "ScoreDown", "omr-learning-summary-latest.txt");
+    private readonly string _omrBlackboxPath = Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+        "ScoreDown", "omr-conductor-blackbox.jsonl");
+    private readonly string _videoRenderTracePersistPath = Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+        "ScoreDown", "video-render-trace-metrics.json");
+    private readonly string _videoAdaptiveSettingsPath = Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+        "ScoreDown", "video-adaptive-settings.json");
     private bool _enableMutopia = ReadFeatureFlag("SCOREDOWN_ENABLE_MUTOPIA", true);
     private bool _enableMusopen = ReadFeatureFlag("SCOREDOWN_ENABLE_MUSOPEN", true);
     private bool _enableOpenScore = ReadFeatureFlag("SCOREDOWN_ENABLE_OPENSCORE", true);
@@ -129,6 +164,25 @@ public partial class MainWindow : Window, IAsyncDisposable
     private static readonly HashSet<string> AudiverisInputExtensions = new(StringComparer.OrdinalIgnoreCase) { ".pdf", ".png", ".jpg", ".jpeg", ".tif", ".tiff", ".bmp" };
     private static readonly HashSet<string> AudiverisOutputExtensions = new(StringComparer.OrdinalIgnoreCase) { ".mxl", ".xml", ".musicxml", ".mscz", ".mscx" };
     private readonly int _audiverisBatchSize = ReadFeatureFlagInt("SCOREDOWN_AUDIVERIS_BATCH", 100, 1, 10000);
+    private readonly bool _enableOmrCrossFallback = ReadFeatureFlag("SCOREDOWN_OMR_CROSS_FALLBACK", true);
+    private readonly bool _enableOmrRouteByInput = ReadFeatureFlag("SCOREDOWN_OMR_ROUTE_BY_INPUT", true);
+    private readonly bool _enableOmrAdaptiveParallel = ReadFeatureFlag("SCOREDOWN_OMR_ADAPTIVE_PARALLEL", true);
+    private readonly int _omrFallbackBudgetPercent = ReadFeatureFlagInt("SCOREDOWN_OMR_FALLBACK_BUDGET_PCT", 35, 0, 100);
+    private readonly int _audiverisQuarantinePhase2BudgetPercent = ReadFeatureFlagInt("SCOREDOWN_AUDIVERIS_QUARANTINE_PHASE2_BUDGET_PCT", 15, 0, 100);
+    private readonly bool _omrConductorEnabled = ReadFeatureFlag("SCOREDOWN_OMR_CONDUCTOR_ENABLED", true);
+    private readonly int _omrPredictRiskThreshold = ReadFeatureFlagInt("SCOREDOWN_OMR_PREDICT_RISK_THRESHOLD", 65, 20, 150);
+    private readonly int _omrGhostRetryMinMinutes = ReadFeatureFlagInt("SCOREDOWN_OMR_GHOST_RETRY_MIN_MIN", 360, 10, 10080);
+    private readonly int _omrGhostRetryMaxMinutes = ReadFeatureFlagInt("SCOREDOWN_OMR_GHOST_RETRY_MAX_MIN", 1080, 20, 20160);
+    private readonly int _omrGenomeAlertThreshold = ReadFeatureFlagInt("SCOREDOWN_OMR_GENOME_ALERT_THRESHOLD", 3, 1, 50);
+    private readonly int _omrNightWindowStartUtc = ReadFeatureFlagInt("SCOREDOWN_OMR_NIGHT_START_UTC", 1, 0, 23);
+    private readonly int _omrNightWindowEndUtc = ReadFeatureFlagInt("SCOREDOWN_OMR_NIGHT_END_UTC", 6, 0, 23);
+    private readonly int _omrExplorationPercent = ReadFeatureFlagInt("SCOREDOWN_OMR_EXPLORATION_PCT", 5, 0, 30);
+    private readonly bool _omrShadowModeEnabled = ReadFeatureFlag("SCOREDOWN_OMR_SHADOW_MODE", true);
+    private readonly int _omrCasinoMaxBonus = ReadFeatureFlagInt("SCOREDOWN_OMR_CASINO_MAX_BONUS", 3, 0, 10);
+    private readonly int _omrBlackboxMaxMb = ReadFeatureFlagInt("SCOREDOWN_OMR_BLACKBOX_MAX_MB", 20, 5, 500);
+    private readonly bool _omrAbortOnHighFail = ReadFeatureFlag("SCOREDOWN_OMR_ABORT_ON_HIGH_FAIL", true);
+    private readonly int _omrAbortFailRatePercent = ReadFeatureFlagInt("SCOREDOWN_OMR_ABORT_FAIL_RATE_PCT", 80, 50, 100);
+    private readonly int _omrAbortMinSamples = ReadFeatureFlagInt("SCOREDOWN_OMR_ABORT_MIN_SAMPLES", 12, 5, 500);
     private readonly int _audiverisTimeoutSeconds = ReadFeatureFlagInt("SCOREDOWN_AUDIVERIS_TIMEOUT_SEC", 300, 30, 7200);
     private readonly int _audiverisParallel = ReadFeatureFlagInt("SCOREDOWN_AUDIVERIS_PARALLEL", 3, 1, 8);
     private readonly int _audiverisPdfTimeoutMinSeconds = ReadFeatureFlagInt("SCOREDOWN_AUDIVERIS_TIMEOUT_PDF_MIN_SEC", 420, 60, 7200);
@@ -138,13 +192,20 @@ public partial class MainWindow : Window, IAsyncDisposable
     private readonly int _audiverisTimeoutStrikeBoostSeconds = ReadFeatureFlagInt("SCOREDOWN_AUDIVERIS_TIMEOUT_STRIKE_BOOST_SEC", 60, 0, 600);
     private readonly int _audiverisTimeoutCooldownMinutes = ReadFeatureFlagInt("SCOREDOWN_AUDIVERIS_TIMEOUT_COOLDOWN_MIN", 720, 10, 10080);
     private readonly int _audiverisStrikeDecayHours = ReadFeatureFlagInt("SCOREDOWN_AUDIVERIS_STRIKE_DECAY_HOURS", 48, 1, 8760);
+    private readonly int _audiverisQuarantineDays = ReadFeatureFlagInt("SCOREDOWN_AUDIVERIS_QUARANTINE_DAYS", 30, 1, 3650);
     private readonly ConcurrentDictionary<string, byte> _audiverisKnownPageFailures = new(StringComparer.OrdinalIgnoreCase);
     private bool _audiverisKnownPageFailuresDirty;
     private readonly ConcurrentDictionary<string, DateTime> _audiverisTimeoutFamilies = new(StringComparer.OrdinalIgnoreCase);
     private readonly ConcurrentDictionary<string, int> _audiverisTimeoutStrikes = new(StringComparer.OrdinalIgnoreCase);
     private readonly ConcurrentDictionary<string, DateTime> _audiverisStrikeLastUtc = new(StringComparer.OrdinalIgnoreCase);
+    private readonly ConcurrentDictionary<string, int> _audiverisSuccessStreakByFamily = new(StringComparer.OrdinalIgnoreCase);
+    private readonly int _audiverisSuccessStreakForDecay = ReadFeatureFlagInt("SCOREDOWN_AUDIVERIS_STRIKE_SUCCESS_DECAY_STREAK", 10, 2, 200);
+    private bool _audiverisSuccessStreakDirty;
     private bool _audiverisTimeoutFamiliesDirty;
     private bool _audiverisTimeoutStrikesDirty;
+    // Familias donde ambas variantes (a4+let) fallaron → saltar permanentemente hasta reset
+    private readonly ConcurrentDictionary<string, DateTime> _audiverisAllVariantsFailed = new(StringComparer.OrdinalIgnoreCase);
+    private bool _audiverisAllVariantsFailedDirty;
     private volatile bool _audiverisRunning;
     private CancellationTokenSource? _audiverisCts;
 
@@ -166,11 +227,19 @@ public partial class MainWindow : Window, IAsyncDisposable
     private readonly int _oemerPdfTimeoutPerMbSeconds = ReadFeatureFlagInt("SCOREDOWN_OEMER_TIMEOUT_PDF_PER_MB_SEC", 30, 0, 600);
     private readonly int _oemerPdfTimeoutPerPageSeconds = ReadFeatureFlagInt("SCOREDOWN_OEMER_TIMEOUT_PDF_PER_PAGE_SEC", 15, 0, 300);
     private readonly int _oemerPdfTimeoutMaxSeconds = ReadFeatureFlagInt("SCOREDOWN_OEMER_TIMEOUT_PDF_MAX_SEC", 3600, 120, 86400);
+    private readonly int _oemerPdfFailFastMinPages = ReadFeatureFlagInt("SCOREDOWN_OEMER_PDF_FAIL_FAST_MIN_PAGES", 10, 2, 5000);
+    private readonly int _oemerPdfFailFastMaxFails = ReadFeatureFlagInt("SCOREDOWN_OEMER_PDF_FAIL_FAST_MAX_FAILS", 6, 2, 5000);
+    private readonly int _oemerPdfFailFastFailRatePct = ReadFeatureFlagInt("SCOREDOWN_OEMER_PDF_FAIL_FAST_PCT", 80, 50, 100);
+    // 0 = sin límite; >0 = saltear PDFs con más páginas que el umbral antes de iniciar conversión
+    private readonly int _oemerPdfMaxPagesAbsolute = ReadFeatureFlagInt("SCOREDOWN_OEMER_PDF_MAX_PAGES_ABSOLUTE", 0, 0, 10000);
     private readonly int _oemerTimeoutStrikeBoostSeconds = ReadFeatureFlagInt("SCOREDOWN_OEMER_TIMEOUT_STRIKE_BOOST_SEC", 120, 0, 1200);
     private readonly int _oemerTimeoutCooldownMinutes = ReadFeatureFlagInt("SCOREDOWN_OEMER_TIMEOUT_COOLDOWN_MIN", 720, 10, 10080);
     private readonly int _oemerStrikeDecayHours = ReadFeatureFlagInt("SCOREDOWN_OEMER_STRIKE_DECAY_HOURS", 48, 1, 8760);
+    private readonly int _oemerTimeoutHeavyPct = ReadFeatureFlagInt("SCOREDOWN_OEMER_TIMEOUT_HEAVY_PCT", 35, 10, 100);
     private readonly ConcurrentDictionary<string, byte> _oemerKnownPageFailures = new(StringComparer.OrdinalIgnoreCase);
     private bool _oemerKnownPageFailuresDirty;
+    // Contadores acumulados de tipos de fallo de oemer — para diagnóstico al final del lote
+    private readonly ConcurrentDictionary<string, int> _oemerFailTypeCounters = new(StringComparer.OrdinalIgnoreCase);
     private readonly ConcurrentDictionary<string, DateTime> _oemerTimeoutFamilies = new(StringComparer.OrdinalIgnoreCase);
     private readonly ConcurrentDictionary<string, int> _oemerTimeoutStrikes = new(StringComparer.OrdinalIgnoreCase);
     private readonly ConcurrentDictionary<string, DateTime> _oemerStrikeLastUtc = new(StringComparer.OrdinalIgnoreCase);
@@ -178,6 +247,51 @@ public partial class MainWindow : Window, IAsyncDisposable
     private bool _oemerTimeoutStrikesDirty;
     private volatile bool _oemerRunning;
     private CancellationTokenSource? _oemerCts;
+    private int? _lastAudiverisRequestedBatchSize;
+    private int? _lastOemerRequestedBatchSize;
+    private double _audiverisFallbackBudgetScale = 1.0;
+    private double _oemerFallbackBudgetScale = 1.0;
+    private double _audiverisParallelScale = 1.0;
+    private double _oemerParallelScale = 1.0;
+    private int _oemerTimeoutHeavyStreak;
+    private int _audiverisTimeoutHeavyStreak;
+    // ── Hostile folder detection ──────────────────────────────────────────
+    private readonly ConcurrentDictionary<string, int> _hostileFolderConsecutiveFails = new(StringComparer.OrdinalIgnoreCase);
+    private readonly ConcurrentDictionary<string, DateTime> _hostileFolderConservativeUntil = new(StringComparer.OrdinalIgnoreCase);
+    private readonly ConcurrentDictionary<string, int> _omrFamilyEngineScore = new(StringComparer.OrdinalIgnoreCase);
+    private readonly ConcurrentDictionary<string, int> _omrFamilyRiskScore = new(StringComparer.OrdinalIgnoreCase);
+    private readonly ConcurrentDictionary<string, int> _omrFamilyTimeoutCredits = new(StringComparer.OrdinalIgnoreCase);
+    private readonly ConcurrentDictionary<string, int> _omrFamilyCreditDebt = new(StringComparer.OrdinalIgnoreCase);
+    private readonly ConcurrentDictionary<string, int> _omrFamilyWinStreak = new(StringComparer.OrdinalIgnoreCase);
+    private readonly ConcurrentDictionary<string, DateTime> _omrGhostRetryUntil = new(StringComparer.OrdinalIgnoreCase);
+    private readonly ConcurrentDictionary<string, int> _omrGenomePressure = new(StringComparer.OrdinalIgnoreCase);
+    private readonly ConcurrentDictionary<string, int> _omrGenomeEngineSwissScore = new(StringComparer.OrdinalIgnoreCase);
+    private readonly ConcurrentDictionary<string, double> _omrFolderHeatScore = new(StringComparer.OrdinalIgnoreCase);
+    private readonly ConcurrentDictionary<string, int> _omrSkipReasonCounters = new(StringComparer.OrdinalIgnoreCase);
+    private readonly object _omrBlackboxLock = new();
+    private long _omrShadowDecisions;
+    private long _omrShadowDivergences;
+    private readonly int _hostileFolderFailRatePct = ReadFeatureFlagInt("SCOREDOWN_HOSTILE_FOLDER_FAIL_PCT", 70, 50, 100);
+    private readonly int _hostileFolderMinSamples = ReadFeatureFlagInt("SCOREDOWN_HOSTILE_FOLDER_MIN_SAMPLES", 8, 1, 500);
+    private readonly int _hostileFolderConservativeMinutes = ReadFeatureFlagInt("SCOREDOWN_HOSTILE_FOLDER_CONSERVATIVE_MIN", 30, 5, 1440);
+    private readonly int _omrMemoryPressurePct = ReadFeatureFlagInt("SCOREDOWN_OMR_MEMORY_PRESSURE_PCT", 80, 50, 98);
+    private readonly int _omrMemoryPressureParallelReducePct = ReadFeatureFlagInt("SCOREDOWN_OMR_MEMORY_PARALLEL_REDUCE_PCT", 25, 5, 80);
+    private readonly int _omrMemoryPressureHysteresisPct = ReadFeatureFlagInt("SCOREDOWN_OMR_MEMORY_PRESSURE_HYSTERESIS_PCT", 8, 2, 30);
+    private int _audiverisMemoryPressureMode;
+    private int _oemerMemoryPressureMode;
+    private readonly int _omrHealthHistoryN = ReadFeatureFlagInt("SCOREDOWN_OMR_HEALTH_N", 10, 3, 200);
+    private readonly int _omrMetricsCsvMaxMb = ReadFeatureFlagInt("SCOREDOWN_OMR_METRICS_CSV_MAX_MB", 5, 1, 500);
+    private readonly int _omrHealthCacheTtlMs = ReadFeatureFlagInt("SCOREDOWN_OMR_HEALTH_CACHE_MS", 2000, 200, 30000);
+    private readonly object _omrHealthCacheLock = new();
+    private readonly Dictionary<string, string> _omrHealthCache = new(StringComparer.OrdinalIgnoreCase);
+    private DateTime _omrHealthCacheAtUtc = DateTime.MinValue;
+    private long _omrHealthCacheCsvWriteTicks = -1;
+    private volatile string? _currentAudiverisBatchFolder;
+    private volatile string? _currentOemerBatchFolder;
+
+    /// <summary>Engines that have already run at least one batch this session (warmup phase expired).</summary>
+    private readonly ConcurrentDictionary<string, bool> _warmupDoneEngines = new(StringComparer.OrdinalIgnoreCase);
+    private readonly bool _enableWarmupTimeout = ReadFeatureFlag("SCOREDOWN_OMR_WARMUP_TIMEOUT", true);
 
     private PartituraItem? _contextItem;  // item bajo clic derecho
     private readonly ConcurrentDictionary<string, byte> _pausedQueueFiles = new(StringComparer.OrdinalIgnoreCase);
@@ -253,6 +367,10 @@ public partial class MainWindow : Window, IAsyncDisposable
         LoadAudiverisPageFailures();
         LoadAudiverisTimeoutFamilies();
         LoadAudiverisTimeoutStrikes();
+        LoadAudiverisSuccessStreaks();
+        LoadAudiverisAllVariantsFailed();
+        LoadHostileFolders();
+        LoadOmrConductorState();
         UpdateAudiverisStatus();
         RefreshHistoryCombo();
         UpdateCacheStats();
@@ -264,8 +382,30 @@ public partial class MainWindow : Window, IAsyncDisposable
         LoadOemerTimeoutStrikes();
         UpdateOemerStatus();
         lstOemerLog.ItemsSource = _oemerLog;
+        LoadPersistedVideoRenderTraces();  // Cargar trazas de render para diagnóstico
+        LoadVideoAdaptiveSettings();
         UpdateSessionStats();
         UpdateSourceDashboard();
+        // Warm-up oemer en background para pre-importar módulos Python
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                var (exe, prefixArgs) = ResolveOemerCommand();
+                if (string.IsNullOrWhiteSpace(exe)) return;
+                var warmupArgs = new List<string>(prefixArgs.Length + 1);
+                warmupArgs.AddRange(prefixArgs);
+                warmupArgs.Add("--help");
+                var psi = BuildProcessStartInfoPortable(exe, warmupArgs);
+                using var p = System.Diagnostics.Process.Start(psi);
+                if (p == null) return;
+                using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(60));
+                await p.WaitForExitAsync(cts.Token).ConfigureAwait(false);
+                _warmupDoneEngines.TryAdd("oemer", true);
+                await Dispatcher.InvokeAsync(() => Log("✅ oemer warm-up completado."));
+            }
+            catch { /* warm-up fallida → sin impacto */ }
+        });
     }
 
     private void Window_PreviewKeyDown(object sender, WinInput.KeyEventArgs e)
@@ -363,9 +503,13 @@ public partial class MainWindow : Window, IAsyncDisposable
         SaveAudiverisPageFailures();
         SaveAudiverisTimeoutFamilies();
         SaveAudiverisTimeoutStrikes();
+        SaveAudiverisSuccessStreaks();
+        SaveAudiverisAllVariantsFailed();
         SaveOemerPageFailures();
         SaveOemerTimeoutFamilies();
         SaveOemerTimeoutStrikes();
+        SaveOmrConductorState();
+        WriteOmrLearningSummary();
 
         // Production cleanup: close marker + retention cleanup
         _fileLogger?.Log("=== ScoreDown Closed ===");
@@ -944,6 +1088,246 @@ public partial class MainWindow : Window, IAsyncDisposable
         BtnDownloadAll_Click(sender, e);
     }
 
+    private async void BtnValidatePdfs_Click(object sender, RoutedEventArgs e)
+    {
+        var destFolder = txtDestFolder.Text?.Trim();
+        if (string.IsNullOrWhiteSpace(destFolder) || !Directory.Exists(destFolder))
+        {
+            DarkDialogService.ShowMessage(this, "Selecciona una carpeta de destino válida.", "Comprobar PDF", MessageBoxButton.OK, MessageBoxImage.Warning);
+            return;
+        }
+
+        // Validar acceso a la carpeta
+        try
+        {
+            var testFile = Path.Combine(destFolder, ".scoredown-write-test");
+            File.WriteAllText(testFile, "test");
+            File.Delete(testFile);
+        }
+        catch (UnauthorizedAccessException)
+        {
+            DarkDialogService.ShowMessage(this, "Permisos insuficientes en la carpeta destino.", "Comprobar PDF", MessageBoxButton.OK, MessageBoxImage.Error);
+            return;
+        }
+        catch { /* Ignorar otros errores en el test */ }
+
+        btnValidatePdfs.IsEnabled = false;
+
+        // Preguntar si dry-run
+        var dryRunMsg = DarkDialogService.ShowMessage(
+            this,
+            "¿Ver vista previa sin borrar archivos?\n\n✅ Sí = mostrar qué se borraría\n❌ No = borrar directamente",
+            "Comprobar PDF",
+            MessageBoxButton.YesNo,
+            MessageBoxImage.Question);
+
+        var dryRun = dryRunMsg == MessageBoxResult.Yes;
+        var modeLabel = dryRun ? "[VISTA PREVIA]" : string.Empty;
+
+        Log($"🔍 {modeLabel} Comprobando PDFs en {destFolder}...");
+
+        try
+        {
+            var validator = new PdfValidationService();
+            var progress = new Progress<(string message, int done, int total)>((item) =>
+            {
+                Dispatcher.Invoke(() =>
+                {
+                    Log(item.message);
+                });
+            });
+
+            var result = await validator.ValidateAndDeletePdfsAsync(destFolder, progress, dryRun, CancellationToken.None).ConfigureAwait(false);
+
+            Dispatcher.Invoke(() =>
+            {
+                var summary = new System.Text.StringBuilder();
+                summary.AppendLine($"📊 {modeLabel} Resumen de validación:");
+                summary.AppendLine($"  • Total PDFs encontrados: {result.TotalPdfs}");
+                summary.AppendLine($"  • PDFs inválidos: {result.InvalidPdfs}");
+                summary.AppendLine($"  • PDFs ya procesados: {result.ProcessedPdfs}");
+
+                if (!dryRun)
+                {
+                    summary.AppendLine($"  • Borrados inválidos: {result.DeletedInvalid} ✅");
+                    summary.AppendLine($"  • Borrados procesados: {result.DeletedProcessed} ✅");
+                    summary.AppendLine($"  • Espacio liberado: {FormatBytes(result.BytesFreed)}");
+
+                    if (result.DeletionErrors.Count > 0)
+                    {
+                        summary.AppendLine($"\n⚠️ Errores de borrado ({result.DeletionErrors.Count}):");
+                        foreach (var error in result.DeletionErrors.Take(10))
+                        {
+                            summary.AppendLine($"  • {Path.GetFileName(error.FilePath)}: {error.Reason} [{error.DeletionError}]");
+                        }
+                        if (result.DeletionErrors.Count > 10)
+                            summary.AppendLine($"  ... y {result.DeletionErrors.Count - 10} más");
+                    }
+                }
+                else
+                {
+                    summary.AppendLine($"  • Se borrarían inválidos: {result.DeletedInvalid}");
+                    summary.AppendLine($"  • Se borrarían procesados: {result.DeletedProcessed}");
+                    summary.AppendLine($"  • Espacio a liberar: {FormatBytes(result.BytesFreed)}");
+                }
+
+                Log(summary.ToString());
+
+                if (result.InvalidPdfs + result.ProcessedPdfs == 0)
+                {
+                    DarkDialogService.ShowMessage(
+                        this,
+                        "✅ Todos los PDFs son válidos y ninguno está procesado.",
+                        "Validación completada",
+                        MessageBoxButton.OK,
+                        MessageBoxImage.Information);
+                }
+                else if (!dryRun && result.DeletionErrors.Count == 0)
+                {
+                    DarkDialogService.ShowMessage(
+                        this,
+                        summary.ToString(),
+                        "Validación completada",
+                        MessageBoxButton.OK,
+                        MessageBoxImage.Information);
+                }
+                else if (!dryRun && result.DeletionErrors.Count > 0)
+                {
+                    DarkDialogService.ShowMessage(
+                        this,
+                        summary.ToString(),
+                        "Validación con errores",
+                        MessageBoxButton.OK,
+                        MessageBoxImage.Warning);
+                }
+                else
+                {
+                    DarkDialogService.ShowMessage(
+                        this,
+                        summary.ToString(),
+                        "Vista previa de borrado",
+                        MessageBoxButton.OK,
+                        MessageBoxImage.Information);
+                }
+            });
+        }
+        catch (OperationCanceledException)
+        {
+            Log("⏹ Validación cancelada");
+        }
+        catch (Exception ex)
+        {
+            Log($"❌ Error validando PDFs: {ex.Message}");
+            DarkDialogService.ShowMessage(this, $"Error: {ex.Message}", "Comprobar PDF", MessageBoxButton.OK, MessageBoxImage.Error);
+        }
+        finally
+        {
+            btnValidatePdfs.IsEnabled = true;
+        }
+    }
+
+    private async void BtnValidateOnly_Click(object sender, RoutedEventArgs e)
+    {
+        var destFolder = txtDestFolder.Text?.Trim();
+        if (string.IsNullOrWhiteSpace(destFolder) || !Directory.Exists(destFolder))
+        {
+            DarkDialogService.ShowMessage(this, "Selecciona una carpeta de destino válida.", "Solo Validar", MessageBoxButton.OK, MessageBoxImage.Warning);
+            return;
+        }
+
+        btnValidateOnly.IsEnabled = false;
+        Log($"🔍 Validando PDFs en {destFolder} (solo diagnóstico, sin borrar)...");
+
+        try
+        {
+            var validator = new PdfValidationService();
+            var progress = new Progress<(string message, int done, int total)>((item) =>
+            {
+                Dispatcher.Invoke(() =>
+                {
+                    Log(item.message);
+                });
+            });
+
+            var result = await validator.ValidatePdfsAsync(destFolder, progress, CancellationToken.None).ConfigureAwait(false);
+
+            Dispatcher.Invoke(() =>
+            {
+                var summary = new System.Text.StringBuilder();
+                summary.AppendLine($"📊 Reporte de Validación (diagnóstico):");
+                summary.AppendLine($"  • Total PDFs encontrados: {result.TotalPdfs}");
+                summary.AppendLine($"  • PDFs inválidos: {result.InvalidPdfs}");
+                summary.AppendLine($"  • PDFs ya procesados: {result.ProcessedPdfs}");
+
+                if (result.InvalidReasons.Count > 0)
+                {
+                    summary.AppendLine($"\n  Razones de invalideación:");
+                    foreach (var kvp in result.InvalidReasons.OrderByDescending(x => x.Value))
+                    {
+                        summary.AppendLine($"    • {kvp.Key}: {kvp.Value} archivo(s)");
+                    }
+                }
+
+                if (result.InvalidFiles.Count > 0)
+                {
+                    summary.AppendLine($"\n  PDFs inválidos:");
+                    foreach (var file in result.InvalidFiles.Take(10))
+                    {
+                        summary.AppendLine($"    • {Path.GetFileName(file)}");
+                    }
+                    if (result.InvalidFiles.Count > 10)
+                        summary.AppendLine($"    ... y {result.InvalidFiles.Count - 10} más");
+                }
+
+                if (result.ProcessedFiles.Count > 0)
+                {
+                    summary.AppendLine($"\n  PDFs ya procesados (se pueden borrar):");
+                    foreach (var file in result.ProcessedFiles.Take(10))
+                    {
+                        summary.AppendLine($"    • {Path.GetFileName(file)}");
+                    }
+                    if (result.ProcessedFiles.Count > 10)
+                        summary.AppendLine($"    ... y {result.ProcessedFiles.Count - 10} más");
+                }
+
+                Log(summary.ToString());
+
+                if (result.InvalidPdfs + result.ProcessedPdfs == 0)
+                {
+                    DarkDialogService.ShowMessage(
+                        this,
+                        "✅ Todos los PDFs son válidos y ninguno está procesado.",
+                        "Validación completada",
+                        MessageBoxButton.OK,
+                        MessageBoxImage.Information);
+                }
+                else
+                {
+                    DarkDialogService.ShowMessage(
+                        this,
+                        summary.ToString(),
+                        "Diagnóstico de PDFs",
+                        MessageBoxButton.OK,
+                        MessageBoxImage.Information);
+                }
+            });
+        }
+        catch (OperationCanceledException)
+        {
+            Log("⏹ Validación cancelada");
+        }
+        catch (Exception ex)
+        {
+            Log($"❌ Error validando PDFs: {ex.Message}");
+            DarkDialogService.ShowMessage(this, $"Error: {ex.Message}", "Solo Validar", MessageBoxButton.OK, MessageBoxImage.Error);
+        }
+        finally
+        {
+            btnValidateOnly.IsEnabled = true;
+        }
+    }
+
+
     /// <summary>
     /// Fase 1: cataloga metadatos de la fuente seleccionada (sin añadir a _allResults para evitar
     ///         O(N²) y freezes de UI con 150k+ items).
@@ -1111,6 +1495,8 @@ public partial class MainWindow : Window, IAsyncDisposable
             int totalCancelledFiles = 0;
             int totalAutoStoppedItems = 0;
             int consecutiveErrors = 0;
+            int musopenHtmlErrorCount = 0;
+            int musopenSessionInvalid = 0;
             var sourceStats = new ConcurrentDictionary<string, SourceStats>(StringComparer.OrdinalIgnoreCase);
             var errorTypes = new ConcurrentDictionary<string, int>(StringComparer.OrdinalIgnoreCase);
             var cpdlWindow = new Queue<bool>();
@@ -1245,6 +1631,7 @@ public partial class MainWindow : Window, IAsyncDisposable
                     var maxParallel = GetSourceParallelism(sourceName);
                     var minParallel = sourceName == "CPDL" ? 1 : 2;
                     var currentParallel = maxParallel;
+                    var parallelRecoveryCooldownBatches = 0;
 
                     var sourceStatsEntry = GetStats(sourceStats, sourceName);
                     sourceStatsEntry.CurrentParallelism = currentParallel;
@@ -1273,6 +1660,16 @@ public partial class MainWindow : Window, IAsyncDisposable
 
                             var stats = GetStats(sourceStats, item.Source);
                             System.Threading.Interlocked.Increment(ref stats.ItemsSeen);
+
+                            if (item.Source == "Musopen" && System.Threading.Volatile.Read(ref musopenSessionInvalid) == 1)
+                            {
+                                System.Threading.Interlocked.Increment(ref stats.CancelledItems);
+                                System.Threading.Interlocked.Increment(ref totalCancelledItems);
+                                System.Threading.Interlocked.Increment(ref totalAutoStoppedItems);
+                                System.Threading.Interlocked.Increment(ref batchProcessed);
+                                ReportProgressEvery50(silent: true);
+                                return;
+                            }
 
                             if (item.Source == "CPDL" && System.Threading.Volatile.Read(ref cpdlAutoStopActive) == 1)
                             {
@@ -1380,6 +1777,8 @@ public partial class MainWindow : Window, IAsyncDisposable
                                             System.Threading.Interlocked.Add(ref stats.DownloadedBytes, result.BytesDownloaded);
                                             System.Threading.Interlocked.Increment(ref totalDownloadedFiles);
                                         }
+                                        if (item.Source == "Musopen")
+                                            System.Threading.Interlocked.Exchange(ref musopenHtmlErrorCount, 0);
                                         System.Threading.Volatile.Write(ref consecutiveErrors, 0);
                                     }
                                     else if (result.Cancelled)
@@ -1396,6 +1795,22 @@ public partial class MainWindow : Window, IAsyncDisposable
                                         System.Threading.Interlocked.Increment(ref stats.FailedFiles);
                                         System.Threading.Interlocked.Increment(ref totalFailedFiles);
                                         AddErrorType(errorTypes, result.Error);
+
+                                        if (item.Source == "Musopen" &&
+                                            string.Equals(result.Error, "HTML (bot-check/sesión caducada)", StringComparison.OrdinalIgnoreCase))
+                                        {
+                                            var htmlErrors = System.Threading.Interlocked.Increment(ref musopenHtmlErrorCount);
+                                            if (htmlErrors == 1)
+                                                progress.Report("⚠️ Musopen devolvió HTML de protección; se intentarán más ítems con backoff.");
+
+                                            if (htmlErrors >= 8 && System.Threading.Interlocked.CompareExchange(ref musopenSessionInvalid, 1, 0) == 0)
+                                            {
+                                                _musopen.ClearSession();
+                                                AddErrorType(errorTypes, "Musopen sesión inválida (auto-stop)");
+                                                progress.Report("🛑 Musopen auto-stop: demasiados HTML bot-check/sesión caducada. Reabre sesión para continuar Musopen.");
+                                            }
+                                        }
+
                                         var errors = System.Threading.Interlocked.Increment(ref consecutiveErrors);
                                         if (errors >= 5)
                                             await Task.Delay(1200, itemCt).ConfigureAwait(false);
@@ -1448,9 +1863,25 @@ public partial class MainWindow : Window, IAsyncDisposable
                             var previous = currentParallel;
 
                             if (hardRatio >= 0.18 && currentParallel > minParallel)
+                            {
                                 currentParallel--;
+                                parallelRecoveryCooldownBatches = 3;
+                            }
                             else if (hardRatio <= 0.04 && currentParallel < maxParallel)
-                                currentParallel++;
+                            {
+                                if (parallelRecoveryCooldownBatches > 0)
+                                {
+                                    parallelRecoveryCooldownBatches--;
+                                }
+                                else
+                                {
+                                    currentParallel++;
+                                }
+                            }
+                            else if (parallelRecoveryCooldownBatches > 0)
+                            {
+                                parallelRecoveryCooldownBatches--;
+                            }
 
                             if (currentParallel != previous)
                             {
@@ -1919,9 +2350,6 @@ public partial class MainWindow : Window, IAsyncDisposable
 
     private void ApplyFilter()
     {
-        bool onlyPdf = chkOnlyPdf.IsChecked == true;
-        bool onlyMidi = chkOnlyMidi.IsChecked == true;
-        bool onlyXml = chkOnlyXml.IsChecked == true;
         bool onlyClassical = chkOnlyClassical.IsChecked == true;
         var tagFilter = txtTagFilter.Text?.Trim() ?? string.Empty;
         var titleQuery = txtTitleSearch.Text?.Trim() ?? string.Empty;
@@ -1938,19 +2366,6 @@ public partial class MainWindow : Window, IAsyncDisposable
             if (!string.IsNullOrWhiteSpace(tagFilter) && !item.UserTag.Contains(tagFilter, StringComparison.OrdinalIgnoreCase)) return false;
             if (!string.IsNullOrWhiteSpace(titleQuery) && !item.Title.Contains(titleQuery, StringComparison.OrdinalIgnoreCase)) return false;
             if (!string.IsNullOrWhiteSpace(composerQuery) && !item.Composer.Contains(composerQuery, StringComparison.OrdinalIgnoreCase)) return false;
-            if (onlyPdf || onlyMidi || onlyXml)
-            {
-                var hasPdf = item.Files.Any(f => string.Equals(f.Format, "PDF", StringComparison.OrdinalIgnoreCase));
-                var hasMidi = item.Files.Any(f => string.Equals(f.Format, "MIDI", StringComparison.OrdinalIgnoreCase));
-                var hasXml = item.Files.Any(f =>
-                    string.Equals(f.Format, "XML", StringComparison.OrdinalIgnoreCase)
-                    || string.Equals(f.Format, "MXL", StringComparison.OrdinalIgnoreCase)
-                    || string.Equals(f.Format, "MUSICXML", StringComparison.OrdinalIgnoreCase)
-                    || string.Equals(f.Format, "MSCZ", StringComparison.OrdinalIgnoreCase)
-                    || string.Equals(f.Format, "MSCX", StringComparison.OrdinalIgnoreCase));
-                bool formatOk = (onlyPdf && hasPdf) || (onlyMidi && hasMidi) || (onlyXml && hasXml);
-                if (!formatOk) return false;
-            }
             return true;
         };
         _resultsView.View.Filter = filterPredicate;
@@ -2125,6 +2540,134 @@ public partial class MainWindow : Window, IAsyncDisposable
         return value;
     }
 
+    private static string[] ParseCsvLine(string line)
+    {
+        if (string.IsNullOrEmpty(line)) return [string.Empty];
+        var cols = new List<string>();
+        var sb = new StringBuilder(line.Length);
+        var inQuotes = false;
+        for (var i = 0; i < line.Length; i++)
+        {
+            var c = line[i];
+            if (c == '"')
+            {
+                if (inQuotes && i + 1 < line.Length && line[i + 1] == '"')
+                {
+                    sb.Append('"');
+                    i++;
+                }
+                else
+                {
+                    inQuotes = !inQuotes;
+                }
+                continue;
+            }
+
+            if (c == ',' && !inQuotes)
+            {
+                cols.Add(sb.ToString());
+                sb.Clear();
+                continue;
+            }
+
+            sb.Append(c);
+        }
+
+        cols.Add(sb.ToString());
+        return [.. cols];
+    }
+
+    private static string BuildTimestampedArchivePath(string csvPath, string stamp)
+    {
+        var dir = Path.GetDirectoryName(csvPath) ?? string.Empty;
+        var baseName = Path.GetFileNameWithoutExtension(csvPath);
+        var ext = Path.GetExtension(csvPath);
+        var candidate = Path.Combine(dir, $"{baseName}_{stamp}{ext}");
+        var seq = 1;
+        while (File.Exists(candidate))
+        {
+            candidate = Path.Combine(dir, $"{baseName}_{stamp}_{seq:00}{ext}");
+            seq++;
+        }
+
+        return candidate;
+    }
+
+    private string? ResolveCurrentOmrRootDir(string engine)
+    {
+        string? liveFolder = engine.Equals("audiveris", StringComparison.OrdinalIgnoreCase)
+            ? _currentAudiverisBatchFolder
+            : _currentOemerBatchFolder;
+        if (!string.IsNullOrWhiteSpace(liveFolder))
+            return liveFolder;
+
+        var selected = txtDestFolder?.Text?.Trim();
+        return string.IsNullOrWhiteSpace(selected) ? null : selected;
+    }
+
+    private static long GetCsvLastWriteTicks(string path)
+    {
+        try
+        {
+            return File.Exists(path) ? File.GetLastWriteTimeUtc(path).Ticks : -1;
+        }
+        catch
+        {
+            return -1;
+        }
+    }
+
+    private string BuildOmrHealthCacheKey(string engine, int take, string? rootDir)
+    {
+        var normalizedRoot = string.IsNullOrWhiteSpace(rootDir)
+            ? string.Empty
+            : rootDir.Trim().ToLowerInvariant();
+        return $"{engine.Trim().ToLowerInvariant()}|{take}|{normalizedRoot}";
+    }
+
+    private bool TryGetCachedOmrHealthLine(string key, out string value)
+    {
+        lock (_omrHealthCacheLock)
+        {
+            if ((DateTime.UtcNow - _omrHealthCacheAtUtc) > TimeSpan.FromMilliseconds(_omrHealthCacheTtlMs))
+            {
+                value = string.Empty;
+                return false;
+            }
+
+            var writeTicks = GetCsvLastWriteTicks(_omrMetricsHistoryCsvPath);
+            if (writeTicks != _omrHealthCacheCsvWriteTicks)
+            {
+                value = string.Empty;
+                return false;
+            }
+
+            return _omrHealthCache.TryGetValue(key, out value!);
+        }
+    }
+
+    private void SaveCachedOmrHealthLine(string key, string value)
+    {
+        lock (_omrHealthCacheLock)
+        {
+            if (_omrHealthCache.Count >= 64)
+                _omrHealthCache.Clear();
+            _omrHealthCache[key] = value;
+            _omrHealthCacheCsvWriteTicks = GetCsvLastWriteTicks(_omrMetricsHistoryCsvPath);
+            _omrHealthCacheAtUtc = DateTime.UtcNow;
+        }
+    }
+
+    private void InvalidateOmrHealthCache()
+    {
+        lock (_omrHealthCacheLock)
+        {
+            _omrHealthCache.Clear();
+            _omrHealthCacheAtUtc = DateTime.MinValue;
+            _omrHealthCacheCsvWriteTicks = -1;
+        }
+    }
+
     // ── Descarga ──────────────────────────────────────────────────────────
 
     private void BtnChooseFolder_Click(object sender, RoutedEventArgs e)
@@ -2163,9 +2706,7 @@ public partial class MainWindow : Window, IAsyncDisposable
         }
 
         // Construir lista de trabajos: todas las obras seleccionadas, todos sus archivos
-        bool onlyPdf = chkOnlyPdf.IsChecked == true;
-        bool onlyMidi = chkOnlyMidi.IsChecked == true;
-        bool onlyXml = chkOnlyXml.IsChecked == true;
+        // Incluir PDF: puede convertirse después para flujo de vídeo.
 
         var selectedItems = _filtered.Where(i => i.IsSelected).ToList();
         var missingFilesItems = selectedItems
@@ -2212,19 +2753,6 @@ public partial class MainWindow : Window, IAsyncDisposable
 
         var jobs = selectedItems
             .SelectMany(i => i.Files
-                .Where(f =>
-                {
-                    if (!onlyPdf && !onlyMidi && !onlyXml) return true;
-                    var isPdf = string.Equals(f.Format, "PDF", StringComparison.OrdinalIgnoreCase);
-                    var isMidi = string.Equals(f.Format, "MIDI", StringComparison.OrdinalIgnoreCase);
-                    var isXml =
-                        string.Equals(f.Format, "XML", StringComparison.OrdinalIgnoreCase)
-                        || string.Equals(f.Format, "MXL", StringComparison.OrdinalIgnoreCase)
-                        || string.Equals(f.Format, "MUSICXML", StringComparison.OrdinalIgnoreCase)
-                        || string.Equals(f.Format, "MSCZ", StringComparison.OrdinalIgnoreCase)
-                        || string.Equals(f.Format, "MSCX", StringComparison.OrdinalIgnoreCase);
-                    return (onlyPdf && isPdf) || (onlyMidi && isMidi) || (onlyXml && isXml);
-                })
                 .Select(f => (item: i, file: f)))
             .ToList();
 
@@ -2377,7 +2905,22 @@ public partial class MainWindow : Window, IAsyncDisposable
         var familyPending = SelectFirstPerAudiverisFamily(pending, out var skippedFamilyDuplicates, out var familySizes);
         if (skippedFamilyDuplicates > 0)
             Log($"ℹ️ Auto-Audiveris: {skippedFamilyDuplicates} archivo(s) omitidos por duplicado de familia (a4/let).");
+        var autoAudiverisPrepared = ArrangeBatchByConductor("audiveris", familyPending, out var autoAudiverisRiskSkips, out var autoAudiverisGhostSkips);
+        if (autoAudiverisRiskSkips > 0)
+            Log($"🧠 Auto-Audiveris: {autoAudiverisRiskSkips} archivo(s) omitidos por predictor de riesgo.");
+        if (autoAudiverisGhostSkips > 0)
+            Log($"👻 Auto-Audiveris: {autoAudiverisGhostSkips} archivo(s) aplazados por replay fantasma.");
+        familyPending = autoAudiverisPrepared;
+        if (familyPending.Count == 0)
+        {
+            Log("🎼 Auto-Audiveris: sin candidatos tras predictor/replay.");
+            return;
+        }
 
+        _currentAudiverisBatchFolder = destFolder;
+        var warmupApplied = _enableWarmupTimeout && !_warmupDoneEngines.ContainsKey("audiveris");
+        var effectiveAudiverisParallel = GetEffectiveAudiverisParallel();
+        if (IsHostileFolder(destFolder)) Log($"⚠️ Auto-Audiveris: carpeta hostil activa para '{destFolder}' → perfil conservador.");
         Log($"🎼 Auto-convertir: procesando {familyPending.Count} archivo(s) con Audiveris...");
         _audiverisLog.Clear();
         _audiverisRunning = true;
@@ -2387,13 +2930,49 @@ public partial class MainWindow : Window, IAsyncDisposable
 
         try
         {
+            var runSw = Stopwatch.StartNew();
             var r = await RunAudiverisBatchCoreAsync(familyPending, audiverisExe, "Auto-Audiveris", destFolder, _audiverisCts.Token, familySizes);
+            runSw.Stop();
             var converted = r.Ok + r.Partial;
             var msg = $"🎼 Auto-Audiveris: {converted}/{familyPending.Count} convertidas" +
                       $" | ✅ {r.Ok} completas, ⚠️ {r.Partial} parciales, ❌ {r.Fail} sin salida" +
-                      (r.SkippedByFamilyTimeout > 0 ? $", ⏭️ {r.SkippedByFamilyTimeout} omitidos" : string.Empty);
+                      (r.SkippedByFamilyTimeout > 0 ? $", ⏭️ {r.SkippedByFamilyTimeout} omitidos" : string.Empty) +
+                      (r.FallbackOemerOk > 0 ? $", ↪️ {r.FallbackOemerOk} fallback oemer" : string.Empty) +
+                      (r.FallbackBudgetSkips > 0 ? $", 🧯 {r.FallbackBudgetSkips} fallback omitidos por presupuesto" : string.Empty) +
+                      (r.FallbackAttempts > 0 ? $", 🔁 {r.FallbackAttempts} intentos fallback ({r.EffectiveBudgetPercent}%)" : string.Empty) +
+                      (r.AbortedByGuardrail ? ", 🛑 guardrail" : string.Empty);
             txtStatus.Text = msg;
             Log(msg);
+            SaveOmrBatchMetrics(new OmrBatchMetricsEntry
+            {
+                DateUtc = DateTime.UtcNow,
+                Engine = "audiveris",
+                RunLabel = "auto",
+                RootDir = destFolder,
+                EffectiveParallel = effectiveAudiverisParallel,
+                InputCount = familyPending.Count,
+                ConvertedOk = r.Ok,
+                ConvertedPartial = r.Partial,
+                Failed = r.Fail,
+                FallbackSuccesses = r.FallbackOemerOk,
+                FallbackAttempts = r.FallbackAttempts,
+                FallbackBudgetSkips = r.FallbackBudgetSkips,
+                EffectiveBudgetPercent = r.EffectiveBudgetPercent,
+                AbortedByGuardrail = r.AbortedByGuardrail,
+                WarmupApplied = warmupApplied,
+                TimeoutSecondsAppliedAvg = r.AvgTimeoutSecondsApplied,
+                DurationSeconds = runSw.Elapsed.TotalSeconds,
+                FallbackBudgetScale = _audiverisFallbackBudgetScale,
+                ConductorDeltaPct = EstimateConductorDeltaPct("audiveris", familyPending)
+            });
+            var audiverisProcessed = r.Ok + r.Partial + r.Fail;
+            RecordBatchFolderResult(destFolder, audiverisProcessed, r.Fail);
+            SaveOmrConductorState();
+            _warmupDoneEngines.TryAdd("audiveris", true);
+            _audiverisFallbackBudgetScale = UpdateFallbackBudgetScale(_audiverisFallbackBudgetScale, r.FallbackAttempts, r.FallbackOemerOk);
+            _audiverisParallelScale = UpdateParallelScale(_audiverisParallelScale, audiverisProcessed, r.Fail, r.AbortedByGuardrail);
+            LogDebug($"🎼 Audiveris adaptive: parallelScale={_audiverisParallelScale:0.00}, budgetScale={_audiverisFallbackBudgetScale:0.00}");
+            SaveUiState();
         }
         catch (Exception ex)
         {
@@ -2401,6 +2980,7 @@ public partial class MainWindow : Window, IAsyncDisposable
         }
         finally
         {
+            _currentAudiverisBatchFolder = null;
             _audiverisRunning = false;
             _audiverisCts?.Dispose();
             _audiverisCts = null;
@@ -2413,15 +2993,533 @@ public partial class MainWindow : Window, IAsyncDisposable
     {
         var cooldownCount = _audiverisTimeoutFamilies.Count;
         var strikeCount = _audiverisTimeoutStrikes.Count;
+        var quarantineCount = _audiverisAllVariantsFailed.Count;
+        var hostileCount = _hostileFolderConservativeUntil.Count(kv => kv.Value > DateTime.UtcNow);
         _audiverisTimeoutFamilies.Clear();
         _audiverisTimeoutStrikes.Clear();
         _audiverisStrikeLastUtc.Clear();
+        _audiverisSuccessStreakByFamily.Clear();
+        _audiverisAllVariantsFailed.Clear();
         _audiverisTimeoutFamiliesDirty = true;
         _audiverisTimeoutStrikesDirty = true;
+        _audiverisSuccessStreakDirty = true;
+        _audiverisAllVariantsFailedDirty = true;
+        _hostileFolderConsecutiveFails.Clear();
+        _hostileFolderConservativeUntil.Clear();
+        _omrFamilyEngineScore.Clear();
+        _omrFamilyRiskScore.Clear();
+        _omrFamilyTimeoutCredits.Clear();
+        _omrFamilyCreditDebt.Clear();
+        _omrGhostRetryUntil.Clear();
+        _omrGenomePressure.Clear();
+        _omrGenomeEngineSwissScore.Clear();
+        _omrFolderHeatScore.Clear();
+        _omrSkipReasonCounters.Clear();
         SaveAudiverisTimeoutFamilies();
         SaveAudiverisTimeoutStrikes();
+        SaveAudiverisSuccessStreaks();
+        SaveAudiverisAllVariantsFailed();
+        SaveOmrConductorState();
+        QueueSaveHostileFolders();
         UpdateAudiverisStatus();
-        Log($"🔄 Audiveris: cooldown y strikes reiniciados ({cooldownCount} familias, {strikeCount} strikes).");
+        UpdateOemerStatus();
+        Log($"🔄 Audiveris: cooldown y strikes reiniciados ({cooldownCount} familias, {strikeCount} strikes, {quarantineCount} cuarentenas, {hostileCount} carpetas hostiles).");
+    }
+
+    private int? PromptBatchSizeForRun(string engineLabel, int defaultBatchSize, int pendingCount, int? lastRequestedBatchSize)
+    {
+        var effectiveDefault = Math.Clamp(lastRequestedBatchSize ?? defaultBatchSize, 1, 10000);
+        while (true)
+        {
+            var input = DarkDialogService.PromptText(
+                this,
+                $"{engineLabel}: tamaño de lote",
+                "Archivos a procesar en esta corrida:",
+                effectiveDefault.ToString(CultureInfo.InvariantCulture),
+                "Número entero entre 0 y 10000 (0 = todo pendiente)",
+                "Continuar");
+
+            if (input is null)
+                return null;
+
+            if (int.TryParse(input.Trim(), NumberStyles.Integer, CultureInfo.InvariantCulture, out var parsed) &&
+                parsed >= 0 && parsed <= 10000)
+            {
+                if (parsed == 0)
+                    return Math.Max(1, pendingCount);
+
+                return parsed;
+            }
+
+            DarkDialogService.ShowMessage(
+                this,
+                "Valor no válido. Introduce un entero entre 0 y 10000 (0 = todo), o pulsa Cancelar.",
+                $"{engineLabel}: tamaño de lote",
+                MessageBoxButton.OK,
+                MessageBoxImage.Warning);
+        }
+    }
+
+    private static double UpdateFallbackBudgetScale(double currentScale, int attempts, int successes)
+    {
+        var safeCurrent = double.IsFinite(currentScale) ? currentScale : 1.0;
+        var ratio = attempts <= 0 ? 0.0 : (double)successes / attempts;
+        var target = ratio switch
+        {
+            >= 0.70 => 1.20,
+            >= 0.45 => 1.00,
+            >= 0.20 => 0.80,
+            _ => 0.65
+        };
+
+        // EWMA suave para evitar oscilaciones fuertes corrida a corrida.
+        var blended = (safeCurrent * 0.70) + (target * 0.30);
+        return Math.Clamp(blended, 0.50, 1.50);
+    }
+
+    private static double UpdateParallelScale(double currentScale, int processed, int failed, bool abortedByGuardrail)
+    {
+        var safeCurrent = double.IsFinite(currentScale) ? currentScale : 1.0;
+        if (processed <= 0)
+            return safeCurrent;
+
+        var failRate = (double)failed / Math.Max(1, processed);
+        double target;
+        if (abortedByGuardrail)
+            target = 0.70;
+        else if (failRate >= 0.60)
+            target = 0.80;
+        else if (failRate >= 0.40)
+            target = 0.90;
+        else if (failRate <= 0.12)
+            target = 1.20;
+        else if (failRate <= 0.20)
+            target = 1.10;
+        else
+            target = 1.00;
+
+        var blended = (safeCurrent * 0.75) + (target * 0.25);
+        return Math.Clamp(blended, 0.50, 1.60);
+    }
+
+    /// <summary>
+    /// Tracks per-folder fail rate. If fail rate ≥ threshold on ≥2 consecutive runs, marks folder as
+    /// "hostile" and activates a conservative profile for <see cref="_hostileFolderConservativeMinutes"/> minutes.
+    /// </summary>
+    private void RecordBatchFolderResult(string? folder, int processed, int failed)
+    {
+        if (string.IsNullOrWhiteSpace(folder) || processed <= 0) return;
+        if (processed < _hostileFolderMinSamples) return;
+        var key = folder.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar).ToLowerInvariant();
+        var failRatePct = (failed * 100) / Math.Max(1, processed);
+        var heat = _omrFolderHeatScore.AddOrUpdate(key, failRatePct, (_, current) => Math.Clamp((current * 0.70) + (failRatePct * 0.30), 0.0, 100.0));
+        if (heat >= 75)
+            LogDebug($"🔥 OMR heatmap: folder caliente '{Path.GetFileName(key)}' heat={heat:0}%.");
+        if (failRatePct >= _hostileFolderFailRatePct)
+        {
+            var count = _hostileFolderConsecutiveFails.AddOrUpdate(key, 1, (_, v) => v + 1);
+            if (count >= 2)
+            {
+                var until = DateTime.UtcNow.AddMinutes(_hostileFolderConservativeMinutes);
+                _hostileFolderConservativeUntil[key] = until;
+                LogDebug($"⚠️ Hostile folder detected: '{key}' failRate={failRatePct}% runs={count} → conservative until {until:HH:mm}UTC");
+                QueueSaveHostileFolders();
+            }
+        }
+        else
+        {
+            var changed = false;
+            if (_hostileFolderConsecutiveFails.TryGetValue(key, out var currentFails))
+            {
+                if (currentFails <= 1)
+                {
+                    changed |= _hostileFolderConsecutiveFails.TryRemove(key, out _);
+                }
+                else
+                {
+                    var reduced = currentFails - 1;
+                    _hostileFolderConsecutiveFails.AddOrUpdate(key, reduced, (_, __) => reduced);
+                    changed = true;
+                }
+            }
+
+            // On healthy batch, immediately end conservative mode for that folder.
+            changed |= _hostileFolderConservativeUntil.TryRemove(key, out _);
+            if (_omrFolderHeatScore.TryGetValue(key, out var currentHeat) && currentHeat > 0)
+                _omrFolderHeatScore[key] = Math.Max(0, currentHeat - 8);
+            if (changed)
+                QueueSaveHostileFolders();
+        }
+    }
+
+    private List<KeyValuePair<string, DateTime>> GetActiveHostileFoldersSnapshot(DateTime now)
+    {
+        var active = _hostileFolderConservativeUntil
+            .Where(kv => kv.Value > now)
+            .OrderBy(kv => kv.Value)
+            .ToList();
+
+        var expiredKeys = _hostileFolderConservativeUntil
+            .Where(kv => kv.Value <= now)
+            .Select(kv => kv.Key)
+            .ToList();
+
+        if (expiredKeys.Count > 0)
+        {
+            var changed = false;
+            foreach (var expiredKey in expiredKeys)
+            {
+                changed |= _hostileFolderConservativeUntil.TryRemove(expiredKey, out _);
+                _hostileFolderConsecutiveFails.TryRemove(expiredKey, out _);
+            }
+
+            if (changed)
+                QueueSaveHostileFolders();
+        }
+
+        return active;
+    }
+
+    private bool IsHostileFolder(string? folder)
+    {
+        if (string.IsNullOrWhiteSpace(folder)) return false;
+        var key = folder.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar).ToLowerInvariant();
+        if (!_hostileFolderConservativeUntil.TryGetValue(key, out var until))
+            return false;
+
+        if (until > DateTime.UtcNow)
+            return true;
+
+        var removed = _hostileFolderConservativeUntil.TryRemove(key, out _);
+        _hostileFolderConsecutiveFails.TryRemove(key, out _);
+        if (removed)
+            QueueSaveHostileFolders();
+        return false;
+    }
+
+    private void QueueSaveHostileFolders()
+    {
+        Interlocked.Exchange(ref _hostileFoldersSavePending, 1);
+        if (Interlocked.CompareExchange(ref _hostileFoldersSaveWorkerActive, 1, 0) != 0)
+            return;
+
+        _ = Task.Run(ProcessHostileFoldersSaveQueue);
+    }
+
+    private void ProcessHostileFoldersSaveQueue()
+    {
+        try
+        {
+            while (Interlocked.Exchange(ref _hostileFoldersSavePending, 0) == 1)
+            {
+                SaveHostileFolders();
+            }
+        }
+        finally
+        {
+            Volatile.Write(ref _hostileFoldersSaveWorkerActive, 0);
+            if (Interlocked.Exchange(ref _hostileFoldersSavePending, 0) == 1 &&
+                Interlocked.CompareExchange(ref _hostileFoldersSaveWorkerActive, 1, 0) == 0)
+            {
+                _ = Task.Run(ProcessHostileFoldersSaveQueue);
+            }
+        }
+    }
+
+    private sealed class HostileFoldersPersist
+    {
+        public Dictionary<string, int> ConsecutiveFails { get; set; } = [];
+        public Dictionary<string, DateTime> ConservativeUntil { get; set; } = [];
+    }
+
+    private sealed class OmrConductorStatePersist
+    {
+        public Dictionary<string, int> FamilyEngineScore { get; set; } = [];
+        public Dictionary<string, int> FamilyRiskScore { get; set; } = [];
+        public Dictionary<string, int> FamilyTimeoutCredits { get; set; } = [];
+        public Dictionary<string, int> FamilyCreditDebt { get; set; } = [];
+        public Dictionary<string, int> FamilyWinStreak { get; set; } = [];
+        public Dictionary<string, DateTime> GhostRetryUntil { get; set; } = [];
+        public Dictionary<string, int> GenomePressure { get; set; } = [];
+        public Dictionary<string, int> GenomeEngineSwissScore { get; set; } = [];
+        public Dictionary<string, double> FolderHeatScore { get; set; } = [];
+        public long ShadowDecisions { get; set; }
+        public long ShadowDivergences { get; set; }
+    }
+
+    private void LoadHostileFolders()
+    {
+        var data = JsonStore.Load<HostileFoldersPersist>(_hostileFoldersPersistPath, new HostileFoldersPersist());
+        foreach (var kv in data.ConsecutiveFails)
+            _hostileFolderConsecutiveFails[kv.Key] = kv.Value;
+        var now = DateTime.UtcNow;
+        var restored = 0;
+        foreach (var kv in data.ConservativeUntil)
+            if (kv.Value > now) { _hostileFolderConservativeUntil[kv.Key] = kv.Value; restored++; }
+        if (restored > 0)
+        {
+            var lines = _hostileFolderConservativeUntil
+                .OrderBy(kv => kv.Value)
+                .Select(kv => $"  ⚠️ {kv.Key}  [{(kv.Value - now).TotalMinutes:F0}min restantes]");
+            LogDebug($"🚫 Hostile folders restauradas ({restored}):\n" + string.Join("\n", lines));
+        }
+    }
+
+    private void SaveHostileFolders()
+    {
+        try
+        {
+            lock (_hostileFoldersPersistLock)
+            {
+                var data = new HostileFoldersPersist
+                {
+                    ConsecutiveFails = new Dictionary<string, int>(_hostileFolderConsecutiveFails),
+                    ConservativeUntil = new Dictionary<string, DateTime>(_hostileFolderConservativeUntil)
+                };
+                JsonStore.Save(_hostileFoldersPersistPath, data);
+            }
+        }
+        catch { }
+    }
+
+    private void LoadOmrConductorState()
+    {
+        var data = JsonStore.Load<OmrConductorStatePersist>(_omrConductorStatePath, new OmrConductorStatePersist());
+        var now = DateTime.UtcNow;
+
+        _omrFamilyEngineScore.Clear();
+        foreach (var kv in data.FamilyEngineScore)
+            _omrFamilyEngineScore[kv.Key] = Math.Clamp(kv.Value, -20, 20);
+
+        _omrFamilyRiskScore.Clear();
+        foreach (var kv in data.FamilyRiskScore)
+            _omrFamilyRiskScore[kv.Key] = Math.Clamp(kv.Value, 0, 200);
+
+        _omrFamilyTimeoutCredits.Clear();
+        foreach (var kv in data.FamilyTimeoutCredits)
+            _omrFamilyTimeoutCredits[kv.Key] = Math.Clamp(kv.Value, 0, 8);
+
+        _omrFamilyCreditDebt.Clear();
+        foreach (var kv in data.FamilyCreditDebt)
+            _omrFamilyCreditDebt[kv.Key] = Math.Clamp(kv.Value, 0, 8);
+
+        _omrFamilyWinStreak.Clear();
+        foreach (var kv in data.FamilyWinStreak)
+            _omrFamilyWinStreak[kv.Key] = Math.Clamp(kv.Value, 0, 50);
+
+        _omrGhostRetryUntil.Clear();
+        foreach (var kv in data.GhostRetryUntil)
+            if (kv.Value > now) _omrGhostRetryUntil[kv.Key] = kv.Value;
+
+        _omrGenomePressure.Clear();
+        foreach (var kv in data.GenomePressure)
+            _omrGenomePressure[kv.Key] = Math.Clamp(kv.Value, 0, 50);
+
+        _omrGenomeEngineSwissScore.Clear();
+        foreach (var kv in data.GenomeEngineSwissScore)
+            _omrGenomeEngineSwissScore[kv.Key] = Math.Clamp(kv.Value, -100, 100);
+
+        _omrFolderHeatScore.Clear();
+        foreach (var kv in data.FolderHeatScore)
+            _omrFolderHeatScore[kv.Key] = Math.Clamp(kv.Value, 0.0, 100.0);
+
+        _omrShadowDecisions = Math.Max(0, data.ShadowDecisions);
+        _omrShadowDivergences = Math.Max(0, data.ShadowDivergences);
+    }
+
+    private void SaveOmrConductorState()
+    {
+        try
+        {
+            var data = new OmrConductorStatePersist
+            {
+                FamilyEngineScore = new Dictionary<string, int>(_omrFamilyEngineScore),
+                FamilyRiskScore = new Dictionary<string, int>(_omrFamilyRiskScore),
+                FamilyTimeoutCredits = new Dictionary<string, int>(_omrFamilyTimeoutCredits),
+                FamilyCreditDebt = new Dictionary<string, int>(_omrFamilyCreditDebt),
+                FamilyWinStreak = new Dictionary<string, int>(_omrFamilyWinStreak),
+                GhostRetryUntil = new Dictionary<string, DateTime>(_omrGhostRetryUntil),
+                GenomePressure = new Dictionary<string, int>(_omrGenomePressure),
+                GenomeEngineSwissScore = new Dictionary<string, int>(_omrGenomeEngineSwissScore),
+                FolderHeatScore = new Dictionary<string, double>(_omrFolderHeatScore),
+                ShadowDecisions = Math.Max(0, _omrShadowDecisions),
+                ShadowDivergences = Math.Max(0, _omrShadowDivergences)
+            };
+            JsonStore.Save(_omrConductorStatePath, data);
+        }
+        catch { }
+    }
+
+    private void WriteOmrLearningSummary()
+    {
+        try
+        {
+            var now = DateTime.UtcNow;
+            var topFamilies = _omrFamilyEngineScore
+                .OrderByDescending(kv => Math.Abs(kv.Value))
+                .Take(5)
+                .Select(kv => $"{Path.GetFileName(kv.Key)}={kv.Value:+#;-#;0}")
+                .ToList();
+            var topGenomes = _omrGenomePressure
+                .OrderByDescending(kv => kv.Value)
+                .Take(5)
+                .Select(kv => $"{kv.Key}=g{kv.Value}")
+                .ToList();
+            var skipReasons = _omrSkipReasonCounters
+                .OrderByDescending(kv => kv.Value)
+                .Take(8)
+                .Select(kv => $"{kv.Key}={kv.Value}")
+                .ToList();
+            var topHeat = _omrFolderHeatScore
+                .OrderByDescending(kv => kv.Value)
+                .Take(5)
+                .Select(kv => $"{Path.GetFileName(kv.Key)}={kv.Value:0}%")
+                .ToList();
+            var shadowDecisions = Math.Max(0, _omrShadowDecisions);
+            var shadowDivergences = Math.Max(0, _omrShadowDivergences);
+            var shadowRate = shadowDecisions > 0
+                ? (int)Math.Round(shadowDivergences * 100.0 / shadowDecisions)
+                : 0;
+            var topStreaks = _omrFamilyWinStreak
+                .OrderByDescending(kv => kv.Value)
+                .Take(5)
+                .Select(kv => $"{Path.GetFileName(kv.Key)}=r{kv.Value}")
+                .ToList();
+
+            var content =
+                $"OMR Learning Summary UTC {now:O}\n\n" +
+                $"Top Families:\n{string.Join("\n", topFamilies)}\n\n" +
+                $"Top Genomes:\n{string.Join("\n", topGenomes)}\n\n" +
+                $"Top Streaks:\n{string.Join("\n", topStreaks)}\n\n" +
+                $"Skip Reasons:\n{string.Join("\n", skipReasons)}\n\n" +
+                $"Heatmap:\n{string.Join("\n", topHeat)}\n\n" +
+                $"Shadow:\nDecisions={shadowDecisions} Divergences={shadowDivergences} Rate={shadowRate}%\n";
+
+            var dir = Path.GetDirectoryName(_omrLearningSummaryPath);
+            if (!string.IsNullOrWhiteSpace(dir))
+                Directory.CreateDirectory(dir);
+            File.WriteAllText(_omrLearningSummaryPath, content, Encoding.UTF8);
+        }
+        catch { }
+    }
+
+
+    private sealed class OmrBatchMetricsEntry
+    {
+        public DateTime DateUtc { get; set; }
+        public string Engine { get; set; } = string.Empty;
+        public string RunLabel { get; set; } = string.Empty;
+        public string RootDir { get; set; } = string.Empty;
+        public int EffectiveParallel { get; set; }
+        public int InputCount { get; set; }
+        public int ConvertedOk { get; set; }
+        public int ConvertedPartial { get; set; }
+        public int Failed { get; set; }
+        public int FallbackSuccesses { get; set; }
+        public int FallbackAttempts { get; set; }
+        public int FallbackBudgetSkips { get; set; }
+        public int EffectiveBudgetPercent { get; set; }
+        public bool AbortedByGuardrail { get; set; }
+        public bool WarmupApplied { get; set; }
+        public int TimeoutSecondsAppliedAvg { get; set; }
+        public int TimeoutFailures { get; set; }
+        public int TimeoutRatePct { get; set; }
+        public int TimeoutFailuresFallbackAttempted { get; set; }
+        public int TimeoutFailuresFallbackSkipped { get; set; }
+        public string DominantFailType { get; set; } = string.Empty;
+        public double DurationSeconds { get; set; }
+        public double FallbackBudgetScale { get; set; }
+        public int ConductorDeltaPct { get; set; }
+    }
+
+    private void SaveOmrBatchMetrics(OmrBatchMetricsEntry entry)
+    {
+        try
+        {
+            var lastDir = Path.GetDirectoryName(_omrMetricsLastPath);
+            if (!string.IsNullOrWhiteSpace(lastDir))
+                Directory.CreateDirectory(lastDir);
+
+            var csvDir = Path.GetDirectoryName(_omrMetricsHistoryCsvPath);
+            if (!string.IsNullOrWhiteSpace(csvDir))
+                Directory.CreateDirectory(csvDir);
+
+            lock (_omrMetricsLock)
+            {
+                File.WriteAllText(_omrMetricsLastPath, JsonSerializer.Serialize(entry, new JsonSerializerOptions { WriteIndented = true }), Encoding.UTF8);
+
+                // Auto-rotate CSV if it exceeds size threshold
+                if (File.Exists(_omrMetricsHistoryCsvPath))
+                {
+                    var fi = new FileInfo(_omrMetricsHistoryCsvPath);
+                    if (fi.Length > (long)_omrMetricsCsvMaxMb * 1024 * 1024)
+                    {
+                        var stamp = DateTime.UtcNow.ToString("yyyyMMdd_HHmmss", System.Globalization.CultureInfo.InvariantCulture);
+                        var archivePath = BuildTimestampedArchivePath(_omrMetricsHistoryCsvPath, stamp);
+                        var moved = false;
+                        try
+                        {
+                            File.Move(_omrMetricsHistoryCsvPath, archivePath);
+                            moved = true;
+                        }
+                        catch
+                        {
+                            // Non-fatal: keep appending to current CSV if rotation fails.
+                        }
+
+                        if (moved)
+                            LogDebug($"📊 OMR métricas CSV archivado: {Path.GetFileName(archivePath)} ({fi.Length / 1024}KB)");
+                    }
+                }
+
+                var needsHeader = !File.Exists(_omrMetricsHistoryCsvPath);
+                using var fs = new FileStream(_omrMetricsHistoryCsvPath, FileMode.Append, FileAccess.Write, FileShare.Read);
+                using var writer = new StreamWriter(fs, Encoding.UTF8);
+
+                if (needsHeader)
+                {
+                    writer.WriteLine("DateUtc,Engine,RunLabel,RootDir,EffectiveParallel,InputCount,ConvertedOk,ConvertedPartial,Failed,TimeoutFailures,TimeoutRatePct,TimeoutFailuresFallbackAttempted,TimeoutFailuresFallbackSkipped,FallbackSuccesses,FallbackAttempts,FallbackBudgetSkips,FallbackBudgetHitRatePct,EffectiveBudgetPercent,AbortedByGuardrail,WarmupApplied,TimeoutSecondsAppliedAvg,DominantFailType,DurationSeconds,FallbackBudgetScale,ConductorDeltaPct");
+                }
+
+                var budgetDen = entry.FallbackAttempts + entry.FallbackBudgetSkips;
+                var budgetHitRatePct = budgetDen > 0
+                    ? (int)Math.Round(entry.FallbackBudgetSkips * 100.0 / budgetDen)
+                    : 0;
+
+                writer.WriteLine(
+                    $"{entry.DateUtc:O}," +
+                    $"{CsvEscape(entry.Engine)}," +
+                    $"{CsvEscape(entry.RunLabel)}," +
+                    $"{CsvEscape(entry.RootDir)}," +
+                    $"{entry.EffectiveParallel}," +
+                    $"{entry.InputCount}," +
+                    $"{entry.ConvertedOk}," +
+                    $"{entry.ConvertedPartial}," +
+                    $"{entry.Failed}," +
+                    $"{entry.TimeoutFailures}," +
+                    $"{entry.TimeoutRatePct}," +
+                    $"{entry.TimeoutFailuresFallbackAttempted}," +
+                    $"{entry.TimeoutFailuresFallbackSkipped}," +
+                    $"{entry.FallbackSuccesses}," +
+                    $"{entry.FallbackAttempts}," +
+                    $"{entry.FallbackBudgetSkips}," +
+                    $"{budgetHitRatePct}," +
+                    $"{entry.EffectiveBudgetPercent}," +
+                    $"{(entry.AbortedByGuardrail ? 1 : 0)}," +
+                    $"{(entry.WarmupApplied ? 1 : 0)}," +
+                    $"{entry.TimeoutSecondsAppliedAvg}," +
+                    $"{CsvEscape(entry.DominantFailType)}," +
+                    $"{entry.DurationSeconds.ToString("0.000", CultureInfo.InvariantCulture)}," +
+                    $"{entry.FallbackBudgetScale.ToString("0.000", CultureInfo.InvariantCulture)}," +
+                    $"{entry.ConductorDeltaPct}");
+
+                InvalidateOmrHealthCache();
+            }
+        }
+        catch (Exception ex)
+        {
+            LogDebug($"⚠️ OMR métricas: no se pudo persistir ({ex.Message})");
+        }
     }
 
     private async void BtnConvertAudiveris_Click(object sender, RoutedEventArgs e)
@@ -2492,8 +3590,29 @@ public partial class MainWindow : Window, IAsyncDisposable
         var familyPending = SelectFirstPerAudiverisFamily(pending, out var skippedFamilyDuplicates, out var familySizes);
         if (skippedFamilyDuplicates > 0)
             Log($"ℹ️ Audiveris: {skippedFamilyDuplicates} archivo(s) omitidos por duplicado de familia (a4/let) en esta corrida.");
+        var manualAudiverisPrepared = ArrangeBatchByConductor("audiveris", familyPending, out var manualAudiverisRiskSkips, out var manualAudiverisGhostSkips);
+        if (manualAudiverisRiskSkips > 0)
+            Log($"🧠 Audiveris: {manualAudiverisRiskSkips} archivo(s) omitidos por predictor de riesgo.");
+        if (manualAudiverisGhostSkips > 0)
+            Log($"👻 Audiveris: {manualAudiverisGhostSkips} archivo(s) aplazados por replay fantasma.");
+        familyPending = manualAudiverisPrepared;
+        if (familyPending.Count == 0)
+        {
+            Log("🎼 Audiveris: sin candidatos tras predictor/replay.");
+            return;
+        }
 
-        var batch = familyPending.Take(_audiverisBatchSize).ToList();
+        var requestedBatchSize = PromptBatchSizeForRun("Audiveris", _audiverisBatchSize, familyPending.Count, _lastAudiverisRequestedBatchSize);
+        if (!requestedBatchSize.HasValue)
+        {
+            Log("ℹ️ Audiveris cancelado por usuario antes de iniciar.");
+            return;
+        }
+
+        _lastAudiverisRequestedBatchSize = requestedBatchSize.Value;
+        SaveUiState();
+
+        var batch = familyPending.Take(requestedBatchSize.Value).ToList();
         var deferred = familyPending.Count - batch.Count;
 
         var proceed = DarkDialogService.ShowMessage(
@@ -2520,16 +3639,55 @@ public partial class MainWindow : Window, IAsyncDisposable
         btnDownload.IsEnabled = false;
         txtStatus.Text = "🎼 Convirtiendo con Audiveris...";
         var capturedDestFolder = txtDestFolder.Text?.Trim() ?? string.Empty;
+        _currentAudiverisBatchFolder = capturedDestFolder;
+        var warmupApplied = _enableWarmupTimeout && !_warmupDoneEngines.ContainsKey("audiveris");
+        if (IsHostileFolder(capturedDestFolder)) Log($"⚠️ Audiveris: carpeta hostil activa → perfil conservador.");
 
         try
         {
+            var runSw = Stopwatch.StartNew();
             var r = await RunAudiverisBatchCoreAsync(batch, audiverisExe, "Audiveris", capturedDestFolder, _audiverisCts.Token, familySizes);
+            runSw.Stop();
             var converted = r.Ok + r.Partial;
             var statusMsg = $"🎼 Audiveris: {converted}/{batch.Count} convertidas" +
                             $" | ✅ {r.Ok} completas, ⚠️ {r.Partial} parciales, ❌ {r.Fail} sin salida" +
-                            (r.SkippedByFamilyTimeout > 0 ? $", ⏭️ {r.SkippedByFamilyTimeout} omitidos" : string.Empty);
+                            (r.SkippedByFamilyTimeout > 0 ? $", ⏭️ {r.SkippedByFamilyTimeout} omitidos" : string.Empty) +
+                            (r.FallbackOemerOk > 0 ? $", ↪️ {r.FallbackOemerOk} fallback oemer" : string.Empty) +
+                            (r.FallbackBudgetSkips > 0 ? $", 🧯 {r.FallbackBudgetSkips} fallback omitidos por presupuesto" : string.Empty) +
+                            (r.FallbackAttempts > 0 ? $", 🔁 {r.FallbackAttempts} intentos fallback ({r.EffectiveBudgetPercent}%)" : string.Empty) +
+                            (r.AbortedByGuardrail ? ", 🛑 guardrail" : string.Empty);
             txtStatus.Text = statusMsg;
             Log(statusMsg + (deferred > 0 ? $" | pendientes: {deferred}" : string.Empty));
+            SaveOmrBatchMetrics(new OmrBatchMetricsEntry
+            {
+                DateUtc = DateTime.UtcNow,
+                Engine = "audiveris",
+                RunLabel = "manual",
+                RootDir = capturedDestFolder,
+                EffectiveParallel = effectiveAudiverisParallel,
+                InputCount = batch.Count,
+                ConvertedOk = r.Ok,
+                ConvertedPartial = r.Partial,
+                Failed = r.Fail,
+                FallbackSuccesses = r.FallbackOemerOk,
+                FallbackAttempts = r.FallbackAttempts,
+                FallbackBudgetSkips = r.FallbackBudgetSkips,
+                EffectiveBudgetPercent = r.EffectiveBudgetPercent,
+                AbortedByGuardrail = r.AbortedByGuardrail,
+                WarmupApplied = warmupApplied,
+                TimeoutSecondsAppliedAvg = r.AvgTimeoutSecondsApplied,
+                DurationSeconds = runSw.Elapsed.TotalSeconds,
+                FallbackBudgetScale = _audiverisFallbackBudgetScale,
+                ConductorDeltaPct = EstimateConductorDeltaPct("audiveris", batch)
+            });
+            var audiverisProcessed = r.Ok + r.Partial + r.Fail;
+            RecordBatchFolderResult(capturedDestFolder, audiverisProcessed, r.Fail);
+            SaveOmrConductorState();
+            _warmupDoneEngines.TryAdd("audiveris", true);
+            _audiverisFallbackBudgetScale = UpdateFallbackBudgetScale(_audiverisFallbackBudgetScale, r.FallbackAttempts, r.FallbackOemerOk);
+            _audiverisParallelScale = UpdateParallelScale(_audiverisParallelScale, audiverisProcessed, r.Fail, r.AbortedByGuardrail);
+            LogDebug($"🎼 Audiveris adaptive: parallelScale={_audiverisParallelScale:0.00}, budgetScale={_audiverisFallbackBudgetScale:0.00}");
+            SaveUiState();
         }
         catch (Exception ex)
         {
@@ -2539,6 +3697,7 @@ public partial class MainWindow : Window, IAsyncDisposable
         }
         finally
         {
+            _currentAudiverisBatchFolder = null;
             _audiverisRunning = false;
             _audiverisCts?.Dispose();
             _audiverisCts = null;
@@ -2549,7 +3708,7 @@ public partial class MainWindow : Window, IAsyncDisposable
         }
     }
 
-    private async Task<(int Ok, int Partial, int Fail, int SkippedByFamilyTimeout)> RunAudiverisBatchCoreAsync(
+    private async Task<(int Ok, int Partial, int Fail, int SkippedByFamilyTimeout, int FallbackOemerOk, int FallbackBudgetSkips, int FallbackAttempts, int EffectiveBudgetPercent, bool AbortedByGuardrail, int AvgTimeoutSecondsApplied)> RunAudiverisBatchCoreAsync(
         IList<string> batch,
         string audiverisExe,
         string label,
@@ -2557,21 +3716,146 @@ public partial class MainWindow : Window, IAsyncDisposable
         CancellationToken ct = default,
         IReadOnlyDictionary<string, long>? fileSizes = null)
     {
-        int ok = 0, partial = 0, fail = 0, skippedByFamilyTimeout = 0, processed = 0;
-        int total = batch.Count;
+        int ok = 0, partial = 0, fail = 0, skippedByFamilyTimeout = 0, processed = 0, fallbackOemerOk = 0, fallbackBudgetSkips = 0;
+        long timeoutSecondsTotal = 0;
+        int timeoutFailures = 0, timeoutFailuresFallbackAttempted = 0, timeoutFailuresFallbackSkipped = 0;
+        var processingBatch = ArrangeBatchByConductor("audiveris", batch, out _, out _);
+        int total = processingBatch.Count;
         var siblingSet = BuildMusicScoreSiblingSetCached(fallbackOutputDir);
         var effectiveParallel = GetEffectiveAudiverisParallel();
+        var oemerCommand = _enableOmrCrossFallback ? ResolveOemerCommand() : (Exe: string.Empty, PrefixArgs: Array.Empty<string>());
+        var canUseOemerFallback = !string.IsNullOrWhiteSpace(oemerCommand.Exe);
+        var effectiveBudgetPercent = Math.Clamp((int)Math.Round(_omrFallbackBudgetPercent * _audiverisFallbackBudgetScale), 0, 100);
+        var maxFallbackAttempts = effectiveBudgetPercent <= 0
+            ? 0
+            : Math.Max(1, (int)Math.Ceiling(total * (effectiveBudgetPercent / 100d)));
+        var maxQuarantinePhase2FallbackAttempts = _audiverisQuarantinePhase2BudgetPercent <= 0
+            ? 0
+            : Math.Max(1, (int)Math.Ceiling(total * (_audiverisQuarantinePhase2BudgetPercent / 100d)));
+        var fallbackAttempts = 0;
+        var quarantinePhase2FallbackAttempts = 0;
+        var quarantinePhase2BudgetSkips = 0;
+        using var failStopCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        var abortByHighFail = 0;
+        var guardrailGraceUsed = 0;
+
+        bool TryReserveFallbackAttempt()
+        {
+            if (maxFallbackAttempts <= 0)
+                return false;
+
+            while (true)
+            {
+                var snap = Volatile.Read(ref fallbackAttempts);
+                if (snap >= maxFallbackAttempts)
+                    return false;
+                if (Interlocked.CompareExchange(ref fallbackAttempts, snap + 1, snap) == snap)
+                    return true;
+            }
+        }
+
+        bool TryReserveQuarantinePhase2FallbackAttempt()
+        {
+            if (maxQuarantinePhase2FallbackAttempts <= 0)
+                return false;
+
+            while (true)
+            {
+                var snap = Volatile.Read(ref quarantinePhase2FallbackAttempts);
+                if (snap >= maxQuarantinePhase2FallbackAttempts)
+                    return false;
+                if (Interlocked.CompareExchange(ref quarantinePhase2FallbackAttempts, snap + 1, snap) == snap)
+                    return true;
+            }
+        }
+
+        bool TryTriggerHighFailAbort(string lastFileName)
+        {
+            if (!_omrAbortOnHighFail || maxFallbackAttempts <= 0)
+                return false;
+
+            var attemptsUsed = Volatile.Read(ref fallbackAttempts);
+            if (attemptsUsed < maxFallbackAttempts)
+                return false;
+
+            var processedNow = Volatile.Read(ref processed);
+            if (processedNow < _omrAbortMinSamples)
+                return false;
+
+            var failNow = Volatile.Read(ref fail);
+            if ((failNow * 100) < (_omrAbortFailRatePercent * processedNow))
+                return false;
+
+            if (_enableOmrAdaptiveParallel && effectiveParallel > 1 && Interlocked.CompareExchange(ref guardrailGraceUsed, 1, 0) == 0)
+            {
+                Log($"⚠️ {label}: guardrail fase 1 ({failNow}/{processedNow}, {_omrAbortFailRatePercent}%+). Se mantiene corrida actual y se degradará paralelo en próxima ejecución.");
+                return false;
+            }
+
+            if (Interlocked.CompareExchange(ref abortByHighFail, 1, 0) != 0)
+                return true;
+
+            Log($"🛑 {label}: corte temprano por fail-rate alto ({failNow}/{processedNow}, {_omrAbortFailRatePercent}%+) con presupuesto fallback agotado. Último: {lastFileName}");
+            try { failStopCts.Cancel(); } catch { }
+            return true;
+        }
+
+        async Task<bool> TryOemerFallbackAsync(string inputPath, int idx, string name, string reason, CancellationToken token)
+        {
+            if (!canUseOemerFallback)
+                return false;
+            if (!TryReserveFallbackAttempt())
+            {
+                Interlocked.Increment(ref fallbackBudgetSkips);
+                return false;
+            }
+
+            Log($"↪️ Audiveris fallback→oemer [{idx}/{total}] {name}: {reason}");
+            try
+            {
+                var fb = await RunOemerConversionAsync(oemerCommand.Exe, oemerCommand.PrefixArgs, inputPath, token).ConfigureAwait(false);
+                if (!fb.Success)
+                    return false;
+
+                Interlocked.Increment(ref partial);
+                Interlocked.Increment(ref fallbackOemerOk);
+                RegisterOmrFamilyOutcome(NormalizeAudiverisFamilyKey(inputPath), "oemer", timedOut: false, failed: false, filePath: inputPath);
+                var snapOk = Volatile.Read(ref ok); var snapPart = Volatile.Read(ref partial); var snapFail = Volatile.Read(ref fail);
+                Log($"✅ Fallback oemer OK [{idx}/{total}]: {name} (ok={snapOk}, parcial={snapPart}, fail={snapFail})");
+                await Dispatcher.InvokeAsync(() =>
+                    _audiverisLog.Add(new AudiverisLogItem { FileName = name, Status = "↪️ Fallback oemer" }));
+                return true;
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                LogDebug($"⚠️ Fallback oemer falló en {name}: {ex.GetType().Name}: {ex.Message}");
+                return false;
+            }
+        }
 
         try
         {
+            LogDebug($"{label}: fallback budget efectivo={effectiveBudgetPercent}% (escala={_audiverisFallbackBudgetScale:0.00}, maxIntentos={maxFallbackAttempts})");
             await Parallel.ForEachAsync(
-                batch,
-                new ParallelOptions { MaxDegreeOfParallelism = effectiveParallel, CancellationToken = ct },
+                processingBatch,
+                new ParallelOptions { MaxDegreeOfParallelism = effectiveParallel, CancellationToken = failStopCts.Token },
                 async (input, cancellationToken) =>
                 {
-                    var name = Path.GetFileName(input);
-                    var familyKey = NormalizeAudiverisFamilyKey(input);
-                    var knownSize = fileSizes is not null && fileSizes.TryGetValue(input, out var sz) ? sz : -1L;
+                    // Validar y corregir nombre del archivo ANTES de procesamiento
+                    var correctedInput = input;
+                    var initialName = Path.GetFileName(input);
+                    if (FileNameHelper.TryValidateAndCorrectFileName(input, out var corrected))
+                    {
+                        correctedInput = corrected;
+                        var newName = Path.GetFileName(correctedInput);
+                        if (!string.Equals(initialName, newName, StringComparison.OrdinalIgnoreCase))
+                            Log($"✏️ {label} {initialName} → {newName}");
+                    }
+
+                    var name = Path.GetFileName(correctedInput);
+                    var familyKey = NormalizeAudiverisFamilyKey(correctedInput);
+                    var genomeKey = BuildGenomeKey(familyKey);
+                    var knownSize = fileSizes is not null && fileSizes.TryGetValue(correctedInput, out var sz) ? sz : -1L;
 
                     var idx = Interlocked.Increment(ref processed);
                     if (idx == 1 || idx == total || idx % 5 == 0)
@@ -2582,18 +3866,94 @@ public partial class MainWindow : Window, IAsyncDisposable
                     LogDebug($"{label} [{idx}/{total}] {name}");
 
                     var computedTimeout = ComputeAudiverisTimeoutSeconds(input, knownSize);
+                    Interlocked.Add(ref timeoutSecondsTotal, computedTimeout);
+
+                    // Cuarentena: familia donde ambas variantes fallaron en sesión anterior
+                    if (_audiverisAllVariantsFailed.TryGetValue(familyKey, out var quarantinedUtc))
+                    {
+                        var quarantineAgeDays = Math.Max(0, (DateTime.UtcNow - quarantinedUtc).TotalDays);
+                        if (quarantineAgeDays < 10)
+                        {
+                            ResetAudiverisSuccessStreak(familyKey);
+                            Interlocked.Increment(ref fail);
+                            Log($"⏭️ {label} [{idx}/{total}] {name}: cuarentena fase1 (ambas variantes fallaron). Usa Reset Cooldown para reintentar.");
+                            await Dispatcher.InvokeAsync(() =>
+                                _audiverisLog.Add(new AudiverisLogItem { FileName = name, Status = "⏭️ Cuarentena F1" }));
+                            return;
+                        }
+
+                        if (quarantineAgeDays < 20)
+                        {
+                            if (!TryReserveQuarantinePhase2FallbackAttempt())
+                            {
+                                Interlocked.Increment(ref quarantinePhase2BudgetSkips);
+                                ResetAudiverisSuccessStreak(familyKey);
+                                Interlocked.Increment(ref fail);
+                                Log($"⏭️ {label} [{idx}/{total}] {name}: cuarentena fase2 sin presupuesto (oemer-only omitido).");
+                                await Dispatcher.InvokeAsync(() =>
+                                    _audiverisLog.Add(new AudiverisLogItem { FileName = name, Status = "⏭️ Cuarentena F2 bdg" }));
+                                return;
+                            }
+
+                            if (await TryOemerFallbackAsync(input, idx, name, "quarantine phase2 oemer-only", cancellationToken).ConfigureAwait(false))
+                                return;
+
+                            ResetAudiverisSuccessStreak(familyKey);
+                            Interlocked.Increment(ref fail);
+                            Log($"⏭️ {label} [{idx}/{total}] {name}: cuarentena fase2 (solo oemer permitido; fallback no disponible/falló).");
+                            await Dispatcher.InvokeAsync(() =>
+                                _audiverisLog.Add(new AudiverisLogItem { FileName = name, Status = "⏭️ Cuarentena F2" }));
+                            return;
+                        }
+
+                        if (quarantineAgeDays >= _audiverisQuarantineDays)
+                        {
+                            if (_audiverisAllVariantsFailed.TryRemove(familyKey, out _))
+                                _audiverisAllVariantsFailedDirty = true;
+                        }
+                        else
+                        {
+                            // Fase 3 (>=20d): liberar reintento Audiveris antes del TTL completo.
+                            if (_audiverisAllVariantsFailed.TryRemove(familyKey, out _))
+                                _audiverisAllVariantsFailedDirty = true;
+                            LogDebug($"🔓 {label}: cuarentena fase3 liberada para '{name}' (edad={quarantineAgeDays:F1}d).");
+                        }
+                    }
+
+                    if (_omrGenomePressure.TryGetValue(genomeKey, out var genomePressure) && genomePressure >= _omrGenomeAlertThreshold)
+                    {
+                        ResetAudiverisSuccessStreak(familyKey);
+                        Interlocked.Increment(ref fail);
+                        Log($"🧬 {label} [{idx}/{total}] {name}: cuarentena evolutiva por genoma '{genomeKey}' (nivel={genomePressure}).");
+                        await Dispatcher.InvokeAsync(() =>
+                            _audiverisLog.Add(new AudiverisLogItem { FileName = name, Status = "🧬 Quarantine" }));
+                        return;
+                    }
+
                     var sw = Stopwatch.StartNew();
                     (bool Success, bool Partial, bool PageFailure) result;
                     try
                     {
-                        result = await RunAudiverisConversionAsync(audiverisExe, input, fallbackOutputDir, allowSiblingFallback: true, siblingSet, knownSize).ConfigureAwait(false);
+                        result = await RunAudiverisConversionAsync(audiverisExe, correctedInput, fallbackOutputDir, allowSiblingFallback: true, siblingSet, knownSize, cancellationToken).ConfigureAwait(false);
                     }
                     catch (TimeoutException tex)
                     {
                         sw.Stop();
-                        Interlocked.Increment(ref fail);
-                        MarkAudiverisFamilyTimeout(input, familyKey);
+                        ResetAudiverisSuccessStreak(familyKey);
+                        RegisterOmrFamilyOutcome(familyKey, "audiveris", timedOut: true, failed: true, filePath: correctedInput);
+                        Interlocked.Increment(ref timeoutFailures);
+                        if (await TryOemerFallbackAsync(correctedInput, idx, name, "timeout", cancellationToken).ConfigureAwait(false))
+                        {
+                            Interlocked.Increment(ref timeoutFailuresFallbackAttempted);
+                            return;
+                        }
+                        Interlocked.Increment(ref timeoutFailuresFallbackSkipped);
+
+                        MarkAudiverisFamilyTimeout(correctedInput, familyKey);
                         _ = Task.Run(() => AppendTelemetry(_audiverisTelemetryPath, new TimeoutTelemetryEntry { FamilyKey = familyKey, ComputedTimeoutSeconds = computedTimeout, ActualElapsedSeconds = sw.Elapsed.TotalSeconds, TimedOut = true, DateUtc = DateTime.UtcNow }));
+
+                        Interlocked.Increment(ref fail);
+                        _ = TryTriggerHighFailAbort(name);
                         var snapOk = Volatile.Read(ref ok); var snapPart = Volatile.Read(ref partial); var snapFail = Volatile.Read(ref fail);
                         Log($"❌ {label} timeout [{idx}/{total}] {name}: {tex.Message} (ok={snapOk}, parcial={snapPart}, fail={snapFail})");
                         if (idx % 5 == 0)
@@ -2607,7 +3967,13 @@ public partial class MainWindow : Window, IAsyncDisposable
                     }
                     catch (Exception ex) when (ex is not OperationCanceledException)
                     {
+                        ResetAudiverisSuccessStreak(familyKey);
+                        RegisterOmrFamilyOutcome(familyKey, "audiveris", timedOut: false, failed: true, filePath: correctedInput);
+                        if (await TryOemerFallbackAsync(correctedInput, idx, name, $"error {ex.GetType().Name}", cancellationToken).ConfigureAwait(false))
+                            return;
+
                         Interlocked.Increment(ref fail);
+                        _ = TryTriggerHighFailAbort(name);
                         var snapOk = Volatile.Read(ref ok); var snapFail = Volatile.Read(ref fail);
                         Log($"❌ {label} error inesperado [{idx}/{total}] {name}: {ex.GetType().Name}: {ex.Message} (ok={snapOk}, fail={snapFail})");
                         await Dispatcher.InvokeAsync(() =>
@@ -2621,10 +3987,9 @@ public partial class MainWindow : Window, IAsyncDisposable
                         _ = Task.Run(() => AppendTelemetry(_audiverisTelemetryPath, new TimeoutTelemetryEntry { FamilyKey = familyKey, ComputedTimeoutSeconds = computedTimeout, ActualElapsedSeconds = sw.Elapsed.TotalSeconds, TimedOut = false, DateUtc = DateTime.UtcNow }));
                         if (_audiverisTimeoutFamilies.TryRemove(familyKey, out _))
                             _audiverisTimeoutFamiliesDirty = true;
-                        if (_audiverisTimeoutStrikes.TryRemove(familyKey, out _))
-                            _audiverisTimeoutStrikesDirty = true;
-                        if (_audiverisStrikeLastUtc.TryRemove(familyKey, out _))
-                            _audiverisTimeoutStrikesDirty = true;
+                        RegisterAudiverisSuccess(familyKey);
+                        RegisterOmrFamilyOutcome(familyKey, "audiveris", timedOut: false, failed: false, filePath: input);
+                        RegisterOmrFamilyOutcome(familyKey, "audiveris", timedOut: false, failed: false, filePath: correctedInput);
                         Interlocked.Increment(ref ok);
                         var snapOk = Volatile.Read(ref ok); var snapPart = Volatile.Read(ref partial); var snapFail = Volatile.Read(ref fail);
                         Log($"✅ Convertido [{idx}/{total}]: {name} (ok={snapOk}, parcial={snapPart}, fail={snapFail})");
@@ -2633,7 +3998,13 @@ public partial class MainWindow : Window, IAsyncDisposable
                     }
                     else
                     {
+                        ResetAudiverisSuccessStreak(familyKey);
+                        RegisterOmrFamilyOutcome(familyKey, "audiveris", timedOut: false, failed: true, filePath: input);
+                        if (await TryOemerFallbackAsync(input, idx, name, result.PageFailure ? "PAGE fail" : "sin salida", cancellationToken).ConfigureAwait(false))
+                            return;
+
                         Interlocked.Increment(ref fail);
+                        _ = TryTriggerHighFailAbort(name);
                         var movedPath = MoveToAudiverisFailedFolder(input);
                         await Dispatcher.InvokeAsync(() =>
                         {
@@ -2660,16 +4031,27 @@ public partial class MainWindow : Window, IAsyncDisposable
         }
         catch (OperationCanceledException)
         {
-            Log($"⏹️ {label} cancelado por usuario (ok={ok}, parcial={partial}, fail={fail}).");
+            if (!ct.IsCancellationRequested && Volatile.Read(ref abortByHighFail) == 1)
+                Log($"🛑 {label} detenido por guardrail de fallos (ok={ok}, parcial={partial}, fail={fail}).");
+            else
+                Log($"⏹️ {label} cancelado por usuario (ok={ok}, parcial={partial}, fail={fail}).");
         }
 
         SaveAudiverisPageFailures();
         SaveAudiverisTimeoutFamilies();
         SaveAudiverisTimeoutStrikes();
+        SaveAudiverisSuccessStreaks();
+        SaveAudiverisAllVariantsFailed();
         InvalidateRawFilesCache(fallbackOutputDir);
         UpdateAudiverisStatus();
 
-        return (ok, partial, fail, skippedByFamilyTimeout);
+        if (quarantinePhase2BudgetSkips > 0)
+            LogDebug($"ℹ️ {label}: cuarentena fase2 omitida por presupuesto en {quarantinePhase2BudgetSkips} archivo(s).");
+
+        var avgTimeout = processed > 0
+            ? (int)Math.Round(timeoutSecondsTotal / (double)Math.Max(1, processed))
+            : 0;
+        return (ok, partial, fail, skippedByFamilyTimeout, fallbackOemerOk, fallbackBudgetSkips, fallbackAttempts, effectiveBudgetPercent, Volatile.Read(ref abortByHighFail) == 1, avgTimeout);
     }
 
     private void BtnCancelAudiveris_Click(object sender, RoutedEventArgs e)
@@ -2692,15 +4074,20 @@ public partial class MainWindow : Window, IAsyncDisposable
     {
         var cooldownCount = _oemerTimeoutFamilies.Count;
         var strikeCount = _oemerTimeoutStrikes.Count;
+        var hostileCount = _hostileFolderConservativeUntil.Count(kv => kv.Value > DateTime.UtcNow);
         _oemerTimeoutFamilies.Clear();
         _oemerTimeoutStrikes.Clear();
         _oemerStrikeLastUtc.Clear();
         _oemerTimeoutFamiliesDirty = true;
         _oemerTimeoutStrikesDirty = true;
+        _hostileFolderConsecutiveFails.Clear();
+        _hostileFolderConservativeUntil.Clear();
         SaveOemerTimeoutFamilies();
         SaveOemerTimeoutStrikes();
+        QueueSaveHostileFolders();
         UpdateOemerStatus();
-        Log($"🔄 oemer: cooldown y strikes reiniciados ({cooldownCount} familias, {strikeCount} strikes).");
+        UpdateAudiverisStatus();
+        Log($"🔄 oemer: cooldown y strikes reiniciados ({cooldownCount} familias, {strikeCount} strikes, {hostileCount} carpetas hostiles).");
     }
 
     private async void BtnConvertOemer_Click(object sender, RoutedEventArgs e)
@@ -2775,8 +4162,29 @@ public partial class MainWindow : Window, IAsyncDisposable
         var familyPending = SelectFirstPerAudiverisFamily(pending, out var skippedFamilyDuplicates, out _);
         if (skippedFamilyDuplicates > 0)
             Log($"ℹ️ oemer: {skippedFamilyDuplicates} archivo(s) omitidos por duplicado de familia (a4/let).");
+        var manualOemerPrepared = ArrangeBatchByConductor("oemer", familyPending, out var manualOemerRiskSkips, out var manualOemerGhostSkips);
+        if (manualOemerRiskSkips > 0)
+            Log($"🧠 oemer: {manualOemerRiskSkips} archivo(s) omitidos por predictor de riesgo.");
+        if (manualOemerGhostSkips > 0)
+            Log($"👻 oemer: {manualOemerGhostSkips} archivo(s) aplazados por replay fantasma.");
+        familyPending = manualOemerPrepared;
+        if (familyPending.Count == 0)
+        {
+            Log("🎵 oemer: sin candidatos tras predictor/replay.");
+            return;
+        }
 
-        var batch = familyPending.Take(_oemerBatchSize).ToList();
+        var requestedBatchSize = PromptBatchSizeForRun("oemer", _oemerBatchSize, familyPending.Count, _lastOemerRequestedBatchSize);
+        if (!requestedBatchSize.HasValue)
+        {
+            Log("ℹ️ oemer cancelado por usuario antes de iniciar.");
+            return;
+        }
+
+        _lastOemerRequestedBatchSize = requestedBatchSize.Value;
+        SaveUiState();
+
+        var batch = familyPending.Take(requestedBatchSize.Value).ToList();
         var deferred = familyPending.Count - batch.Count;
 
         var proceed = DarkDialogService.ShowMessage(
@@ -2794,6 +4202,7 @@ public partial class MainWindow : Window, IAsyncDisposable
         var effectiveOemerParallel = GetEffectiveOemerParallel();
         Log($"🎵 oemer: inicio conversión de {batch.Count} archivo(s) (paralelo={effectiveOemerParallel}, cfg={_oemerParallel})." + (deferred > 0 ? $" ({deferred} quedan pendientes)" : string.Empty));
         _oemerLog.Clear();
+        _oemerFailTypeCounters.Clear();
 
         _oemerRunning = true;
         _oemerCts = new CancellationTokenSource();
@@ -2802,13 +4211,80 @@ public partial class MainWindow : Window, IAsyncDisposable
         btnSearch.IsEnabled = false;
         btnDownload.IsEnabled = false;
         txtStatus.Text = "🎵 Convirtiendo con oemer...";
+        _currentOemerBatchFolder = destFolder;
+        var warmupApplied = _enableWarmupTimeout && !_warmupDoneEngines.ContainsKey("oemer");
+        if (IsHostileFolder(destFolder)) Log($"⚠️ oemer: carpeta hostil activa → perfil conservador.");
 
         try
         {
+            var runSw = Stopwatch.StartNew();
             var r = await RunOemerBatchCoreAsync(batch, oemerExe, prefixArgs, "oemer", destFolder, _oemerCts.Token);
-            var statusMsg = $"🎵 oemer: {r.Ok}/{batch.Count} convertidas | ✅ {r.Ok}, ❌ {r.Fail}";
+            runSw.Stop();
+            var statusMsg = $"🎵 oemer: {r.Ok}/{batch.Count} convertidas | ✅ {r.Ok}, ❌ {r.Fail}" +
+                            (r.FallbackAudiverisOk > 0 ? $", ↪️ {r.FallbackAudiverisOk} fallback Audiveris" : string.Empty) +
+                            (r.FallbackBudgetSkips > 0 ? $", 🧯 {r.FallbackBudgetSkips} fallback omitidos por presupuesto" : string.Empty) +
+                            (r.FallbackAttempts > 0 ? $", 🔁 {r.FallbackAttempts} intentos fallback ({r.EffectiveBudgetPercent}%)" : string.Empty) +
+                            (r.AbortedByGuardrail ? ", 🛑 guardrail" : string.Empty);
             txtStatus.Text = statusMsg;
             Log(statusMsg + (deferred > 0 ? $" | pendientes: {deferred}" : string.Empty));
+            if (r.Fail > 0 && _oemerFailTypeCounters.Count > 0)
+            {
+                var topTypes = _oemerFailTypeCounters
+                    .OrderByDescending(kv => kv.Value)
+                    .Take(2)
+                    .Select(kv => $"{kv.Key}×{kv.Value}");
+                Log($"📊 Top fallos oemer: {string.Join(", ", topTypes)}");
+            }
+            SaveOmrBatchMetrics(new OmrBatchMetricsEntry
+            {
+                DateUtc = DateTime.UtcNow,
+                Engine = "oemer",
+                RunLabel = "manual",
+                RootDir = destFolder,
+                EffectiveParallel = effectiveOemerParallel,
+                InputCount = batch.Count,
+                ConvertedOk = r.Ok,
+                ConvertedPartial = 0,
+                Failed = r.Fail,
+                TimeoutFailures = r.TimeoutFailures,
+                TimeoutRatePct = batch.Count > 0 ? (int)Math.Round(r.TimeoutFailures * 100.0 / Math.Max(1, batch.Count)) : 0,
+                TimeoutFailuresFallbackAttempted = r.TimeoutFailuresFallbackAttempted,
+                TimeoutFailuresFallbackSkipped = r.TimeoutFailuresFallbackSkipped,
+                FallbackSuccesses = r.FallbackAudiverisOk,
+                FallbackAttempts = r.FallbackAttempts,
+                FallbackBudgetSkips = r.FallbackBudgetSkips,
+                EffectiveBudgetPercent = r.EffectiveBudgetPercent,
+                AbortedByGuardrail = r.AbortedByGuardrail,
+                WarmupApplied = warmupApplied,
+                TimeoutSecondsAppliedAvg = r.AvgTimeoutSecondsApplied,
+                DominantFailType = GetDominantFailType(_oemerFailTypeCounters),
+                DurationSeconds = runSw.Elapsed.TotalSeconds,
+                FallbackBudgetScale = _oemerFallbackBudgetScale,
+                ConductorDeltaPct = EstimateConductorDeltaPct("oemer", batch)
+            });
+            var oemerProcessed = r.Ok + r.Fail;
+            RecordBatchFolderResult(destFolder, oemerProcessed, r.Fail);
+            SaveOmrConductorState();
+            _warmupDoneEngines.TryAdd("oemer", true);
+            _oemerFallbackBudgetScale = UpdateFallbackBudgetScale(_oemerFallbackBudgetScale, r.FallbackAttempts, r.FallbackAudiverisOk);
+            _oemerParallelScale = UpdateParallelScale(_oemerParallelScale, oemerProcessed, r.Fail, r.AbortedByGuardrail);
+            if (_enableOmrAdaptiveParallel)
+            {
+                var timeoutRatePct = oemerProcessed > 0 ? (int)Math.Round(r.TimeoutFailures * 100.0 / Math.Max(1, oemerProcessed)) : 0;
+                if (oemerProcessed >= _omrAbortMinSamples && timeoutRatePct >= _oemerTimeoutHeavyPct)
+                    _oemerTimeoutHeavyStreak++;
+                else
+                    _oemerTimeoutHeavyStreak = 0;
+
+                if (_oemerTimeoutHeavyStreak >= 2 && effectiveOemerParallel > 1)
+                {
+                    _oemerParallelScale = Math.Clamp(_oemerParallelScale * 0.85, 0.50, 1.60);
+                    _oemerTimeoutHeavyStreak = 0;
+                    Log($"⚠️ oemer adaptive: timeouts altos sostenidos; bajando paralelo (tmr={timeoutRatePct}%, umbral={_oemerTimeoutHeavyPct}%).");
+                }
+            }
+            LogDebug($"🎵 oemer adaptive: parallelScale={_oemerParallelScale:0.00}, budgetScale={_oemerFallbackBudgetScale:0.00}");
+            SaveUiState();
         }
         catch (Exception ex)
         {
@@ -2818,6 +4294,7 @@ public partial class MainWindow : Window, IAsyncDisposable
         }
         finally
         {
+            _currentOemerBatchFolder = null;
             _oemerRunning = false;
             _oemerCts?.Dispose();
             _oemerCts = null;
@@ -2870,9 +4347,39 @@ public partial class MainWindow : Window, IAsyncDisposable
         var familyPending = SelectFirstPerAudiverisFamily(pending, out var skippedFamilyDuplicates, out _);
         if (skippedFamilyDuplicates > 0)
             Log($"ℹ️ Auto-oemer: {skippedFamilyDuplicates} archivo(s) omitidos por duplicado de familia (a4/let).");
+        var autoOemerPrepared = ArrangeBatchByConductor("oemer", familyPending, out var autoOemerRiskSkips, out var autoOemerGhostSkips);
+        if (autoOemerRiskSkips > 0)
+            Log($"🧠 Auto-oemer: {autoOemerRiskSkips} archivo(s) omitidos por predictor de riesgo.");
+        if (autoOemerGhostSkips > 0)
+            Log($"👻 Auto-oemer: {autoOemerGhostSkips} archivo(s) aplazados por replay fantasma.");
+        familyPending = autoOemerPrepared;
+        if (familyPending.Count == 0)
+        {
+            Log("🎵 Auto-oemer: sin candidatos tras predictor/replay.");
+            return;
+        }
 
+        var effectiveOemerParallel = GetEffectiveOemerParallel();
+        _currentOemerBatchFolder = destFolder;
+        var warmupApplied = _enableWarmupTimeout && !_warmupDoneEngines.ContainsKey("oemer");
+        if (IsHostileFolder(destFolder))
+        {
+            var key = destFolder.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar).ToLowerInvariant();
+            if (_hostileFolderConservativeUntil.TryGetValue(key, out var until))
+            {
+                var remaining = (until - DateTime.UtcNow).TotalDays;
+                var hostileDays = (int)Math.Ceiling(remaining);
+                if (hostileDays >= 2)
+                {
+                    Log($"⚠️ Auto-oemer: carpeta hostil por {Math.Max(1, hostileDays)}+ días. Omitiendo conversión automática.");
+                    return;
+                }
+            }
+            Log($"⚠️ Auto-oemer: carpeta hostil activa → perfil conservador.");
+        }
         Log($"🎵 Auto-oemer: procesando {familyPending.Count} archivo(s)...");
         _oemerLog.Clear();
+        _oemerFailTypeCounters.Clear();
         _oemerRunning = true;
         _oemerCts = new CancellationTokenSource();
         if (btnConvertOemer != null) btnConvertOemer.IsEnabled = false;
@@ -2880,10 +4387,74 @@ public partial class MainWindow : Window, IAsyncDisposable
 
         try
         {
+            var runSw = Stopwatch.StartNew();
             var r = await RunOemerBatchCoreAsync(familyPending, oemerExe, prefixArgs, "Auto-oemer", destFolder, _oemerCts.Token);
-            var msg = $"🎵 Auto-oemer: {r.Ok}/{familyPending.Count} convertidas | ✅ {r.Ok}, ❌ {r.Fail}";
+            runSw.Stop();
+            var msg = $"🎵 Auto-oemer: {r.Ok}/{familyPending.Count} convertidas | ✅ {r.Ok}, ❌ {r.Fail}" +
+                      (r.FallbackAudiverisOk > 0 ? $", ↪️ {r.FallbackAudiverisOk} fallback Audiveris" : string.Empty) +
+                      (r.FallbackBudgetSkips > 0 ? $", 🧯 {r.FallbackBudgetSkips} fallback omitidos por presupuesto" : string.Empty) +
+                      (r.FallbackAttempts > 0 ? $", 🔁 {r.FallbackAttempts} intentos fallback ({r.EffectiveBudgetPercent}%)" : string.Empty) +
+                      (r.AbortedByGuardrail ? ", 🛑 guardrail" : string.Empty);
             txtStatus.Text = msg;
             Log(msg);
+            if (r.Fail > 0 && _oemerFailTypeCounters.Count > 0)
+            {
+                var topTypes = _oemerFailTypeCounters
+                    .OrderByDescending(kv => kv.Value)
+                    .Take(2)
+                    .Select(kv => $"{kv.Key}×{kv.Value}");
+                Log($"📊 Top fallos Auto-oemer: {string.Join(", ", topTypes)}");
+            }
+            SaveOmrBatchMetrics(new OmrBatchMetricsEntry
+            {
+                DateUtc = DateTime.UtcNow,
+                Engine = "oemer",
+                RunLabel = "auto",
+                RootDir = destFolder,
+                EffectiveParallel = effectiveOemerParallel,
+                InputCount = familyPending.Count,
+                ConvertedOk = r.Ok,
+                ConvertedPartial = 0,
+                Failed = r.Fail,
+                TimeoutFailures = r.TimeoutFailures,
+                TimeoutRatePct = familyPending.Count > 0 ? (int)Math.Round(r.TimeoutFailures * 100.0 / Math.Max(1, familyPending.Count)) : 0,
+                TimeoutFailuresFallbackAttempted = r.TimeoutFailuresFallbackAttempted,
+                TimeoutFailuresFallbackSkipped = r.TimeoutFailuresFallbackSkipped,
+                FallbackSuccesses = r.FallbackAudiverisOk,
+                FallbackAttempts = r.FallbackAttempts,
+                FallbackBudgetSkips = r.FallbackBudgetSkips,
+                EffectiveBudgetPercent = r.EffectiveBudgetPercent,
+                AbortedByGuardrail = r.AbortedByGuardrail,
+                WarmupApplied = warmupApplied,
+                TimeoutSecondsAppliedAvg = r.AvgTimeoutSecondsApplied,
+                DominantFailType = GetDominantFailType(_oemerFailTypeCounters),
+                DurationSeconds = runSw.Elapsed.TotalSeconds,
+                FallbackBudgetScale = _oemerFallbackBudgetScale,
+                ConductorDeltaPct = EstimateConductorDeltaPct("oemer", familyPending)
+            });
+            var oemerProcessed = r.Ok + r.Fail;
+            RecordBatchFolderResult(destFolder, oemerProcessed, r.Fail);
+            SaveOmrConductorState();
+            _warmupDoneEngines.TryAdd("oemer", true);
+            _oemerFallbackBudgetScale = UpdateFallbackBudgetScale(_oemerFallbackBudgetScale, r.FallbackAttempts, r.FallbackAudiverisOk);
+            _oemerParallelScale = UpdateParallelScale(_oemerParallelScale, oemerProcessed, r.Fail, r.AbortedByGuardrail);
+            if (_enableOmrAdaptiveParallel)
+            {
+                var timeoutRatePct = oemerProcessed > 0 ? (int)Math.Round(r.TimeoutFailures * 100.0 / Math.Max(1, oemerProcessed)) : 0;
+                if (oemerProcessed >= _omrAbortMinSamples && timeoutRatePct >= _oemerTimeoutHeavyPct)
+                    _oemerTimeoutHeavyStreak++;
+                else
+                    _oemerTimeoutHeavyStreak = 0;
+
+                if (_oemerTimeoutHeavyStreak >= 2 && effectiveOemerParallel > 1)
+                {
+                    _oemerParallelScale = Math.Clamp(_oemerParallelScale * 0.85, 0.50, 1.60);
+                    _oemerTimeoutHeavyStreak = 0;
+                    Log($"⚠️ Auto-oemer adaptive: timeouts altos sostenidos; bajando paralelo (tmr={timeoutRatePct}%, umbral={_oemerTimeoutHeavyPct}%).");
+                }
+            }
+            LogDebug($"🎵 oemer adaptive: parallelScale={_oemerParallelScale:0.00}, budgetScale={_oemerFallbackBudgetScale:0.00}");
+            SaveUiState();
         }
         catch (Exception ex)
         {
@@ -2891,6 +4462,7 @@ public partial class MainWindow : Window, IAsyncDisposable
         }
         finally
         {
+            _currentOemerBatchFolder = null;
             _oemerRunning = false;
             _oemerCts?.Dispose();
             _oemerCts = null;
@@ -2899,7 +4471,7 @@ public partial class MainWindow : Window, IAsyncDisposable
         }
     }
 
-    private async Task<(int Ok, int Fail)> RunOemerBatchCoreAsync(
+    private async Task<(int Ok, int Fail, int TimeoutFailures, int TimeoutFailuresFallbackAttempted, int TimeoutFailuresFallbackSkipped, int FallbackAudiverisOk, int FallbackBudgetSkips, int FallbackAttempts, int EffectiveBudgetPercent, bool AbortedByGuardrail, int AvgTimeoutSecondsApplied)> RunOemerBatchCoreAsync(
         IList<string> batch,
         string oemerExe,
         string[] prefixArgs,
@@ -2907,19 +4479,122 @@ public partial class MainWindow : Window, IAsyncDisposable
         string rootDir,
         CancellationToken ct = default)
     {
-        int ok = 0, fail = 0, processed = 0;
-        int total = batch.Count;
+        int ok = 0, fail = 0, processed = 0, timeoutFailures = 0, timeoutFailuresFallbackAttempted = 0, timeoutFailuresFallbackSkipped = 0, fallbackAudiverisOk = 0, fallbackBudgetSkips = 0;
+        long timeoutSecondsTotal = 0;
+        var processingBatch = ArrangeBatchByConductor("oemer", batch, out _, out _);
+        int total = processingBatch.Count;
         var effectiveParallel = GetEffectiveOemerParallel();
+        var audiverisExe = _enableOmrCrossFallback ? ResolveAudiverisExecutable() : null;
+        var canUseAudiverisFallback = !string.IsNullOrWhiteSpace(audiverisExe);
+        var effectiveBudgetPercent = Math.Clamp((int)Math.Round(_omrFallbackBudgetPercent * _oemerFallbackBudgetScale), 0, 100);
+        var maxFallbackAttempts = effectiveBudgetPercent <= 0
+            ? 0
+            : Math.Max(1, (int)Math.Ceiling(total * (effectiveBudgetPercent / 100d)));
+        var fallbackAttempts = 0;
+        using var failStopCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        var abortByHighFail = 0;
+        var guardrailGraceUsed = 0;
+
+        bool TryReserveFallbackAttempt()
+        {
+            if (maxFallbackAttempts <= 0)
+                return false;
+
+            while (true)
+            {
+                var snap = Volatile.Read(ref fallbackAttempts);
+                if (snap >= maxFallbackAttempts)
+                    return false;
+                if (Interlocked.CompareExchange(ref fallbackAttempts, snap + 1, snap) == snap)
+                    return true;
+            }
+        }
+
+        bool TryTriggerHighFailAbort(string lastFileName)
+        {
+            if (!_omrAbortOnHighFail || maxFallbackAttempts <= 0)
+                return false;
+
+            var attemptsUsed = Volatile.Read(ref fallbackAttempts);
+            if (attemptsUsed < maxFallbackAttempts)
+                return false;
+
+            var processedNow = Volatile.Read(ref processed);
+            if (processedNow < _omrAbortMinSamples)
+                return false;
+
+            var failNow = Volatile.Read(ref fail);
+            if ((failNow * 100) < (_omrAbortFailRatePercent * processedNow))
+                return false;
+
+            if (_enableOmrAdaptiveParallel && effectiveParallel > 1 && Interlocked.CompareExchange(ref guardrailGraceUsed, 1, 0) == 0)
+            {
+                Log($"⚠️ {label}: guardrail fase 1 ({failNow}/{processedNow}, {_omrAbortFailRatePercent}%+). Se mantiene corrida actual y se degradará paralelo en próxima ejecución.");
+                return false;
+            }
+
+            if (Interlocked.CompareExchange(ref abortByHighFail, 1, 0) != 0)
+                return true;
+
+            Log($"🛑 {label}: corte temprano por fail-rate alto ({failNow}/{processedNow}, {_omrAbortFailRatePercent}%+) con presupuesto fallback agotado. Último: {lastFileName}");
+            try { failStopCts.Cancel(); } catch { }
+            return true;
+        }
+
+        async Task<bool> TryAudiverisFallbackAsync(string inputPath, int idx, string name, string reason, CancellationToken token)
+        {
+            if (!canUseAudiverisFallback || string.IsNullOrWhiteSpace(audiverisExe))
+                return false;
+            if (!TryReserveFallbackAttempt())
+            {
+                Interlocked.Increment(ref fallbackBudgetSkips);
+                return false;
+            }
+
+            Log($"↪️ oemer fallback→Audiveris [{idx}/{total}] {name}: {reason}");
+            try
+            {
+                var fb = await RunAudiverisConversionAsync(audiverisExe, inputPath, rootDir, allowSiblingFallback: true, siblingSet: null, ct: token).ConfigureAwait(false);
+                if (!fb.Success)
+                    return false;
+
+                Interlocked.Increment(ref ok);
+                Interlocked.Increment(ref fallbackAudiverisOk);
+                RegisterOmrFamilyOutcome(NormalizeAudiverisFamilyKey(inputPath), "audiveris", timedOut: false, failed: false, filePath: inputPath);
+                var snapOk = Volatile.Read(ref ok); var snapFail = Volatile.Read(ref fail);
+                Log($"✅ Fallback Audiveris OK [{idx}/{total}]: {name} (ok={snapOk}, fail={snapFail})");
+                await Dispatcher.InvokeAsync(() =>
+                    _oemerLog.Add(new AudiverisLogItem { FileName = name, Status = "↪️ Fallback Audiveris" }));
+                return true;
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                LogDebug($"⚠️ Fallback Audiveris falló en {name}: {ex.GetType().Name}: {ex.Message}");
+                return false;
+            }
+        }
 
         try
         {
+            LogDebug($"{label}: fallback budget efectivo={effectiveBudgetPercent}% (escala={_oemerFallbackBudgetScale:0.00}, maxIntentos={maxFallbackAttempts})");
             await Parallel.ForEachAsync(
-                batch,
-                new ParallelOptions { MaxDegreeOfParallelism = effectiveParallel, CancellationToken = ct },
+                processingBatch,
+                new ParallelOptions { MaxDegreeOfParallelism = effectiveParallel, CancellationToken = failStopCts.Token },
                 async (input, innerCt) =>
                 {
-                    var name = Path.GetFileName(input);
-                    var familyKey = NormalizeAudiverisFamilyKey(input);
+                    // Validar y corregir nombre del archivo ANTES de procesamiento
+                    var correctedInput = input;
+                    var initialName = Path.GetFileName(input);
+                    if (FileNameHelper.TryValidateAndCorrectFileName(input, out var corrected))
+                    {
+                        correctedInput = corrected;
+                        var newName = Path.GetFileName(correctedInput);
+                        if (!string.Equals(initialName, newName, StringComparison.OrdinalIgnoreCase))
+                            Log($"✏️ {label} {initialName} → {newName}");
+                    }
+
+                    var name = Path.GetFileName(correctedInput);
+                    var familyKey = NormalizeAudiverisFamilyKey(correctedInput);
                     var idx = Interlocked.Increment(ref processed);
                     if (idx == 1 || idx == total || idx % 5 == 0)
                     {
@@ -2928,19 +4603,39 @@ public partial class MainWindow : Window, IAsyncDisposable
                     }
                     LogDebug($"{label} [{idx}/{total}] {name}");
 
-                    var computedTimeout = ComputeOemerTimeoutSeconds(input);
+                    var computedTimeout = ComputeOemerTimeoutSeconds(correctedInput);
+                    Interlocked.Add(ref timeoutSecondsTotal, computedTimeout);
                     var sw = Stopwatch.StartNew();
                     (bool Success, bool PermanentFailure) result;
                     try
                     {
-                        result = await RunOemerConversionAsync(oemerExe, prefixArgs, input, innerCt).ConfigureAwait(false);
+                        result = await RunOemerConversionAsync(oemerExe, prefixArgs, correctedInput, innerCt).ConfigureAwait(false);
                     }
                     catch (TimeoutException tex)
                     {
                         sw.Stop();
-                        Interlocked.Increment(ref fail);
-                        MarkOemerFamilyTimeout(input, familyKey);
+                        RegisterOmrFamilyOutcome(familyKey, "oemer", timedOut: true, failed: true, filePath: correctedInput);
+                        Interlocked.Increment(ref timeoutFailures);
+                        if (canUseAudiverisFallback)
+                        {
+                            // Try fallback; track if attempted or skipped
+                            if (await TryAudiverisFallbackAsync(correctedInput, idx, name, "timeout", innerCt).ConfigureAwait(false))
+                            {
+                                Interlocked.Increment(ref timeoutFailuresFallbackAttempted);
+                                return;
+                            }
+                            else if (Volatile.Read(ref fallbackBudgetSkips) > 0)
+                            {
+                                // Budget was skipped (fallback budget exhausted)
+                                Interlocked.Increment(ref timeoutFailuresFallbackSkipped);
+                            }
+                        }
+
+                        MarkOemerFamilyTimeout(correctedInput, familyKey);
                         _ = Task.Run(() => AppendTelemetry(_oemerTelemetryPath, new TimeoutTelemetryEntry { FamilyKey = familyKey, ComputedTimeoutSeconds = computedTimeout, ActualElapsedSeconds = sw.Elapsed.TotalSeconds, TimedOut = true, DateUtc = DateTime.UtcNow }));
+
+                        Interlocked.Increment(ref fail);
+                        _ = TryTriggerHighFailAbort(name);
                         var snapOk = Volatile.Read(ref ok); var snapFail = Volatile.Read(ref fail);
                         Log($"❌ {label} timeout [{idx}/{total}] {name}: {tex.Message} (ok={snapOk}, fail={snapFail})");
                         await Dispatcher.InvokeAsync(() =>
@@ -2949,7 +4644,13 @@ public partial class MainWindow : Window, IAsyncDisposable
                     }
                     catch (Exception ex) when (ex is not OperationCanceledException)
                     {
+                        RegisterOmrFamilyOutcome(familyKey, "oemer", timedOut: false, failed: true, filePath: input);
+                        RegisterOmrFamilyOutcome(familyKey, "oemer", timedOut: false, failed: true, filePath: correctedInput);
+                        if (await TryAudiverisFallbackAsync(input, idx, name, $"error {ex.GetType().Name}", innerCt).ConfigureAwait(false))
+                            return;
+
                         Interlocked.Increment(ref fail);
+                        _ = TryTriggerHighFailAbort(name);
                         Log($"❌ {label} error [{idx}/{total}] {name}: {ex.GetType().Name}: {ex.Message}");
                         await Dispatcher.InvokeAsync(() =>
                             _oemerLog.Add(new AudiverisLogItem { FileName = name, Status = "❌ Error" }));
@@ -2966,6 +4667,7 @@ public partial class MainWindow : Window, IAsyncDisposable
                             _oemerTimeoutStrikesDirty = true;
                         if (_oemerStrikeLastUtc.TryRemove(familyKey, out _))
                             _oemerTimeoutStrikesDirty = true;
+                        RegisterOmrFamilyOutcome(familyKey, "oemer", timedOut: false, failed: false, filePath: correctedInput);
                         Interlocked.Increment(ref ok);
                         var snapOk2 = Volatile.Read(ref ok); var snapFail2 = Volatile.Read(ref fail);
                         Log($"✅ oemer [{idx}/{total}]: {name} (ok={snapOk2}, fail={snapFail2})");
@@ -2974,20 +4676,25 @@ public partial class MainWindow : Window, IAsyncDisposable
                     }
                     else
                     {
+                        RegisterOmrFamilyOutcome(familyKey, "oemer", timedOut: false, failed: true, filePath: correctedInput);
+                        if (await TryAudiverisFallbackAsync(correctedInput, idx, name, result.PermanentFailure ? "fallo permanente" : "sin salida", innerCt).ConfigureAwait(false))
+                            return;
+
                         Interlocked.Increment(ref fail);
+                        _ = TryTriggerHighFailAbort(name);
                         if (result.PermanentFailure)
                         {
                             Log($"🚫 oemer fallo permanente [{idx}/{total}]: {name}");
                             await Dispatcher.InvokeAsync(() =>
                             {
-                                if (_oemerKnownPageFailures.TryAdd(input, 0))
+                                if (_oemerKnownPageFailures.TryAdd(correctedInput, 0))
                                     _oemerKnownPageFailuresDirty = true;
                                 _oemerLog.Add(new AudiverisLogItem { FileName = name, Status = "🚫 Fallo permanente" });
                             });
                         }
                         else
                         {
-                            var movedPath = MoveToOemerFailedFolder(input);
+                            var movedPath = MoveToOemerFailedFolder(correctedInput);
                             var moved = movedPath != null ? " → _OemerFailed" : string.Empty;
                             Log($"⚠️ Sin salida [{idx}/{total}]: {name}{moved}");
                             await Dispatcher.InvokeAsync(() =>
@@ -3004,7 +4711,10 @@ public partial class MainWindow : Window, IAsyncDisposable
         }
         catch (OperationCanceledException)
         {
-            Log($"⏹️ {label} cancelado (ok={ok}, fail={fail}).");
+            if (!ct.IsCancellationRequested && Volatile.Read(ref abortByHighFail) == 1)
+                Log($"🛑 {label} detenido por guardrail de fallos (ok={ok}, fail={fail}).");
+            else
+                Log($"⏹️ {label} cancelado (ok={ok}, fail={fail}).");
         }
 
         SaveOemerPageFailures();
@@ -3013,7 +4723,10 @@ public partial class MainWindow : Window, IAsyncDisposable
         InvalidateRawFilesCache(rootDir);
         UpdateOemerStatus();
 
-        return (ok, fail);
+        var avgTimeout = processed > 0
+            ? (int)Math.Round(timeoutSecondsTotal / (double)Math.Max(1, processed))
+            : 0;
+        return (ok, fail, timeoutFailures, timeoutFailuresFallbackAttempted, timeoutFailuresFallbackSkipped, fallbackAudiverisOk, fallbackBudgetSkips, fallbackAttempts, effectiveBudgetPercent, Volatile.Read(ref abortByHighFail) == 1, avgTimeout);
     }
 
     private static (string Exe, string[] PrefixArgs) ResolveOemerCommand()
@@ -3145,7 +4858,16 @@ public partial class MainWindow : Window, IAsyncDisposable
             }
 
             Log($"🎵 oemer PDF ({name}): {pages.Count} página(s) → ejecutando oemer…");
+
+            // Cap absoluto: saltar antes de procesar si el PDF supera el límite configurado
+            if (_oemerPdfMaxPagesAbsolute > 0 && pages.Count > _oemerPdfMaxPagesAbsolute)
+            {
+                Log($"⏭️ oemer PDF ({name}): {pages.Count} páginas supera el límite absoluto de {_oemerPdfMaxPagesAbsolute} (SCOREDOWN_OEMER_PDF_MAX_PAGES_ABSOLUTE). Saltando.");
+                return (false, false);
+            }
+
             int okPages = 0;
+            int failPages = 0;
             for (int pageIdx = 0; pageIdx < pages.Count; pageIdx++)
             {
                 ct.ThrowIfCancellationRequested();
@@ -3174,7 +4896,20 @@ public partial class MainWindow : Window, IAsyncDisposable
                 }
                 else
                 {
+                    failPages++;
                     LogDebug($"🎵 oemer PDF ({name}) pág {pageNum}: sin salida (permanent={result.PermanentFailure}).");
+                }
+
+                var processedPages = pageNum;
+                var failRatePct = processedPages > 0
+                    ? (int)Math.Round(failPages * 100.0 / processedPages)
+                    : 0;
+                if (processedPages >= _oemerPdfFailFastMinPages &&
+                    failPages >= _oemerPdfFailFastMaxFails &&
+                    failRatePct >= _oemerPdfFailFastFailRatePct)
+                {
+                    Log($"🛑 oemer PDF ({name}): fail-fast activado en pág {pageNum}/{pages.Count} (ok={okPages}, fail={failPages}, ratio={failRatePct}%).");
+                    break;
                 }
             }
 
@@ -3207,14 +4942,12 @@ public partial class MainWindow : Window, IAsyncDisposable
         var timeout = TimeSpan.FromSeconds(timeoutSeconds);
         var name = Path.GetFileName(inputPath);
 
-        var psi = new System.Diagnostics.ProcessStartInfo
-        {
-            FileName = oemerExe,
-            UseShellExecute = false,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            CreateNoWindow = true
-        };
+        var oemerArgs = new List<string>(prefixArgs.Length + 3);
+        oemerArgs.AddRange(prefixArgs);
+        oemerArgs.Add(inputPath);
+        oemerArgs.Add("-o");
+        oemerArgs.Add(outputDir);
+        var psi = BuildProcessStartInfoPortable(oemerExe, oemerArgs);
         var ortThreads = ReadFeatureFlagInt("SCOREDOWN_OEMER_ORT_THREADS", 0, 0, 64);
         if (ortThreads == 0)
         {
@@ -3223,11 +4956,6 @@ public partial class MainWindow : Window, IAsyncDisposable
             ortThreads = Math.Max(1, logical / parallel);
         }
         psi.Environment["OEMER_ORT_THREADS"] = ortThreads.ToString();
-        foreach (var a in prefixArgs) psi.ArgumentList.Add(a);
-        psi.ArgumentList.Add(inputPath);
-        psi.ArgumentList.Add("-o");
-        psi.ArgumentList.Add(outputDir);
-
         LogDebug($"🎵 oemer spawn ({name}): timeout={timeoutSeconds}s exe={oemerExe}");
 
         using var process = new System.Diagnostics.Process { StartInfo = psi };
@@ -3270,6 +4998,9 @@ public partial class MainWindow : Window, IAsyncDisposable
 
         var combined = (stdout + "\n" + stderr).Trim();
         var isPermanent = IsOemerPermanentFailure(combined);
+        // Telemetría de tipos de fallo
+        var failType = ClassifyOemerFailType(combined);
+        _oemerFailTypeCounters.AddOrUpdate(failType, 1, (_, c) => c + 1);
         var tail = combined.Length > 500 ? "..." + combined[^500..] : combined;
         Log($"⚠️ oemer fallo ({name}): exit={process.ExitCode} {tail}");
         return (false, isPermanent);
@@ -3284,6 +5015,76 @@ public partial class MainWindow : Window, IAsyncDisposable
                output.Contains("no notes detected", StringComparison.OrdinalIgnoreCase) ||
                // oemer pasó PDF directamente sin conversión previa (UnidentifiedImageError)
                output.Contains("UnidentifiedImageError", StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>Clasifica el tipo de error de oemer para telemetría.</summary>
+    private static string ClassifyOemerFailType(string output)
+    {
+        if (string.IsNullOrWhiteSpace(output)) return "unknown";
+        if (output.Contains("UnidentifiedImageError", StringComparison.OrdinalIgnoreCase)) return "UnidentifiedImage";
+        if (output.Contains("No staff", StringComparison.OrdinalIgnoreCase) ||
+            output.Contains("no staffs", StringComparison.OrdinalIgnoreCase) ||
+            output.Contains("staffline", StringComparison.OrdinalIgnoreCase) ||
+            output.Contains("Empty staffline", StringComparison.OrdinalIgnoreCase)) return "staffline";
+        if (output.Contains("AssertionError", StringComparison.OrdinalIgnoreCase)) return "AssertionError";
+        if (output.Contains("ZeroDivisionError", StringComparison.OrdinalIgnoreCase)) return "ZeroDivision";
+        if (output.Contains("TypeError", StringComparison.OrdinalIgnoreCase)) return "TypeError";
+        if (output.Contains("ValueError", StringComparison.OrdinalIgnoreCase)) return "ValueError";
+        if (output.Contains("Empty page", StringComparison.OrdinalIgnoreCase) ||
+            output.Contains("no notes detected", StringComparison.OrdinalIgnoreCase)) return "EmptyPage";
+        if (output.Contains("RuntimeError", StringComparison.OrdinalIgnoreCase)) return "RuntimeError";
+        if (output.Contains("MemoryError", StringComparison.OrdinalIgnoreCase)) return "MemoryError";
+        return "other";
+    }
+
+    private static string GetDominantFailType(ConcurrentDictionary<string, int> counters)
+    {
+        if (counters.Count == 0) return string.Empty;
+        var top = counters.OrderByDescending(kv => kv.Value).FirstOrDefault();
+        return top.Value > 0 ? top.Key : string.Empty;
+    }
+
+    private static System.Diagnostics.ProcessStartInfo BuildProcessStartInfoPortable(string exe, IReadOnlyList<string> args)
+    {
+        var isCmdWrapper = exe.EndsWith(".cmd", StringComparison.OrdinalIgnoreCase) ||
+                           exe.EndsWith(".bat", StringComparison.OrdinalIgnoreCase);
+        if (!isCmdWrapper)
+        {
+            var psi = new System.Diagnostics.ProcessStartInfo
+            {
+                FileName = exe,
+                UseShellExecute = false,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                CreateNoWindow = true
+            };
+            foreach (var arg in args)
+                psi.ArgumentList.Add(arg);
+            return psi;
+        }
+
+        var cmdLineParts = new List<string>(args.Count + 1) { QuoteForCmd(exe) };
+        foreach (var arg in args)
+            cmdLineParts.Add(QuoteForCmd(arg));
+
+        return new System.Diagnostics.ProcessStartInfo
+        {
+            FileName = "cmd.exe",
+            Arguments = "/d /s /c \"" + string.Join(" ", cmdLineParts) + "\"",
+            UseShellExecute = false,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            CreateNoWindow = true
+        };
+    }
+
+    private static string QuoteForCmd(string arg)
+    {
+        if (string.IsNullOrEmpty(arg))
+            return "\"\"";
+        if (arg.IndexOfAny([' ', '\t', '"']) < 0)
+            return arg;
+        return "\"" + arg.Replace("\"", "\"\"") + "\"";
     }
 
     private static string? MoveToOemerFailedFolder(string inputPath)
@@ -3477,9 +5278,14 @@ public partial class MainWindow : Window, IAsyncDisposable
             ? NormalizeAudiverisFamilyKey(inputPath)
             : timeoutFamilyKey;
         var strike = _oemerTimeoutStrikes.TryGetValue(familyKey, out var value) ? value : 0;
+        var creditBonusSeconds = GetAndConsumeTimeoutCreditBonusSeconds(familyKey);
         var isPdfInput = isFromPdf || string.Equals(Path.GetExtension(inputPath), ".pdf", StringComparison.OrdinalIgnoreCase);
         if (!isPdfInput)
-            return _oemerTimeoutSeconds + (strike * _oemerTimeoutStrikeBoostSeconds);
+        {
+            var nonPdf = _oemerTimeoutSeconds + (strike * _oemerTimeoutStrikeBoostSeconds);
+            var withCredit = nonPdf + creditBonusSeconds;
+            return IsHostileFolder(_currentOemerBatchFolder) ? (int)(withCredit * 1.5) : withCredit;
+        }
 
         var baseSeconds = Math.Max(_oemerTimeoutSeconds, _oemerPdfTimeoutMinSeconds);
         long bytes;
@@ -3498,9 +5304,23 @@ public partial class MainWindow : Window, IAsyncDisposable
                        + (sizeMb * _oemerPdfTimeoutPerMbSeconds)
                        + (extraPages * _oemerPdfTimeoutPerPageSeconds)
                        + (strike * _oemerTimeoutStrikeBoostSeconds);
+        adaptive += creditBonusSeconds;
+        var timeoutHeavyEscalation = _oemerTimeoutHeavyStreak >= 2 ? 0.05 * (_oemerTimeoutHeavyStreak - 1) : 0.0;
+        var p95Floor = ComputeP95TimeoutFloor(_oemerTelemetryPath, escalationPercent: timeoutHeavyEscalation);
+        var p95Ci = ComputeP95TimeoutConfidenceHalfWidth(_oemerTelemetryPath);
+        if (p95Floor > adaptive)
+        {
+            adaptive = p95Floor;
+            var ciPart = p95Ci > 0 ? $" ±{p95Ci}s" : string.Empty;
+            LogDebug($"🎵 oemer timeout: p95 floor {p95Floor}s{ciPart} aplicado ({Path.GetFileName(inputPath)})");
+        }
+        if (IsHostileFolder(_currentOemerBatchFolder))
+            adaptive = (int)(adaptive * 1.5);
+        else if (_enableWarmupTimeout && !_warmupDoneEngines.ContainsKey("oemer"))
+            adaptive = Math.Max(_oemerPdfTimeoutMinSeconds, (int)(adaptive * 0.6));
         var clamped = Math.Clamp(adaptive, _oemerPdfTimeoutMinSeconds, _oemerPdfTimeoutMaxSeconds);
         if (isFromPdf)
-            LogDebug($"🎵 oemer timeout ({Path.GetFileName(inputPath)}): base={baseSeconds}s size={sizeMb}MB pages={Math.Max(1, pdfPageCount)} strike={strike} => {clamped}s");
+            LogDebug($"🎵 oemer timeout ({Path.GetFileName(inputPath)}): base={baseSeconds}s size={sizeMb}MB pages={Math.Max(1, pdfPageCount)} strike={strike} credit={creditBonusSeconds}s => {clamped}s");
         return clamped;
     }
 
@@ -3508,14 +5328,64 @@ public partial class MainWindow : Window, IAsyncDisposable
     {
         // Reservar al menos un core para UI/IO evita saturación en CPU-only.
         var cpuBoundCap = Math.Max(1, Environment.ProcessorCount - 1);
-        return Math.Max(1, Math.Min(_audiverisParallel, cpuBoundCap));
+        if (IsHostileFolder(_currentAudiverisBatchFolder)) return 1; // conservative: serial
+        var adaptiveScale = _enableOmrAdaptiveParallel ? _audiverisParallelScale : 1.0;
+        var scaled = Math.Max(1, (int)Math.Round(_audiverisParallel * adaptiveScale));
+        var effective = Math.Max(1, Math.Min(scaled, cpuBoundCap));
+        return ApplyMemoryPressureCap(effective, "audiveris");
     }
 
     private int GetEffectiveOemerParallel()
     {
         // Reservar al menos un core para UI/IO evita saturación en CPU-only.
         var cpuBoundCap = Math.Max(1, Environment.ProcessorCount - 1);
-        return Math.Max(1, Math.Min(_oemerParallel, cpuBoundCap));
+        if (IsHostileFolder(_currentOemerBatchFolder)) return 1; // conservative: serial
+        var adaptiveScale = _enableOmrAdaptiveParallel ? _oemerParallelScale : 1.0;
+        var scaled = Math.Max(1, (int)Math.Round(_oemerParallel * adaptiveScale));
+        var effective = Math.Max(1, Math.Min(scaled, cpuBoundCap));
+        return ApplyMemoryPressureCap(effective, "oemer");
+    }
+
+    private int ApplyMemoryPressureCap(int parallel, string engine)
+    {
+        if (parallel <= 1)
+            return 1;
+
+        try
+        {
+            var gcInfo = GC.GetGCMemoryInfo();
+            var totalAvailable = gcInfo.TotalAvailableMemoryBytes;
+            if (totalAvailable <= 0)
+                return parallel;
+
+            using var proc = System.Diagnostics.Process.GetCurrentProcess();
+            var workingSet = proc.WorkingSet64;
+            var pressurePct = (int)Math.Round((workingSet * 100.0) / Math.Max(1, totalAvailable));
+            var isOemer = string.Equals(engine, "oemer", StringComparison.OrdinalIgnoreCase);
+            var mode = isOemer ? Volatile.Read(ref _oemerMemoryPressureMode) : Volatile.Read(ref _audiverisMemoryPressureMode);
+            var shouldThrottle = mode == 1
+                ? pressurePct >= (_omrMemoryPressurePct - _omrMemoryPressureHysteresisPct)
+                : pressurePct >= _omrMemoryPressurePct;
+            var nextMode = shouldThrottle ? 1 : 0;
+            if (isOemer)
+                Volatile.Write(ref _oemerMemoryPressureMode, nextMode);
+            else
+                Volatile.Write(ref _audiverisMemoryPressureMode, nextMode);
+
+            if (!shouldThrottle)
+                return parallel;
+
+            var reduced = Math.Max(1, (int)Math.Floor(parallel * ((100.0 - _omrMemoryPressureParallelReducePct) / 100.0)));
+            if (reduced < parallel)
+            {
+                LogDebug($"⚠️ {engine} parallel throttled por memoria: ws={(workingSet / (1024 * 1024))}MB, pressure={pressurePct}% >= {_omrMemoryPressurePct}% ({parallel}→{reduced}).");
+            }
+            return reduced;
+        }
+        catch
+        {
+            return parallel;
+        }
     }
 
     private static IEnumerable<string> SafeEnumerateFiles(string rootDir, Func<string, bool> filter)
@@ -3778,14 +5648,458 @@ public partial class MainWindow : Window, IAsyncDisposable
             .ToList();
     }
 
+    private static string BuildGenomeKey(string familyKey)
+    {
+        var stem = familyKey;
+        var sep = familyKey.LastIndexOf('|');
+        if (sep >= 0 && sep < familyKey.Length - 1)
+            stem = familyKey[(sep + 1)..];
+
+        var parts = stem
+            .Split(['_', '-', ' ', '.', '(', ')', '[', ']'], StringSplitOptions.RemoveEmptyEntries)
+            .Select(p => p.Trim().ToLowerInvariant())
+            .Where(p => p.Length >= 2)
+            .Where(p => p is not "scan" and not "score" and not "partitura" and not "music" and not "sheet" and not "pdf")
+            .ToList();
+        if (parts.Count == 0)
+            return "unknown";
+
+        var head = string.Join("", parts.Take(2));
+        var letters = new string(head.Where(char.IsLetterOrDigit).ToArray());
+        if (string.IsNullOrWhiteSpace(letters))
+            return "unknown";
+
+        var noVowels = new string(letters.Where(ch => "aeiou".IndexOf(char.ToLowerInvariant(ch)) < 0).ToArray());
+        var baseKey = string.IsNullOrWhiteSpace(noVowels) ? letters : noVowels;
+        return baseKey.Length <= 12 ? baseKey : baseKey[..12];
+    }
+
+    private int GetAndConsumeTimeoutCreditBonusSeconds(string familyKey)
+    {
+        if (!_omrFamilyTimeoutCredits.TryGetValue(familyKey, out var credits) || credits <= 0)
+        {
+            // Mercado de crédito: pedir prestado a familia muy sana.
+            var donor = _omrFamilyTimeoutCredits
+                .Where(kv => !string.Equals(kv.Key, familyKey, StringComparison.OrdinalIgnoreCase) && kv.Value >= 3)
+                .OrderByDescending(kv => kv.Value)
+                .Select(kv => kv.Key)
+                .FirstOrDefault();
+            if (string.IsNullOrWhiteSpace(donor))
+                return 0;
+
+            var donated = _omrFamilyTimeoutCredits.AddOrUpdate(donor, 0, (_, current) => Math.Max(0, current - 1));
+            if (donated < 0)
+                _omrFamilyTimeoutCredits[donor] = 0;
+            _omrFamilyCreditDebt.AddOrUpdate(familyKey, 1, (_, current) => Math.Clamp(current + 1, 0, 8));
+            LogDebug($"💳 crédito prestado: {Path.GetFileName(donor)} -> {Path.GetFileName(familyKey)} (deuda+1)");
+            return 10;
+        }
+
+        _omrFamilyTimeoutCredits.AddOrUpdate(familyKey, 0, (_, current) => Math.Max(0, current - 1));
+        return credits * 10;
+    }
+
+    private bool IsNightWindowUtc(DateTime utcNow)
+    {
+        var h = utcNow.Hour;
+        if (_omrNightWindowStartUtc <= _omrNightWindowEndUtc)
+            return h >= _omrNightWindowStartUtc && h <= _omrNightWindowEndUtc;
+        return h >= _omrNightWindowStartUtc || h <= _omrNightWindowEndUtc;
+    }
+
+    private int ComputeExpectedValueScore(string engine, string filePath, string family, int risk)
+    {
+        var engineScore = _omrFamilyEngineScore.TryGetValue(family, out var es) ? es : 0;
+        var genome = BuildGenomeKey(family);
+        var swiss = _omrGenomeEngineSwissScore.TryGetValue($"{genome}|{engine}", out var sw) ? sw : 0;
+        long size;
+        try { size = new FileInfo(filePath).Length; } catch { size = 0; }
+        var sizePenalty = (int)Math.Min(30, size / (1024 * 1024 * 8));
+        return Math.Clamp((engineScore * 3) + swiss - risk - sizePenalty, -200, 200);
+    }
+
+    private void MarkGhostRetry(string familyKey)
+    {
+        var min = Math.Max(1, _omrGhostRetryMinMinutes);
+        var max = Math.Max(min + 1, _omrGhostRetryMaxMinutes);
+        var span = Math.Max(1, max - min + 1);
+        var hash = Math.Abs(familyKey.GetHashCode(StringComparison.OrdinalIgnoreCase));
+        var offset = hash % span;
+        var minutes = min + offset;
+        _omrGhostRetryUntil[familyKey] = DateTime.UtcNow.AddMinutes(minutes);
+    }
+
+    private bool IsGhostRetryActive(string familyKey)
+    {
+        if (!_omrGhostRetryUntil.TryGetValue(familyKey, out var until))
+            return false;
+        if (until > DateTime.UtcNow)
+            return true;
+        _omrGhostRetryUntil.TryRemove(familyKey, out _);
+        return false;
+    }
+
+    private int EstimateFamilyRiskScore(string engine, string filePath, string familyKey)
+    {
+        var score = 0;
+        var isPdf = string.Equals(Path.GetExtension(filePath), ".pdf", StringComparison.OrdinalIgnoreCase);
+        if (isPdf) score += 8;
+
+        try
+        {
+            var sizeMb = new FileInfo(filePath).Length / (1024d * 1024d);
+            if (sizeMb > 80) score += 25;
+            else if (sizeMb > 40) score += 15;
+            else if (sizeMb > 20) score += 8;
+        }
+        catch { }
+
+        if (string.Equals(engine, "audiveris", StringComparison.OrdinalIgnoreCase))
+        {
+            if (_audiverisTimeoutStrikes.TryGetValue(familyKey, out var strike)) score += strike * 6;
+            if (_audiverisAllVariantsFailed.ContainsKey(familyKey)) score += 35;
+        }
+        else
+        {
+            if (_oemerTimeoutStrikes.TryGetValue(familyKey, out var strike)) score += strike * 6;
+            if (_oemerKnownPageFailures.ContainsKey(filePath)) score += 30;
+        }
+
+        var genome = BuildGenomeKey(familyKey);
+        if (_omrGenomePressure.TryGetValue(genome, out var g)) score += g * 7;
+        if (_omrFamilyRiskScore.TryGetValue(familyKey, out var rememberedRisk)) score += rememberedRisk;
+
+        return Math.Clamp(score, 0, 200);
+    }
+
+    private sealed class OmrBlackboxEvent
+    {
+        public DateTime DateUtc { get; set; }
+        public string EventType { get; set; } = string.Empty;
+        public string Engine { get; set; } = string.Empty;
+        public string FilePath { get; set; } = string.Empty;
+        public string Family { get; set; } = string.Empty;
+        public string Genome { get; set; } = string.Empty;
+        public int Risk { get; set; }
+        public int ExpectedValue { get; set; }
+        public int EngineScore { get; set; }
+        public string Decision { get; set; } = string.Empty;
+        public string Detail { get; set; } = string.Empty;
+        public bool TimedOut { get; set; }
+        public bool Failed { get; set; }
+    }
+
+    private void AppendOmrBlackboxEvent(OmrBlackboxEvent evt)
+    {
+        try
+        {
+            lock (_omrBlackboxLock)
+            {
+                var dir = Path.GetDirectoryName(_omrBlackboxPath);
+                if (!string.IsNullOrWhiteSpace(dir))
+                    Directory.CreateDirectory(dir);
+
+                if (File.Exists(_omrBlackboxPath))
+                {
+                    var fi = new FileInfo(_omrBlackboxPath);
+                    if (fi.Length > (long)_omrBlackboxMaxMb * 1024 * 1024)
+                    {
+                        var stamp = DateTime.UtcNow.ToString("yyyyMMdd_HHmmss", System.Globalization.CultureInfo.InvariantCulture);
+                        var archivePath = BuildTimestampedArchivePath(_omrBlackboxPath, stamp);
+                        try { File.Move(_omrBlackboxPath, archivePath); } catch { }
+                    }
+                }
+
+                var line = JsonSerializer.Serialize(evt);
+                File.AppendAllText(_omrBlackboxPath, line + Environment.NewLine, Encoding.UTF8);
+            }
+        }
+        catch { }
+    }
+
+    private List<string> ArrangeBatchByConductor(string engine, IEnumerable<string> candidates, out int skippedRisk, out int skippedGhost)
+    {
+        skippedRisk = 0;
+        skippedGhost = 0;
+        var prepared = new List<(string Path, string Family, int Risk, int EngineScore, int ExpectedValue, long Size, bool Explore)>();
+        var skipLogBudget = 8;
+        var nightMode = IsNightWindowUtc(DateTime.UtcNow);
+
+        foreach (var file in candidates)
+        {
+            var family = NormalizeAudiverisFamilyKey(file);
+            var genome = BuildGenomeKey(family);
+            if (IsGhostRetryActive(family))
+            {
+                var ghostRisk = EstimateFamilyRiskScore(engine, file, family);
+                var ghostExpected = ComputeExpectedValueScore(engine, file, family, ghostRisk);
+                if (nightMode && ghostExpected >= 35)
+                {
+                    // Cola cooperativa nocturna: rescata candidatos con buen valor esperado.
+                }
+                else
+                {
+                    skippedGhost++;
+                    _omrSkipReasonCounters.AddOrUpdate($"{engine}:ghost", 1, (_, current) => current + 1);
+                    AppendOmrBlackboxEvent(new OmrBlackboxEvent
+                    {
+                        DateUtc = DateTime.UtcNow,
+                        EventType = "decision",
+                        Engine = engine,
+                        FilePath = file,
+                        Family = family,
+                        Genome = genome,
+                        Risk = ghostRisk,
+                        ExpectedValue = ghostExpected,
+                        EngineScore = _omrFamilyEngineScore.TryGetValue(family, out var score) ? score : 0,
+                        Decision = "skip",
+                        Detail = "ghost-retry"
+                    });
+                    if (skipLogBudget > 0)
+                    {
+                        LogDebug($"👻 conductor skip [{engine}] {Path.GetFileName(file)} family={family} reason=ghost-retry ev={ghostExpected}");
+                        skipLogBudget--;
+                    }
+                    continue;
+                }
+                if (skipLogBudget > 0)
+                {
+                    LogDebug($"🌙 conductor rescue [{engine}] {Path.GetFileName(file)} family={family} reason=ghost-night ev={ghostExpected}");
+                    skipLogBudget--;
+                }
+            }
+
+            var risk = EstimateFamilyRiskScore(engine, file, family);
+            var explore = _omrConductorEnabled && _omrExplorationPercent > 0 && Random.Shared.Next(0, 100) < _omrExplorationPercent;
+            if (risk >= _omrPredictRiskThreshold && !explore)
+            {
+                skippedRisk++;
+                _omrSkipReasonCounters.AddOrUpdate($"{engine}:risk", 1, (_, current) => current + 1);
+                var expectedRiskSkip = ComputeExpectedValueScore(engine, file, family, risk);
+                AppendOmrBlackboxEvent(new OmrBlackboxEvent
+                {
+                    DateUtc = DateTime.UtcNow,
+                    EventType = "decision",
+                    Engine = engine,
+                    FilePath = file,
+                    Family = family,
+                    Genome = genome,
+                    Risk = risk,
+                    ExpectedValue = expectedRiskSkip,
+                    EngineScore = _omrFamilyEngineScore.TryGetValue(family, out var score) ? score : 0,
+                    Decision = "skip",
+                    Detail = "risk"
+                });
+                if (skipLogBudget > 0)
+                {
+                    LogDebug($"🧠 conductor skip [{engine}] {Path.GetFileName(file)} family={family} reason=risk risk={risk} thr={_omrPredictRiskThreshold}");
+                    skipLogBudget--;
+                }
+                continue;
+            }
+
+            var engineScore = _omrFamilyEngineScore.TryGetValue(family, out var es) ? es : 0;
+            var expectedValue = ComputeExpectedValueScore(engine, file, family, risk);
+            if (explore)
+            {
+                expectedValue += 1000;
+                _omrSkipReasonCounters.AddOrUpdate($"{engine}:explore", 1, (_, current) => current + 1);
+                if (skipLogBudget > 0)
+                {
+                    LogDebug($"🎲 conductor explore [{engine}] {Path.GetFileName(file)} family={family} risk={risk}");
+                    skipLogBudget--;
+                }
+            }
+            long size;
+            try { size = new FileInfo(file).Length; } catch { size = long.MaxValue; }
+            prepared.Add((file, family, risk, engineScore, expectedValue, size, explore));
+        }
+
+        if (prepared.Count == 0)
+            return [];
+
+        IOrderedEnumerable<(string Path, string Family, int Risk, int EngineScore, int ExpectedValue, long Size, bool Explore)> ordered;
+        if (_omrConductorEnabled)
+        {
+            var prefersAudiveris = string.Equals(engine, "audiveris", StringComparison.OrdinalIgnoreCase);
+            ordered = prepared
+                .OrderByDescending(x => x.Explore ? 1 : 0)
+                .ThenBy(x => prefersAudiveris ? (x.EngineScore >= 0 ? 0 : 1) : (x.EngineScore <= 0 ? 0 : 1))
+                .ThenByDescending(x => x.ExpectedValue)
+                .ThenBy(x => x.Risk)
+                .ThenBy(x => x.Size)
+                .ThenBy(x => x.Path, StringComparer.OrdinalIgnoreCase);
+        }
+        else
+        {
+            ordered = prepared
+                .OrderBy(x => x.Size)
+                .ThenBy(x => x.Path, StringComparer.OrdinalIgnoreCase);
+        }
+
+        var orderedList = ordered.ToList();
+
+        if (_omrShadowModeEnabled && prepared.Count > 0)
+        {
+            var naiveHead = prepared
+                .OrderBy(x => x.Size)
+                .ThenBy(x => x.Path, StringComparer.OrdinalIgnoreCase)
+                .Select(x => x.Path)
+                .FirstOrDefault() ?? string.Empty;
+            var conductorHead = orderedList[0].Path;
+            Interlocked.Increment(ref _omrShadowDecisions);
+            if (!string.Equals(naiveHead, conductorHead, StringComparison.OrdinalIgnoreCase))
+            {
+                Interlocked.Increment(ref _omrShadowDivergences);
+                _omrSkipReasonCounters.AddOrUpdate($"{engine}:shadow-diverge", 1, (_, current) => current + 1);
+            }
+        }
+
+        foreach (var item in orderedList)
+        {
+            AppendOmrBlackboxEvent(new OmrBlackboxEvent
+            {
+                DateUtc = DateTime.UtcNow,
+                EventType = "decision",
+                Engine = engine,
+                FilePath = item.Path,
+                Family = item.Family,
+                Genome = BuildGenomeKey(item.Family),
+                Risk = item.Risk,
+                ExpectedValue = item.ExpectedValue,
+                EngineScore = item.EngineScore,
+                Decision = "select",
+                Detail = item.Explore ? "explore-lottery" : "conductor"
+            });
+        }
+
+        return orderedList.Select(x => x.Path).ToList();
+    }
+
+    private void RegisterOmrFamilyOutcome(string familyKey, string winnerEngine, bool timedOut, bool failed, string? filePath = null)
+    {
+        if (string.IsNullOrWhiteSpace(familyKey))
+            return;
+
+        var delta = string.Equals(winnerEngine, "audiveris", StringComparison.OrdinalIgnoreCase) ? 2 : -2;
+        _omrFamilyEngineScore.AddOrUpdate(familyKey, delta, (_, current) => Math.Clamp(current + delta, -20, 20));
+        var genome = BuildGenomeKey(familyKey);
+        _omrGenomeEngineSwissScore.AddOrUpdate($"{genome}|{winnerEngine}", 1, (_, current) => Math.Clamp(current + 1, -100, 100));
+
+        if (timedOut)
+        {
+            _omrFamilyWinStreak.AddOrUpdate(familyKey, 0, (_, _) => 0);
+            _omrFamilyRiskScore.AddOrUpdate(familyKey, 12, (_, current) => Math.Clamp(current + 12, 0, 200));
+            _omrFamilyTimeoutCredits.AddOrUpdate(familyKey, 0, (_, current) => Math.Max(0, current - 1));
+        }
+        else if (failed)
+        {
+            _omrFamilyWinStreak.AddOrUpdate(familyKey, 0, (_, _) => 0);
+            _omrFamilyRiskScore.AddOrUpdate(familyKey, 8, (_, current) => Math.Clamp(current + 8, 0, 200));
+            _omrFamilyTimeoutCredits.AddOrUpdate(familyKey, 0, (_, current) => Math.Max(0, current - 1));
+            MarkGhostRetry(familyKey);
+        }
+        else
+        {
+            _omrFamilyRiskScore.AddOrUpdate(familyKey, 0, (_, current) => Math.Max(0, current - 4));
+            var streak = _omrFamilyWinStreak.AddOrUpdate(familyKey, 1, (_, current) => Math.Clamp(current + 1, 1, 50));
+            if (_omrFamilyCreditDebt.TryGetValue(familyKey, out var debt) && debt > 0)
+            {
+                var genomePressureDebt = _omrGenomePressure.TryGetValue(genome, out var gpd) ? gpd : 0;
+                var baseBountyDebt = genomePressureDebt >= _omrGenomeAlertThreshold ? 2 : 1;
+                var casinoBonusDebt = Math.Min(_omrCasinoMaxBonus, streak / 3);
+                var payoutDebt = Math.Max(1, baseBountyDebt + casinoBonusDebt);
+                var newDebt = Math.Max(0, debt - payoutDebt);
+                var extraCredits = Math.Max(0, payoutDebt - debt);
+                _omrFamilyCreditDebt[familyKey] = newDebt;
+                if (extraCredits > 0)
+                    _omrFamilyTimeoutCredits.AddOrUpdate(familyKey, extraCredits, (_, current) => Math.Clamp(current + extraCredits, 0, 8));
+            }
+            else
+            {
+                var genomePressure = _omrGenomePressure.TryGetValue(genome, out var gp) ? gp : 0;
+                var baseBounty = genomePressure >= _omrGenomeAlertThreshold ? 2 : 1;
+                var casinoBonus = Math.Min(_omrCasinoMaxBonus, streak / 3);
+                var payout = Math.Max(1, baseBounty + casinoBonus);
+                _omrFamilyTimeoutCredits.AddOrUpdate(familyKey, payout, (_, current) => Math.Clamp(current + payout, 0, 8));
+            }
+        }
+
+        if (timedOut || failed)
+            _omrGenomePressure.AddOrUpdate(genome, 1, (_, current) => Math.Clamp(current + 1, 0, 50));
+        else
+            _omrGenomePressure.AddOrUpdate(genome, 0, (_, current) => Math.Max(0, current - 2));
+
+        AppendOmrBlackboxEvent(new OmrBlackboxEvent
+        {
+            DateUtc = DateTime.UtcNow,
+            EventType = "outcome",
+            Engine = winnerEngine,
+            FilePath = filePath ?? string.Empty,
+            Family = familyKey,
+            Genome = genome,
+            Risk = _omrFamilyRiskScore.TryGetValue(familyKey, out var riskNow) ? riskNow : 0,
+            ExpectedValue = 0,
+            EngineScore = _omrFamilyEngineScore.TryGetValue(familyKey, out var scoreNow) ? scoreNow : 0,
+            Decision = failed ? "fail" : "ok",
+            Detail = timedOut ? "timeout" : "",
+            TimedOut = timedOut,
+            Failed = failed
+        });
+    }
+
+    private int EstimateConductorDeltaPct(string engine, IEnumerable<string> arrangedBatch)
+    {
+        var list = arrangedBatch.ToList();
+        if (list.Count <= 1)
+            return 0;
+
+        double Score(string path)
+        {
+            var family = NormalizeAudiverisFamilyKey(path);
+            var risk = EstimateFamilyRiskScore(engine, path, family);
+            long size;
+            try { size = new FileInfo(path).Length; } catch { size = 0; }
+            return (risk * 3.0) + (size / (1024d * 1024d));
+        }
+
+        var conductorCost = 0.0;
+        var naiveCost = 0.0;
+        for (var i = 0; i < list.Count; i++)
+        {
+            var rank = i + 1;
+            conductorCost += Score(list[i]) * rank;
+        }
+
+        var naive = list
+            .OrderBy(f => { try { return new FileInfo(f).Length; } catch { return long.MaxValue; } })
+            .ThenBy(f => f, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        for (var i = 0; i < naive.Count; i++)
+        {
+            var rank = i + 1;
+            naiveCost += Score(naive[i]) * rank;
+        }
+
+        if (naiveCost <= 0.001)
+            return 0;
+
+        var pct = (int)Math.Round((naiveCost - conductorCost) * 100.0 / naiveCost);
+        return Math.Clamp(pct, -100, 100);
+    }
+
     private int ComputeAudiverisTimeoutSeconds(string inputPath, long knownSizeBytes = -1, int pdfPageCount = 1)
     {
         var familyKey = NormalizeAudiverisFamilyKey(inputPath);
         var strike = _audiverisTimeoutStrikes.TryGetValue(familyKey, out var value) ? value : 0;
+        var creditBonusSeconds = GetAndConsumeTimeoutCreditBonusSeconds(familyKey);
 
         var isPdfInput = string.Equals(Path.GetExtension(inputPath), ".pdf", StringComparison.OrdinalIgnoreCase);
         if (!isPdfInput)
-            return _audiverisTimeoutSeconds + (strike * _audiverisTimeoutStrikeBoostSeconds);
+        {
+            var nonPdf = _audiverisTimeoutSeconds + (strike * _audiverisTimeoutStrikeBoostSeconds);
+            return IsHostileFolder(_currentAudiverisBatchFolder) ? (int)(nonPdf * 1.5) : nonPdf;
+        }
 
         var baseSeconds = Math.Max(_audiverisTimeoutSeconds, _audiverisPdfTimeoutMinSeconds);
         long bytes;
@@ -3800,7 +6114,20 @@ public partial class MainWindow : Window, IAsyncDisposable
         var sizeMb = Math.Max(1, (int)Math.Ceiling(bytes / (1024d * 1024d)));
         var extraPages = Math.Max(0, pdfPageCount - 1);
         var adaptive = baseSeconds + (sizeMb * _audiverisPdfTimeoutPerMbSeconds) + (extraPages * _audiverisPdfTimeoutPerPageSeconds) + (strike * _audiverisTimeoutStrikeBoostSeconds);
-        LogDebug($"🎼 audiveris timeout ({Path.GetFileName(inputPath)}): base={baseSeconds}s size={sizeMb}MB pages={Math.Max(1, pdfPageCount)} strike={strike} => {Math.Clamp(adaptive, _audiverisPdfTimeoutMinSeconds, _audiverisPdfTimeoutMaxSeconds)}s");
+        adaptive += creditBonusSeconds;
+        var p95Floor = ComputeP95TimeoutFloor(_audiverisTelemetryPath);
+        var p95Ci = ComputeP95TimeoutConfidenceHalfWidth(_audiverisTelemetryPath);
+        if (p95Floor > adaptive)
+        {
+            adaptive = p95Floor;
+            var ciPart = p95Ci > 0 ? $" ±{p95Ci}s" : string.Empty;
+            LogDebug($"🎼 audiveris timeout: p95 floor {p95Floor}s{ciPart} aplicado ({Path.GetFileName(inputPath)})");
+        }
+        if (IsHostileFolder(_currentAudiverisBatchFolder))
+            adaptive = (int)(adaptive * 1.5);
+        else if (_enableWarmupTimeout && !_warmupDoneEngines.ContainsKey("audiveris"))
+            adaptive = Math.Max(_audiverisPdfTimeoutMinSeconds, (int)(adaptive * 0.6));
+        LogDebug($"🎼 audiveris timeout ({Path.GetFileName(inputPath)}): base={baseSeconds}s size={sizeMb}MB pages={Math.Max(1, pdfPageCount)} strike={strike} credit={creditBonusSeconds}s => {Math.Clamp(adaptive, _audiverisPdfTimeoutMinSeconds, _audiverisPdfTimeoutMaxSeconds)}s");
         return Math.Clamp(adaptive, _audiverisPdfTimeoutMinSeconds, _audiverisPdfTimeoutMaxSeconds);
     }
 
@@ -3910,19 +6237,55 @@ public partial class MainWindow : Window, IAsyncDisposable
         return null;
     }
 
-    private async Task<(bool Success, bool Partial, bool PageFailure)> RunAudiverisConversionAsync(string audiverisExe, string inputPath, string fallbackOutputDir = "", bool allowSiblingFallback = true, HashSet<string>? siblingSet = null, long knownSizeBytes = -1)
+    private async Task<(bool Success, bool Partial, bool PageFailure)> RunAudiverisConversionAsync(string audiverisExe, string inputPath, string fallbackOutputDir = "", bool allowSiblingFallback = true, HashSet<string>? siblingSet = null, long knownSizeBytes = -1, CancellationToken ct = default)
     {
+        ct.ThrowIfCancellationRequested();
         var outputDir = Path.GetDirectoryName(inputPath) ?? (string.IsNullOrEmpty(fallbackOutputDir) ? string.Empty : fallbackOutputDir);
         bool HasSiblingFastOrSlow(string path)
             => siblingSet is not null ? HasMusicScoreSiblingFast(path, siblingSet) : HasMusicScoreSibling(path);
         static string Tail(string s) => s.Length > 500 ? "..." + s[^500..] : s;
+        static bool HasNonAscii(string path) => path.Any(ch => ch > 127);
 
         async Task<(int exitCode, string stdout, string stderr)> RunAudiverisOnceAsync(string currentInputPath, IEnumerable<string> extraArgs)
         {
+            ct.ThrowIfCancellationRequested();
             // Use pre-computed size when processing the original input path to avoid a second stat() call
             var sizeForTimeout = string.Equals(currentInputPath, inputPath, StringComparison.OrdinalIgnoreCase) ? knownSizeBytes : -1L;
             var timeoutSeconds = ComputeAudiverisTimeoutSeconds(currentInputPath, sizeForTimeout);
             var audiverisTimeout = TimeSpan.FromSeconds(timeoutSeconds);
+            var effectiveInputPath = currentInputPath;
+            string? tempMirrorPath = null;
+            if (HasNonAscii(currentInputPath))
+            {
+                try
+                {
+                    var mirrorDir = Path.Combine(Path.GetTempPath(), "scoredown_audiveris_ascii");
+                    Directory.CreateDirectory(mirrorDir);
+                    tempMirrorPath = Path.Combine(mirrorDir, $"aud_{Guid.NewGuid():N}{Path.GetExtension(currentInputPath)}");
+                    File.Copy(currentInputPath, tempMirrorPath, overwrite: true);
+                    effectiveInputPath = tempMirrorPath;
+                    LogDebug($"🎼 Audiveris path-mirror activo para {Path.GetFileName(currentInputPath)}");
+                }
+                catch (Exception ex)
+                {
+                    LogDebug($"⚠️ Audiveris path-mirror falló en {Path.GetFileName(currentInputPath)}: {ex.GetType().Name}: {ex.Message}");
+                    effectiveInputPath = currentInputPath;
+                    tempMirrorPath = null;
+                }
+            }
+
+            void CleanupMirror()
+            {
+                if (string.IsNullOrWhiteSpace(tempMirrorPath))
+                    return;
+                try
+                {
+                    if (File.Exists(tempMirrorPath))
+                        File.Delete(tempMirrorPath);
+                }
+                catch { }
+            }
+
             var psi = new System.Diagnostics.ProcessStartInfo
             {
                 FileName = audiverisExe,
@@ -3944,21 +6307,25 @@ public partial class MainWindow : Window, IAsyncDisposable
             psi.ArgumentList.Add("-export");
             psi.ArgumentList.Add("-output");
             psi.ArgumentList.Add(outputDir);
-            psi.ArgumentList.Add(currentInputPath);
+            psi.ArgumentList.Add(effectiveInputPath);
 
             var argPreview = string.Join(" ", psi.ArgumentList.Cast<string>());
             LogDebug($"🎼 Audiveris spawn ({Path.GetFileName(currentInputPath)}): timeout={timeoutSeconds}s args={argPreview}");
 
             using var process = new System.Diagnostics.Process { StartInfo = psi };
             if (!process.Start())
+            {
+                CleanupMirror();
                 throw new InvalidOperationException($"No se pudo iniciar Audiveris: {psi.FileName}");
+            }
             var stdoutTask = process.StandardOutput.ReadToEndAsync();
             var stderrTask = process.StandardError.ReadToEndAsync();
             var waitTask = process.WaitForExitAsync();
             // Delay con CancellationToken para que no quede timer huérfano tras éxito
             using var delayCts = new CancellationTokenSource();
             var delayTask = Task.Delay(audiverisTimeout, delayCts.Token);
-            var completed = await Task.WhenAny(waitTask, delayTask).ConfigureAwait(true);
+            var cancelTask = Task.Delay(Timeout.InfiniteTimeSpan, ct);
+            var completed = await Task.WhenAny(waitTask, delayTask, cancelTask).ConfigureAwait(true);
             if (completed != waitTask)
             {
                 try
@@ -3969,6 +6336,14 @@ public partial class MainWindow : Window, IAsyncDisposable
                 catch { }
 
                 try { await Task.WhenAll(stdoutTask, stderrTask, waitTask).ConfigureAwait(true); } catch { }
+
+                if (completed == cancelTask)
+                {
+                    CleanupMirror();
+                    throw new OperationCanceledException(ct);
+                }
+
+                CleanupMirror();
                 throw new TimeoutException($"Audiveris timeout tras {audiverisTimeout.TotalMinutes:0.#} min ({timeoutSeconds}s)");
             }
 
@@ -3978,6 +6353,7 @@ public partial class MainWindow : Window, IAsyncDisposable
             var stdout = stdoutTask.Result.Trim();
             var stderr = stderrTask.Result.Trim();
             LogDebug($"🎼 Audiveris exit ({Path.GetFileName(currentInputPath)}): code={process.ExitCode}");
+            CleanupMirror();
             return (process.ExitCode, stdout, stderr);
         }
 
@@ -4042,6 +6418,20 @@ public partial class MainWindow : Window, IAsyncDisposable
             var siblingTry = await RunAudiverisOnceAsync(siblingPath, Array.Empty<string>()).ConfigureAwait(true);
             if (siblingTry.exitCode == 0)
                 return (true, false, false);
+            // Ambas variantes fallaron: marcar familia en cuarentena
+            var qKey = NormalizeAudiverisFamilyKey(inputPath);
+            if (_audiverisAllVariantsFailed.TryAdd(qKey, DateTime.UtcNow))
+            {
+                _audiverisAllVariantsFailedDirty = true;
+                var genome = BuildGenomeKey(qKey);
+                _omrGenomePressure.AddOrUpdate(genome, 2, (_, current) => Math.Clamp(current + 2, 0, 50));
+                var qStem = Path.GetFileNameWithoutExtension(inputPath);
+                if (qStem.EndsWith("-a4", StringComparison.OrdinalIgnoreCase)) qStem = qStem[..^3];
+                else if (qStem.EndsWith("_a4", StringComparison.OrdinalIgnoreCase)) qStem = qStem[..^3];
+                else if (qStem.EndsWith("-let", StringComparison.OrdinalIgnoreCase)) qStem = qStem[..^4];
+                else if (qStem.EndsWith("_let", StringComparison.OrdinalIgnoreCase)) qStem = qStem[..^4];
+                Log($"🔒 Audiveris cuarentena: familia '{qStem}' — ambas variantes fallaron. Se omitirá en próximas corridas.");
+            }
             return BuildFailureResult(siblingTry, siblingPath);
         }
         catch (TimeoutException) when (allowSiblingFallback && CanFallbackToSibling(inputPath, out var siblingPath))
@@ -4050,26 +6440,753 @@ public partial class MainWindow : Window, IAsyncDisposable
             var siblingTry = await RunAudiverisOnceAsync(siblingPath, Array.Empty<string>()).ConfigureAwait(true);
             if (siblingTry.exitCode == 0)
                 return (true, false, false);
+            // Timeout en primaria + fallo en hermana: cuarentena
+            var qKey2 = NormalizeAudiverisFamilyKey(inputPath);
+            if (_audiverisAllVariantsFailed.TryAdd(qKey2, DateTime.UtcNow))
+            {
+                _audiverisAllVariantsFailedDirty = true;
+                var genome = BuildGenomeKey(qKey2);
+                _omrGenomePressure.AddOrUpdate(genome, 2, (_, current) => Math.Clamp(current + 2, 0, 50));
+                var qStem2 = Path.GetFileNameWithoutExtension(inputPath);
+                if (qStem2.EndsWith("-a4", StringComparison.OrdinalIgnoreCase)) qStem2 = qStem2[..^3];
+                else if (qStem2.EndsWith("_a4", StringComparison.OrdinalIgnoreCase)) qStem2 = qStem2[..^3];
+                else if (qStem2.EndsWith("-let", StringComparison.OrdinalIgnoreCase)) qStem2 = qStem2[..^4];
+                else if (qStem2.EndsWith("_let", StringComparison.OrdinalIgnoreCase)) qStem2 = qStem2[..^4];
+                Log($"🔒 Audiveris cuarentena: familia '{qStem2}' — timeout + hermana falló. Se omitirá en próximas corridas.");
+            }
             return BuildFailureResult(siblingTry, siblingPath);
         }
     }
 
+    private void LoadPersistedVideoRenderTraces()
+    {
+        try
+        {
+            if (!File.Exists(_videoRenderTracePersistPath)) return;
+            var json = File.ReadAllText(_videoRenderTracePersistPath);
+            var items = JsonSerializer.Deserialize<List<(string Path, double Ms)>>(json) ?? new();
+            lock (_videoRenderTraceLru)
+            {
+                foreach (var (path, ms) in items)
+                {
+                    if (ms <= 0 || string.IsNullOrWhiteSpace(path)) continue;
+
+                    var entry = new VideoRenderTraceEntry
+                    {
+                        Trace = System.IO.Path.GetFileName(path),
+                        ElapsedMs = ms,
+                        RecordedAt = DateTimeOffset.UtcNow.AddHours(-1)
+                    };
+                    _videoRenderTrace.AddOrUpdate(path, entry, (_, __) => entry);
+
+                    if (_videoRenderTraceSet.Add(path))
+                        _videoRenderTraceOrder.AddLast(path);
+
+                    while (_videoRenderTraceOrder.Count > VideoRenderTraceMaxEntries && _videoRenderTraceOrder.First is not null)
+                    {
+                        var oldest = _videoRenderTraceOrder.First.Value;
+                        _videoRenderTraceOrder.RemoveFirst();
+                        _videoRenderTraceSet.Remove(oldest);
+                        _videoRenderTrace.TryRemove(oldest, out _);
+                    }
+                }
+            }
+            LogDebug($"📊 Cargadas {items.Count} trazas de render de sesión anterior");
+        }
+        catch (Exception ex)
+        {
+            LogDebug($"⚠️ No se pudieron cargar trazas persistidas: {ex.Message}");
+        }
+    }
+
+    private void SaveVideoRenderTracesAndMetrics()
+    {
+        try
+        {
+            List<(string Path, double Ms)> items;
+            lock (_videoRenderTraceLru)
+            {
+                items = _videoRenderTraceOrder
+                    .TakeLast(1000)
+                    .Select(path => _videoRenderTrace.TryGetValue(path, out var entry)
+                        ? (Path: path, Ms: entry.ElapsedMs)
+                        : (Path: string.Empty, Ms: 0d))
+                    .Where(x => !string.IsNullOrWhiteSpace(x.Path) && x.Ms > 0)
+                    .ToList();
+            }
+            var json = JsonSerializer.Serialize(items, new JsonSerializerOptions { WriteIndented = false });
+            var dir = System.IO.Path.GetDirectoryName(_videoRenderTracePersistPath);
+            if (!string.IsNullOrEmpty(dir)) Directory.CreateDirectory(dir);
+            File.WriteAllText(_videoRenderTracePersistPath, json);
+            Interlocked.Exchange(ref _videoTraceLastPersistTickMs, Environment.TickCount64);
+        }
+        catch { }
+    }
+
+    private void MaybePersistVideoRenderTraces(bool force = false)
+    {
+        var now = Environment.TickCount64;
+        var last = Interlocked.Read(ref _videoTraceLastPersistTickMs);
+        if (!force && now - last < _videoTracePersistIntervalMs) return;
+        if (Interlocked.Exchange(ref _videoTracePersistScheduled, 1) == 1) return;
+
+        _ = Task.Run(() =>
+        {
+            try
+            {
+                SaveVideoRenderTracesAndMetrics();
+            }
+            finally
+            {
+                Interlocked.Exchange(ref _videoTracePersistScheduled, 0);
+            }
+        });
+    }
+
+    private readonly record struct VideoLatencyStats(double Min, double Avg, double Median, double P95, double Max);
+
+    private static double ComputePercentileFromSorted(IReadOnlyList<double> sortedValues, double percentile)
+    {
+        if (sortedValues.Count == 0) return 0;
+        var clamped = Math.Clamp(percentile, 0, 1);
+        var index = Math.Clamp((int)Math.Ceiling(sortedValues.Count * clamped) - 1, 0, sortedValues.Count - 1);
+        return sortedValues[index];
+    }
+
+    private static double ComputeStdDev(IReadOnlyList<double> values, double mean)
+    {
+        if (values.Count <= 1) return 0;
+        var variance = values.Sum(v =>
+        {
+            var d = v - mean;
+            return d * d;
+        }) / values.Count;
+        return Math.Sqrt(variance);
+    }
+
+    private static VideoLatencyStats ComputeVideoLatencyStats(List<double> values)
+    {
+        if (values.Count == 0) return new VideoLatencyStats(0, 0, 0, 0, 0);
+
+        values.Sort();
+        var min = values[0];
+        var max = values[^1];
+        var avg = values.Average();
+
+        var mid = values.Count / 2;
+        var median = values.Count % 2 == 0
+            ? (values[mid - 1] + values[mid]) / 2d
+            : values[mid];
+
+        var p95 = ComputePercentileFromSorted(values, 0.95);
+
+        return new VideoLatencyStats(min, avg, median, p95, max);
+    }
+
+    private void LogVideoMetrics()
+    {
+        if (_videoRenderTrace.IsEmpty) return;
+        var samples = _videoRenderTrace.Values.Where(e => e.ElapsedMs > 0).ToList();
+        if (samples.Count < 3) return;
+
+        var stats = ComputeVideoLatencyStats(samples.Select(e => e.ElapsedMs).ToList());
+
+        Log($"📊 Métricas video conversión: n={samples.Count}, min={stats.Min:0.0}ms, avg={stats.Avg:0.0}ms, median={stats.Median:0.0}ms, p95={stats.P95:0.0}ms, max={stats.Max:0.0}ms");
+
+        // Activar backoff si mediana > 30s
+        _videoConversionSlowThreshold = stats.Median > 30000;
+        if (_videoConversionSlowThreshold)
+            Log($"⚠️ Conversiones lentas detectadas. Considerando reducir paralelismo en futuras ejecuciones.");
+
+        // Persistir a SQLite para trending histórico
+        PersistVideoMetricsToSqlite(samples.Count, stats.Min, stats.Avg, stats.Median, stats.P95, stats.Max);
+
+        // Mostrar alertas automáticas
+        ShowVideoMetricsAlerts(samples.Count, stats.Avg, stats.Median, stats.P95);
+    }
+
+    private void ShowVideoMetricsAlerts(int sampleCount, double avg, double median, double p95)
+    {
+        var alerts = new List<string>();
+
+        // Alerta: P95 alto
+        if (p95 > 20000)
+            alerts.Add($"⏱️ P95 = {p95:0.0}ms (> 20s): Paralelismo adaptativo reducirá en próximas ejecuciones");
+
+        // Alerta: Mediana alta
+        if (median > 30000)
+            alerts.Add($"⏱️ Mediana = {median:0.0}ms (> 30s): Backoff dinámico activado para futuras conversiones");
+
+        // Alerta: LRU cercano al límite
+        if (_videoRenderTrace.Count > VideoRenderTraceMaxEntries * 0.8)
+            alerts.Add($"💾 Caché LRU al {(_videoRenderTrace.Count * 100 / VideoRenderTraceMaxEntries)}% de capacidad");
+
+        if (alerts.Count > 0)
+        {
+            var now = Environment.TickCount64;
+            var last = Interlocked.Read(ref _videoMetricsLastAlertTickMs);
+            if (now - last < _videoMetricsAlertCooldownMs)
+            {
+                LogDebug($"ℹ️ Alertas de render omitidas por cooldown ({sampleCount} muestras, avg={avg:0.0}ms)");
+                return;
+            }
+
+            Interlocked.Exchange(ref _videoMetricsLastAlertTickMs, now);
+            var message =
+                $"Alertas de métricas de render (n={sampleCount}, avg={avg:0.0}ms):\n\n" +
+                string.Join("\n\n", alerts);
+            Dispatcher.InvokeAsync(() =>
+            {
+                DarkDialogService.ShowMessage(this, message, "⚠️ Alertas de Render", MessageBoxButton.OK, MessageBoxImage.Warning);
+            });
+        }
+    }
+
+    private int CalculateAdaptiveVideoParallelism()
+    {
+        var current = _videoAdaptiveParallel <= 0 ? _videoParallel : _videoAdaptiveParallel;
+        var nowUtc = DateTimeOffset.UtcNow;
+
+        // Leer trazas históricas de JSON para ajustar paralelismo
+        try
+        {
+            if (!File.Exists(_videoRenderTracePersistPath)) return current;
+            var json = File.ReadAllText(_videoRenderTracePersistPath);
+            var items = JsonSerializer.Deserialize<List<(string Path, double Ms)>>(json) ?? new();
+
+            // Calcular p95 + EWMA de ventana reciente para evitar efecto serrucho.
+            var recent = items.TakeLast(_videoAdaptiveWindowSize).Select(i => i.Ms).Where(ms => ms > 0).ToList();
+            if (recent.Count < 3) return current;
+
+            var sorted = recent.OrderBy(v => v).ToList();
+            var p95 = ComputePercentileFromSorted(sorted, 0.95);
+            var ewma = recent[0];
+            for (var i = 1; i < recent.Count; i++)
+                ewma = (_videoAdaptiveEwmaAlpha * recent[i]) + ((1 - _videoAdaptiveEwmaAlpha) * ewma);
+
+            _videoAdaptiveLastSamples = recent.Count;
+            _videoAdaptiveLastP95Ms = p95;
+            _videoAdaptiveLastEwmaMs = ewma;
+            var inTimeCooldown = _videoAdaptiveLastChangeUtc != default
+                && (nowUtc - _videoAdaptiveLastChangeUtc).TotalMilliseconds < _videoAdaptiveMinChangeCooldownMs;
+            var runsSinceChange = Math.Max(0, _videoAdaptiveRunCounter - _videoAdaptiveLastChangeRun);
+            var inRunCooldown = _videoAdaptiveMinChangeRuns > 0
+                && _videoAdaptiveLastChangeRun > 0
+                && runsSinceChange < _videoAdaptiveMinChangeRuns;
+            var inChangeCooldown = inTimeCooldown || inRunCooldown;
+            var downSignal = p95 > 20000 || ewma > 18000;
+            var upSignal = p95 < 10000 && ewma < 12000 && current < _videoParallel;
+
+            if (downSignal)
+            {
+                _videoAdaptiveDownSignalStreak++;
+                _videoAdaptiveUpSignalStreak = 0;
+            }
+            else if (upSignal)
+            {
+                _videoAdaptiveUpSignalStreak++;
+                _videoAdaptiveDownSignalStreak = 0;
+            }
+            else
+            {
+                _videoAdaptiveDownSignalStreak = 0;
+                _videoAdaptiveUpSignalStreak = 0;
+            }
+
+            // Si p95 > 20s, reducir paralelismo
+            if (downSignal)
+            {
+                var reduced = Math.Max(1, current - 1);
+                if (reduced != current)
+                {
+                    if (_videoAdaptiveDownSignalStreak < _videoAdaptiveRequiredSignals)
+                    {
+                        _videoAdaptiveLastDecision = "hold-await-down";
+                        if (_videoAdaptiveDownSignalStreak == 1)
+                        {
+                            AddVideoAdaptiveDecisionHistory("hold-await-down", current, current, p95, ewma, recent.Count,
+                                $"streak={_videoAdaptiveDownSignalStreak}/{_videoAdaptiveRequiredSignals}");
+                        }
+                        LogDebug($"⏳ Adaptativo espera confirmación DOWN: {_videoAdaptiveDownSignalStreak}/{_videoAdaptiveRequiredSignals} (p95={p95:0.0}ms, ewma={ewma:0.0}ms)");
+                        return current;
+                    }
+
+                    if (inChangeCooldown)
+                    {
+                        _videoAdaptiveLastDecision = "hold-cooldown";
+                        if (!string.Equals(_videoAdaptiveLastDecisionLogged, "hold-cooldown", StringComparison.Ordinal))
+                        {
+                            AddVideoAdaptiveDecisionHistory("hold-cooldown", current, current, p95, ewma, recent.Count,
+                                $"runs={runsSinceChange}/{_videoAdaptiveMinChangeRuns}");
+                            _videoAdaptiveLastDecisionLogged = "hold-cooldown";
+                        }
+                        LogDebug($"⏸️ Adaptativo en cooldown: se mantiene {current} (p95={p95:0.0}ms, ewma={ewma:0.0}ms, runs={runsSinceChange}/{_videoAdaptiveMinChangeRuns})");
+                        return current;
+                    }
+
+                    _videoAdaptiveParallel = reduced;
+                    _videoAdaptiveLastDecision = "reduce";
+                    _videoAdaptiveLastChangeUtc = nowUtc;
+                    _videoAdaptiveLastChangeRun = _videoAdaptiveRunCounter;
+                    _videoAdaptiveDownSignalStreak = 0;
+                    _videoAdaptiveUpSignalStreak = 0;
+                    _videoAdaptiveLastDecisionLogged = "reduce";
+                    AddVideoAdaptiveDecisionHistory("reduce", current, reduced, p95, ewma, recent.Count);
+                    SaveVideoAdaptiveSettings();
+                }
+                Log($"📉 Paralelismo adaptativo: {current} → {reduced} (p95={p95:0.0}ms, ewma={ewma:0.0}ms, n={recent.Count})");
+                return reduced;
+            }
+
+            // Recuperación gradual cuando vuelve a zona sana.
+            if (upSignal)
+            {
+                var increased = Math.Min(_videoParallel, current + 1);
+                if (increased != current)
+                {
+                    if (_videoAdaptiveUpSignalStreak < _videoAdaptiveRequiredSignals)
+                    {
+                        _videoAdaptiveLastDecision = "hold-await-up";
+                        if (_videoAdaptiveUpSignalStreak == 1)
+                        {
+                            AddVideoAdaptiveDecisionHistory("hold-await-up", current, current, p95, ewma, recent.Count,
+                                $"streak={_videoAdaptiveUpSignalStreak}/{_videoAdaptiveRequiredSignals}");
+                        }
+                        LogDebug($"⏳ Adaptativo espera confirmación UP: {_videoAdaptiveUpSignalStreak}/{_videoAdaptiveRequiredSignals} (p95={p95:0.0}ms, ewma={ewma:0.0}ms)");
+                        return current;
+                    }
+
+                    if (inChangeCooldown)
+                    {
+                        _videoAdaptiveLastDecision = "hold-cooldown";
+                        if (!string.Equals(_videoAdaptiveLastDecisionLogged, "hold-cooldown", StringComparison.Ordinal))
+                        {
+                            AddVideoAdaptiveDecisionHistory("hold-cooldown", current, current, p95, ewma, recent.Count,
+                                $"runs={runsSinceChange}/{_videoAdaptiveMinChangeRuns}");
+                            _videoAdaptiveLastDecisionLogged = "hold-cooldown";
+                        }
+                        LogDebug($"⏸️ Adaptativo en cooldown: se mantiene {current} (p95={p95:0.0}ms, ewma={ewma:0.0}ms, runs={runsSinceChange}/{_videoAdaptiveMinChangeRuns})");
+                        return current;
+                    }
+
+                    _videoAdaptiveParallel = increased;
+                    _videoAdaptiveLastDecision = "increase";
+                    _videoAdaptiveLastChangeUtc = nowUtc;
+                    _videoAdaptiveLastChangeRun = _videoAdaptiveRunCounter;
+                    _videoAdaptiveDownSignalStreak = 0;
+                    _videoAdaptiveUpSignalStreak = 0;
+                    _videoAdaptiveLastDecisionLogged = "increase";
+                    AddVideoAdaptiveDecisionHistory("increase", current, increased, p95, ewma, recent.Count);
+                    SaveVideoAdaptiveSettings();
+                    Log($"📈 Paralelismo recuperado: {current} → {increased} (p95={p95:0.0}ms, ewma={ewma:0.0}ms, n={recent.Count})");
+                }
+                return increased;
+            }
+
+            if (!string.Equals(_videoAdaptiveLastDecision, "hold", StringComparison.Ordinal))
+                AddVideoAdaptiveDecisionHistory("hold", current, current, p95, ewma, recent.Count);
+            _videoAdaptiveLastDecision = "hold";
+            _videoAdaptiveLastDecisionLogged = "hold";
+        }
+        catch { }
+
+        return current;
+    }
+
+    private void LoadVideoAdaptiveSettings()
+    {
+        _videoAdaptiveParallel = _videoParallel;
+        try
+        {
+            if (!File.Exists(_videoAdaptiveSettingsPath)) return;
+            var json = File.ReadAllText(_videoAdaptiveSettingsPath);
+            var settings = JsonSerializer.Deserialize<VideoAdaptiveSettings>(json);
+            if (settings is null) return;
+
+            _videoAdaptiveParallel = Math.Clamp(settings.Parallel, 1, _videoParallel);
+            _videoAdaptiveLastSamples = Math.Max(0, settings.LastSamples);
+            _videoAdaptiveLastP95Ms = Math.Max(0, settings.LastP95Ms);
+            _videoAdaptiveLastEwmaMs = Math.Max(0, settings.LastEwmaMs);
+            _videoAdaptiveLastDecision = string.IsNullOrWhiteSpace(settings.LastDecision) ? "loaded" : settings.LastDecision;
+            _videoAdaptiveLastDecisionLogged = _videoAdaptiveLastDecision;
+            _videoAdaptiveLastChangeUtc = settings.LastChangeUtc;
+            _videoAdaptiveRunCounter = Math.Max(0, settings.RunCounter);
+            _videoAdaptiveLastChangeRun = Math.Max(0, settings.LastChangeRun);
+            _videoAdaptiveDownSignalStreak = Math.Max(0, settings.DownSignalStreak);
+            _videoAdaptiveUpSignalStreak = Math.Max(0, settings.UpSignalStreak);
+            _videoAdaptiveDecisionHistory.Clear();
+            foreach (var line in settings.DecisionHistory.TakeLast(VideoAdaptiveHistoryMaxEntries))
+            {
+                if (!string.IsNullOrWhiteSpace(line))
+                    _videoAdaptiveDecisionHistory.AddLast(line);
+            }
+            LogDebug($"📥 Ajuste adaptativo cargado: {_videoAdaptiveParallel} (base {_videoParallel})");
+        }
+        catch (Exception ex)
+        {
+            _videoAdaptiveParallel = _videoParallel;
+            LogDebug($"⚠️ No se pudo cargar ajuste adaptativo: {ex.Message}");
+        }
+    }
+
+    private void SaveVideoAdaptiveSettings()
+    {
+        try
+        {
+            var settings = new VideoAdaptiveSettings
+            {
+                Parallel = Math.Clamp(_videoAdaptiveParallel, 1, _videoParallel),
+                UpdatedAt = DateTimeOffset.UtcNow,
+                LastSamples = _videoAdaptiveLastSamples,
+                LastP95Ms = _videoAdaptiveLastP95Ms,
+                LastEwmaMs = _videoAdaptiveLastEwmaMs,
+                LastDecision = _videoAdaptiveLastDecision,
+                LastChangeUtc = _videoAdaptiveLastChangeUtc,
+                RunCounter = _videoAdaptiveRunCounter,
+                LastChangeRun = _videoAdaptiveLastChangeRun,
+                DownSignalStreak = _videoAdaptiveDownSignalStreak,
+                UpSignalStreak = _videoAdaptiveUpSignalStreak,
+                DecisionHistory = _videoAdaptiveDecisionHistory.ToList()
+            };
+            var dir = System.IO.Path.GetDirectoryName(_videoAdaptiveSettingsPath);
+            if (!string.IsNullOrWhiteSpace(dir)) Directory.CreateDirectory(dir);
+            var json = JsonSerializer.Serialize(settings);
+            File.WriteAllText(_videoAdaptiveSettingsPath, json);
+        }
+        catch (Exception ex)
+        {
+            LogDebug($"⚠️ No se pudo guardar ajuste adaptativo: {ex.Message}");
+        }
+    }
+
+    private void PersistVideoMetricsToSqlite(int count, double min, double avg, double median, double p95, double max)
+    {
+        // Las métricas ya se guardan en JSON via SaveVideoRenderTracesAndMetrics
+        // Este método puede agregar análisis adicionales sin persistencia DB
+        LogDebug($"📊 Ciclo métricas: {count} muestras, p95={p95:0.0}ms");
+    }
+
+    public void ExportVideoMetricsToCSV()
+    {
+        try
+        {
+            if (_videoRenderTrace.IsEmpty)
+            {
+                Log("⚠️ No hay trazas de render para exportar");
+                return;
+            }
+
+            // Escribir CSV
+            var csvPath = System.IO.Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
+                "ScoreDown",
+                $"video_metrics_export_{DateTime.Now:yyyyMMdd_HHmmss}.csv"
+            );
+            var dir = System.IO.Path.GetDirectoryName(csvPath);
+            if (!string.IsNullOrEmpty(dir)) Directory.CreateDirectory(dir);
+
+            var items = _videoRenderTrace.OrderBy(kv => kv.Value.RecordedAt).ToList();
+            var sampleValues = items.Where(kv => kv.Value.ElapsedMs > 0).Select(kv => kv.Value.ElapsedMs).ToList();
+
+            using (var writer = new StreamWriter(csvPath, false, Encoding.UTF8))
+            {
+                if (sampleValues.Count > 0)
+                {
+                    var stats = ComputeVideoLatencyStats(sampleValues);
+                    var sorted = sampleValues.OrderBy(v => v).ToList();
+                    var p99 = ComputePercentileFromSorted(sorted, 0.99);
+                    var stdDev = ComputeStdDev(sampleValues, stats.Avg);
+                    writer.WriteLine($"# SummaryGeneratedAt,{DateTime.Now:yyyy-MM-dd HH:mm:ss}");
+                    writer.WriteLine($"# SummaryCount,{sampleValues.Count}");
+                    writer.WriteLine($"# SummaryMinMs,{stats.Min.ToString("0.0", CultureInfo.InvariantCulture)}");
+                    writer.WriteLine($"# SummaryAvgMs,{stats.Avg.ToString("0.0", CultureInfo.InvariantCulture)}");
+                    writer.WriteLine($"# SummaryMedianMs,{stats.Median.ToString("0.0", CultureInfo.InvariantCulture)}");
+                    writer.WriteLine($"# SummaryP95Ms,{stats.P95.ToString("0.0", CultureInfo.InvariantCulture)}");
+                    writer.WriteLine($"# SummaryP99Ms,{p99.ToString("0.0", CultureInfo.InvariantCulture)}");
+                    writer.WriteLine($"# SummaryStdDevMs,{stdDev.ToString("0.0", CultureInfo.InvariantCulture)}");
+                    writer.WriteLine($"# SummaryMaxMs,{stats.Max.ToString("0.0", CultureInfo.InvariantCulture)}");
+                    writer.WriteLine($"# AdaptiveParallel,{_videoAdaptiveParallel}");
+                    writer.WriteLine($"# BaseParallel,{_videoParallel}");
+                    writer.WriteLine();
+                }
+
+                writer.WriteLine("Timestamp,Archivo,ElapsedMs,Formato,ConversionPath");
+                foreach (var (key, entry) in items)
+                {
+                    var fileName = System.IO.Path.GetFileName(key);
+                    var formato = GetFormatTagFromPath(key);
+                    writer.WriteLine(
+                        $"{entry.RecordedAt:yyyy-MM-dd HH:mm:ss}," +
+                        $"{CsvEscape(fileName)}," +
+                        $"{entry.ElapsedMs.ToString("0.0", CultureInfo.InvariantCulture)}," +
+                        $"{CsvEscape(formato)}," +
+                        $"{CsvEscape(entry.Trace)}");
+                }
+            }
+
+            Log($"✅ Métricas exportadas a: {csvPath}");
+            // Abrir archivo
+            if (_videoMetricsAutoOpenCsv)
+            {
+                try { System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo { FileName = csvPath, UseShellExecute = true }); }
+                catch { }
+            }
+        }
+        catch (Exception ex)
+        {
+            LogDebug($"❌ Error exportando CSV: {ex.Message}");
+        }
+    }
+
+    public void ExportVideoAdaptiveHistoryToCSV()
+    {
+        try
+        {
+            if (_videoAdaptiveDecisionHistory.Count == 0)
+            {
+                Log("⚠️ No hay historial adaptativo para exportar");
+                return;
+            }
+
+            var csvPath = System.IO.Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
+                "ScoreDown",
+                $"video_adaptive_history_{DateTime.Now:yyyyMMdd_HHmmss}.csv"
+            );
+            var dir = System.IO.Path.GetDirectoryName(csvPath);
+            if (!string.IsNullOrEmpty(dir)) Directory.CreateDirectory(dir);
+
+            using (var writer = new StreamWriter(csvPath, false, Encoding.UTF8))
+            {
+                writer.WriteLine("Timestamp,Decision,ParallelBefore,ParallelAfter,P95Ms,EwmaMs,Samples,Note");
+                foreach (var line in _videoAdaptiveDecisionHistory)
+                {
+                    var parts = line.Split('|').Select(p => p.Trim()).ToArray();
+                    if (parts.Length < 5)
+                    {
+                        writer.WriteLine($"{CsvEscape(line)},,,,,,,");
+                        continue;
+                    }
+
+                    var timestamp = parts[0];
+                    var decision = parts[1];
+                    var parallel = parts[2];
+                    var p95 = parts[3];
+                    var ewma = parts[4];
+                    var samples = parts.Length > 5 ? parts[5] : string.Empty;
+                    var note = parts.Length > 6 ? string.Join(" | ", parts.Skip(6)) : string.Empty;
+
+                    var before = string.Empty;
+                    var after = string.Empty;
+                    var arrowIdx = parallel.IndexOf("->", StringComparison.Ordinal);
+                    if (arrowIdx > 0)
+                    {
+                        before = parallel[..arrowIdx].Trim();
+                        after = parallel[(arrowIdx + 2)..].Trim();
+                    }
+                    else
+                    {
+                        before = parallel;
+                    }
+
+                    writer.WriteLine(
+                        $"{CsvEscape(timestamp)}," +
+                        $"{CsvEscape(decision)}," +
+                        $"{CsvEscape(before)}," +
+                        $"{CsvEscape(after)}," +
+                        $"{CsvEscape(p95.Replace("p95=", string.Empty).Replace("ms", string.Empty).Trim())}," +
+                        $"{CsvEscape(ewma.Replace("ewma=", string.Empty).Replace("ms", string.Empty).Trim())}," +
+                        $"{CsvEscape(samples.Replace("n=", string.Empty).Trim())}," +
+                        $"{CsvEscape(note)}");
+                }
+            }
+
+            Log($"✅ Historial adaptativo exportado a: {csvPath}");
+            if (_videoMetricsAutoOpenCsv)
+            {
+                try
+                {
+                    System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+                    {
+                        FileName = csvPath,
+                        UseShellExecute = true
+                    });
+                }
+                catch { }
+            }
+        }
+        catch (Exception ex)
+        {
+            LogDebug($"❌ Error exportando historial adaptativo: {ex.Message}");
+        }
+    }
+
+    private void ResetVideoAdaptiveParallelism()
+    {
+        var previous = _videoAdaptiveParallel <= 0 ? _videoParallel : _videoAdaptiveParallel;
+        _videoAdaptiveParallel = _videoParallel;
+        _videoAdaptiveLastDecision = "reset";
+        _videoAdaptiveLastDecisionLogged = "reset";
+        _videoAdaptiveLastChangeUtc = DateTimeOffset.UtcNow;
+        _videoAdaptiveLastChangeRun = _videoAdaptiveRunCounter;
+        _videoAdaptiveDownSignalStreak = 0;
+        _videoAdaptiveUpSignalStreak = 0;
+        AddVideoAdaptiveDecisionHistory("reset", previous, _videoAdaptiveParallel, _videoAdaptiveLastP95Ms, _videoAdaptiveLastEwmaMs, _videoAdaptiveLastSamples);
+        SaveVideoAdaptiveSettings();
+        Log($"♻️ Paralelismo adaptativo restablecido a {_videoParallel}");
+        VideoLog($"\n♻️ Paralelismo restablecido a {_videoParallel}");
+        UpdateVideoSelectButton();
+    }
+
+    private void AddVideoAdaptiveDecisionHistory(string decision, int before, int after, double p95, double ewma, int samples, string? note = null)
+    {
+        var suffix = string.IsNullOrWhiteSpace(note) ? string.Empty : $" | {note}";
+        var line =
+            $"{DateTimeOffset.UtcNow:yyyy-MM-dd HH:mm:ss} | {decision} | {before}->{after} | p95={p95:0.0}ms | ewma={ewma:0.0}ms | n={samples}{suffix}";
+
+        _videoAdaptiveDecisionHistory.AddLast(line);
+        while (_videoAdaptiveDecisionHistory.Count > VideoAdaptiveHistoryMaxEntries)
+            _videoAdaptiveDecisionHistory.RemoveFirst();
+    }
+
+    public void ShowVideoRenderDiagnosticsModal()
+    {
+        var report = ValidateVideoRenderTraceData();
+        DarkDialogService.ShowMessage(this, report, "🔍 Diagnóstico de Render de Vídeo", MessageBoxButton.OK, MessageBoxImage.Information);
+    }
+
+    private string ValidateVideoRenderTraceData()
+    {
+        var report = new StringBuilder();
+        report.AppendLine("🔍 Validación de trazas de render:");
+
+        // Verificar que OrderList y Dict están sincronizados
+        lock (_videoRenderTraceLru)
+        {
+            var inOrder = _videoRenderTraceOrder.Count;
+            var inDict = _videoRenderTrace.Count;
+            var matches = _videoRenderTraceOrder.Count(k => _videoRenderTrace.ContainsKey(k));
+
+            report.AppendLine($"  • LRU OrderList: {inOrder} entradas");
+            report.AppendLine($"  • Dict: {inDict} entradas");
+            report.AppendLine($"  • Sincronización: {matches}/{inOrder} coinciden");
+
+            if (matches != inOrder)
+                report.AppendLine($"  ⚠️ Desincronización: {inOrder - matches} entradas huérfanas");
+
+            if (inDict > VideoRenderTraceMaxEntries)
+                report.AppendLine($"  ⚠️ Límite LRU excedido: {inDict} > {VideoRenderTraceMaxEntries}");
+        }
+
+        var stats = _videoRenderTrace.Values.Where(e => e.ElapsedMs > 0).ToList();
+        report.AppendLine($"  • Muestras con tiempo: {stats.Count}");
+        if (stats.Count > 0)
+        {
+            var values = stats.Select(e => e.ElapsedMs).ToList();
+            var latency = ComputeVideoLatencyStats(values);
+            var sorted = values.OrderBy(v => v).ToList();
+            var p99 = ComputePercentileFromSorted(sorted, 0.99);
+            var stdDev = ComputeStdDev(values, latency.Avg);
+            report.AppendLine($"  • Promedio: {latency.Avg:0.0}ms");
+            report.AppendLine($"  • Mediana: {latency.Median:0.0}ms");
+            report.AppendLine($"  • P95: {latency.P95:0.0}ms");
+            report.AppendLine($"  • P99: {p99:0.0}ms");
+            report.AppendLine($"  • StdDev: {stdDev:0.0}ms");
+        }
+
+        report.AppendLine($"  • Contador lentitud: {_videoConversionSlowCount}");
+        report.AppendLine($"  • Flag backoff: {_videoConversionSlowThreshold}");
+        report.AppendLine($"  • Paralelismo base: {_videoParallel}");
+        report.AppendLine($"  • Paralelismo adaptativo actual: {_videoAdaptiveParallel}");
+        report.AppendLine($"  • Adaptativo ventana: {_videoAdaptiveWindowSize}");
+        report.AppendLine($"  • Adaptativo alpha: {_videoAdaptiveEwmaAlpha:0.00}");
+        report.AppendLine($"  • Adaptativo cooldown cambio: {_videoAdaptiveMinChangeCooldownMs / 60000} min");
+        report.AppendLine($"  • Adaptativo cooldown runs: {_videoAdaptiveMinChangeRuns}");
+        report.AppendLine($"  • Adaptativo señales requeridas: {_videoAdaptiveRequiredSignals}");
+        report.AppendLine($"  • Adaptativo run counter: {_videoAdaptiveRunCounter}");
+        report.AppendLine($"  • Adaptativo último cambio run: {_videoAdaptiveLastChangeRun}");
+        report.AppendLine($"  • Adaptativo streak DOWN: {_videoAdaptiveDownSignalStreak}");
+        report.AppendLine($"  • Adaptativo streak UP: {_videoAdaptiveUpSignalStreak}");
+        report.AppendLine($"  • Adaptativo última n: {_videoAdaptiveLastSamples}");
+        report.AppendLine($"  • Adaptativo último p95: {_videoAdaptiveLastP95Ms:0.0}ms");
+        report.AppendLine($"  • Adaptativo último ewma: {_videoAdaptiveLastEwmaMs:0.0}ms");
+        report.AppendLine($"  • Adaptativo última decisión: {_videoAdaptiveLastDecision}");
+        report.AppendLine($"  • Adaptativo último cambio: {_videoAdaptiveLastChangeUtc:yyyy-MM-dd HH:mm:ss zzz}");
+        report.AppendLine("  • Historial adaptativo reciente:");
+        foreach (var line in _videoAdaptiveDecisionHistory.TakeLast(6))
+            report.AppendLine($"    - {line}");
+
+        return report.ToString();
+    }
+
     // ── Video generation (MuseScore directo) ───────────────────────────────────
 
-    private static readonly HashSet<string> VideoInputExtensions = new(StringComparer.OrdinalIgnoreCase) { ".mscz", ".mxl", ".xml", ".musicxml" };
+    private static readonly HashSet<string> VideoInputExtensions = new(StringComparer.OrdinalIgnoreCase) { ".mscz", ".mscx", ".mxl", ".xml", ".musicxml", ".pdf" };
 
     private volatile bool _videoRunning;
     private CancellationTokenSource? _videoCts;
     private readonly int _videoTimeoutSeconds = ReadFeatureFlagInt("SCOREDOWN_VIDEO_TIMEOUT_SEC", 1200, 30, 7200);
     private readonly int _videoParallel = ReadFeatureFlagInt("SCOREDOWN_VIDEO_PARALLEL", 1, 1, 4);
-    private readonly int _videoTrimTailSeconds = ReadFeatureFlagInt("SCOREDOWN_VIDEO_TRIM_TAIL_SEC", 6, 0, 30);
+    private const int VideoAdaptiveHistoryMaxEntries = 50;
+    private int _videoAdaptiveParallel;
+    private readonly int _videoAdaptiveWindowSize = ReadFeatureFlagInt("SCOREDOWN_VIDEO_ADAPTIVE_WINDOW", 40, 10, 200);
+    private readonly double _videoAdaptiveEwmaAlpha = Math.Clamp(ReadFeatureFlagInt("SCOREDOWN_VIDEO_ADAPTIVE_EWMA_ALPHA_PCT", 25, 5, 90) / 100.0, 0.05, 0.90);
+    private readonly int _videoAdaptiveMinChangeCooldownMs = ReadFeatureFlagInt("SCOREDOWN_VIDEO_ADAPTIVE_CHANGE_COOLDOWN_MIN", 30, 0, 1440) * 60 * 1000;
+    private readonly int _videoAdaptiveMinChangeRuns = ReadFeatureFlagInt("SCOREDOWN_VIDEO_ADAPTIVE_CHANGE_COOLDOWN_RUNS", 1, 0, 20);
+    private readonly int _videoAdaptiveRequiredSignals = ReadFeatureFlagInt("SCOREDOWN_VIDEO_ADAPTIVE_REQUIRED_SIGNALS", 2, 1, 10);
+    private readonly int _videoTracePersistIntervalMs = ReadFeatureFlagInt("SCOREDOWN_VIDEO_TRACE_SAVE_SEC", 5, 1, 60) * 1000;
+    private readonly int _videoMetricsAlertCooldownMs = ReadFeatureFlagInt("SCOREDOWN_VIDEO_ALERT_COOLDOWN_SEC", 900, 10, 7200) * 1000;
+    private readonly bool _videoMetricsAutoOpenCsv = ReadFeatureFlag("SCOREDOWN_VIDEO_OPEN_CSV", true);
+    private long _videoTraceLastPersistTickMs;
+    private int _videoTracePersistScheduled;
+    private long _videoMetricsLastAlertTickMs;
+    private int _videoAdaptiveLastSamples;
+    private double _videoAdaptiveLastP95Ms;
+    private double _videoAdaptiveLastEwmaMs;
+    private string _videoAdaptiveLastDecision = "init";
+    private string _videoAdaptiveLastDecisionLogged = "init";
+    private DateTimeOffset _videoAdaptiveLastChangeUtc;
+    private int _videoAdaptiveRunCounter;
+    private int _videoAdaptiveLastChangeRun;
+    private int _videoAdaptiveDownSignalStreak;
+    private int _videoAdaptiveUpSignalStreak;
+    private readonly LinkedList<string> _videoAdaptiveDecisionHistory = new();
+    private readonly double _videoTrimTailSeconds = 10.0; // Recorte final fijo por petición.
     private readonly int _videoSubtitleFontPt = ReadFeatureFlagInt("SCOREDOWN_VIDEO_SUBTITLE_FONT_PT", 11, 6, 36);
-    private readonly bool _videoLuxuryTitleEnabled = ReadFeatureFlag("SCOREDOWN_VIDEO_LUXURY_TITLE", true);
-    private readonly int _videoLuxuryTitleSeconds = ReadFeatureFlagInt("SCOREDOWN_VIDEO_LUXURY_DURATION_SEC", 5, 1, 30);
+    private readonly bool _videoLuxuryTitleEnabled = true; // Intro de títulos siempre activa.
+    private readonly int _videoLuxuryTitleSeconds = 5; // Duración fija solicitada.
     private readonly bool _videoHideOriginalScoreTitle = ReadFeatureFlag("SCOREDOWN_VIDEO_HIDE_ORIGINAL_TITLE", true);
-    private readonly int _videoFadeOutSeconds = ReadFeatureFlagInt("SCOREDOWN_VIDEO_FADE_OUT_SEC", 2, 0, 10);
+    private readonly int _videoFadeOutSeconds = 0; // Fade-out final desactivado por petición.
+    private readonly double _videoEndHoldSeconds = 5.0; // Mantener última imagen 5s al final.
 
     private readonly System.Collections.ObjectModel.ObservableCollection<VideoSelectItem> _videoSelectItems = new();
+    private sealed class VideoRenderTraceEntry { public required string Trace; public double ElapsedMs; public DateTimeOffset RecordedAt; }
+    private readonly ConcurrentDictionary<string, VideoRenderTraceEntry> _videoRenderTrace = new(StringComparer.OrdinalIgnoreCase);
+    private readonly object _videoRenderTraceLru = new();  // protege orden de inserción para LRU
+    private readonly LinkedList<string> _videoRenderTraceOrder = new();  // orden FIFO para poda LRU (máx 5000)
+    private readonly HashSet<string> _videoRenderTraceSet = new(StringComparer.OrdinalIgnoreCase); // índice O(1) para evitar Contains O(N)
+    private const int VideoRenderTraceMaxEntries = 5000;
+    private bool _videoConversionSlowThreshold;  // flag: si conversiones median > 30s, activar backoff
+    private int _videoConversionSlowCount;  // contador de conversiones lentas para backoff dinámico
+    private readonly string _videoMetricsSqlitePath = Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+        "ScoreDown", "video-metrics.db");
+    private bool _videoJvmWarmed;  // indica si Audiveris JVM fue precalentado en esta sesión
+    private sealed class VideoAdaptiveSettings
+    {
+        public int Parallel { get; set; }
+        public DateTimeOffset UpdatedAt { get; set; }
+        public int LastSamples { get; set; }
+        public double LastP95Ms { get; set; }
+        public double LastEwmaMs { get; set; }
+        public string LastDecision { get; set; } = string.Empty;
+        public DateTimeOffset LastChangeUtc { get; set; }
+        public int RunCounter { get; set; }
+        public int LastChangeRun { get; set; }
+        public int DownSignalStreak { get; set; }
+        public int UpSignalStreak { get; set; }
+        public List<string> DecisionHistory { get; set; } = new();
+    }
     private string? _videoPanelMuseScoreExe;
     private IReadOnlyList<string>? _videoPanelExtraArgs;
     private string? _videoPanelDestFolder;
@@ -4118,7 +7235,19 @@ public partial class MainWindow : Window, IAsyncDisposable
 
         _videoPanelMuseScoreExe = museScoreExe;
         _videoPanelExtraArgs = ResolveMuseScoreVideoArgs();
+        var previousDestFolder = _videoPanelDestFolder;
         _videoPanelDestFolder = destFolder;
+
+        // Limpiar traza de render cuando cambia carpeta para evitar crecimiento acumulado en sesiones largas.
+        if (!string.Equals(previousDestFolder, destFolder, StringComparison.OrdinalIgnoreCase))
+        {
+            lock (_videoRenderTraceLru)
+            {
+                _videoRenderTrace.Clear();
+                _videoRenderTraceOrder.Clear();
+                _videoRenderTraceSet.Clear();
+            }
+        }
 
         // Cancelar populate anterior si el panel ya estaba abierto con otra carpeta
         _videoPopulateCts?.Cancel();
@@ -4229,6 +7358,21 @@ public partial class MainWindow : Window, IAsyncDisposable
         }
         catch (OperationCanceledException) { return; }  // populate más nuevo en camino, ignorar silencioso
 
+        // Compactar trazas: conservar solo entradas visibles del lote actual.
+        var activeInputs = computed.Select(d => d.File).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        lock (_videoRenderTraceLru)
+        {
+            foreach (var key in _videoRenderTrace.Keys)
+            {
+                if (!activeInputs.Contains(key))
+                {
+                    _videoRenderTrace.TryRemove(key, out _);
+                    _videoRenderTraceOrder.Remove(key);
+                    _videoRenderTraceSet.Remove(key);
+                }
+            }
+        }
+
         // Actualizar UI en hilo principal
         if (localCts.IsCancellationRequested) return;   // populate más nuevo en camino
         btnVideoSelectGenerate.IsEnabled = false;        // bloquear hasta que UpdateVideoSelectButton fije el estado correcto
@@ -4240,18 +7384,23 @@ public partial class MainWindow : Window, IAsyncDisposable
             System.Windows.Media.Brush color = d.Ext switch
             {
                 ".mscz" => BrushMscz,
+                ".mscx" => BrushMscz,
                 ".mxl" => BrushMxl,
                 ".musicxml" => BrushMusicXml,
                 ".xml" => BrushMusicXml,   // MusicXML con extensión .xml
+                ".pdf" => BrushPdf,
                 _ => System.Windows.Media.Brushes.DimGray
             };
-            var isSelected = previouslySelected is null ? !d.HasVideo : previouslySelected.Contains(d.File);
+            var isSelected = previouslySelected is null ? false : previouslySelected.Contains(d.File);
             var item = new VideoSelectItem
             {
                 BestFile = d.File,
                 DisplayName = Path.GetFileNameWithoutExtension(d.File),
                 FormatTag = d.Tag,
                 FormatColor = color,
+                FormatToolTip = _videoRenderTrace.TryGetValue(d.File, out var entry)
+                    ? $"{entry.Trace}  [{entry.ElapsedMs:0.0}ms]"
+                    : $"Origen: {d.Tag}",
                 HasVideo = d.HasVideo,
                 FolderShort = d.FolderShort,
                 Mp4SizeToolTip = d.Mp4ToolTip,
@@ -4326,6 +7475,7 @@ public partial class MainWindow : Window, IAsyncDisposable
     private static readonly System.Windows.Media.SolidColorBrush BrushMscz = MakeFrozenBrush(0x7C, 0x3A, 0xED);
     private static readonly System.Windows.Media.SolidColorBrush BrushMxl = MakeFrozenBrush(0x0F, 0x76, 0x6E);
     private static readonly System.Windows.Media.SolidColorBrush BrushMusicXml = MakeFrozenBrush(0x1E, 0x40, 0xAF);
+    private static readonly System.Windows.Media.SolidColorBrush BrushPdf = MakeFrozenBrush(0xB4, 0x53, 0x09);
 
     private static System.Windows.Media.SolidColorBrush MakeFrozenBrush(byte r, byte g, byte b)
     {
@@ -4333,6 +7483,21 @@ public partial class MainWindow : Window, IAsyncDisposable
         brush.Freeze();
         return brush;
     }
+
+    private static string GetFormatTagFromPath(string path)
+        => Path.GetExtension(path).TrimStart('.').ToUpperInvariant();
+
+    private static System.Windows.Media.Brush GetFormatBrushForExt(string ext)
+        => ext.ToLowerInvariant() switch
+        {
+            ".mscz" => BrushMscz,
+            ".mscx" => BrushMscz,
+            ".mxl" => BrushMxl,
+            ".musicxml" => BrushMusicXml,
+            ".xml" => BrushMusicXml,
+            ".pdf" => BrushPdf,
+            _ => System.Windows.Media.Brushes.DimGray
+        };
 
     private bool FilterVideoItem(object obj)
     {
@@ -4391,6 +7556,18 @@ public partial class MainWindow : Window, IAsyncDisposable
             : $"{sel}/{total} seleccionada(s)";
         if (hiddenSel > 0) countText += $"  +{hiddenSel} oculta(s) sel.";
         txtVideoSelectCount.Text = countText;
+        if (txtVideoAdaptiveStatus is not null)
+        {
+            var adaptive = _videoAdaptiveParallel <= 0 ? _videoParallel : _videoAdaptiveParallel;
+            var delta = adaptive - _videoParallel;
+            var state = delta < 0 ? "degradado" : delta > 0 ? "boost" : "base";
+            txtVideoAdaptiveStatus.Text = $"⚙ p={adaptive}/{_videoParallel} ({state})";
+            txtVideoAdaptiveStatus.Foreground = delta < 0
+                ? System.Windows.Media.Brushes.OrangeRed
+                : delta > 0
+                    ? System.Windows.Media.Brushes.LightGreen
+                    : System.Windows.Media.Brushes.LightGray;
+        }
 
         // Sync checkbox de cabecera (sin disparar eventos)
         _suppressVideoHeaderEvents = true;
@@ -4402,7 +7579,7 @@ public partial class MainWindow : Window, IAsyncDisposable
         {
             if (_videoSelectItems.Count == 0)
             {
-                txtVideoEmpty.Text = "No se encontraron partituras (.mscz / .mxl / .musicxml) en la carpeta seleccionada";
+                txtVideoEmpty.Text = "No se encontraron partituras (.mscz / .mscx / .mxl / .musicxml / .pdf) en la carpeta seleccionada";
                 txtVideoEmpty.Visibility = System.Windows.Visibility.Visible;
             }
             else if (total == 0)
@@ -4465,6 +7642,195 @@ public partial class MainWindow : Window, IAsyncDisposable
     private IEnumerable<VideoSelectItem> VisibleItems =>
         _videoSelectView?.Cast<VideoSelectItem>() ?? _videoSelectItems;
 
+    private async Task<string?> EnsureVideoRenderableInputAsync(string inputPath, string destFolder, CancellationToken ct)
+    {
+        ct.ThrowIfCancellationRequested();
+        var ext = Path.GetExtension(inputPath);
+        if (!string.Equals(ext, ".pdf", StringComparison.OrdinalIgnoreCase))
+            return inputPath;
+
+        // Reusar salida existente si el PDF ya fue convertido antes.
+        var existing = ResolveBestVideoSourceForPdf(inputPath);
+        if (!string.IsNullOrWhiteSpace(existing) && File.Exists(existing))
+            return existing;
+
+        // Backoff dinámico si conversiones anteriores fueron lentas (mediana > 30s)
+        if (_videoConversionSlowThreshold && _videoConversionSlowCount > 0)
+        {
+            var delayMs = Math.Min(2000 + (_videoConversionSlowCount * 500), 5000);  // 2s a 5s backoff
+            LogDebug($"🔄 Backoff dinámico: esperando {delayMs}ms antes de conversión (lentitud anterior)");
+            await Task.Delay(delayMs, ct).ConfigureAwait(false);
+        }
+
+        Log($"🎵 Video: convirtiendo PDF a formato musical: {Path.GetFileName(inputPath)}");
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+
+        // Primer intento: Audiveris (mejor para PDF completo).
+        var audiverisExe = ResolveAudiverisExecutable();
+        if (!string.IsNullOrWhiteSpace(audiverisExe))
+        {
+            // Precalentar JVM de Audiveris en primer PDF (una sola vez por sesión)
+            if (!_videoJvmWarmed)
+            {
+                LogDebug($"🔥 Precalentando JVM de Audiveris (primera conversión PDF)...");
+                _videoJvmWarmed = true;
+                // Pequeño delay para permitir que el JVM se inicialice en background
+                await Task.Delay(500, ct).ConfigureAwait(false);
+            }
+
+            var siblingSet = BuildMusicScoreSiblingSetCached(destFolder);
+            int audiverisTries = 0;
+            while (audiverisTries < 2)  // máx 2 intentos en fallos transitorios
+            {
+                audiverisTries++;
+                try
+                {
+                    var r = await RunAudiverisConversionAsync(audiverisExe, inputPath, destFolder, allowSiblingFallback: true, siblingSet: siblingSet, ct: ct).ConfigureAwait(false);
+                    if (r.Success || r.Partial)
+                    {
+                        InvalidateRawFilesCache(destFolder);
+                        var converted = ResolveBestVideoSourceForPdf(inputPath);
+                        if (!string.IsNullOrWhiteSpace(converted) && File.Exists(converted))
+                        {
+                            sw.Stop();
+                            RecordVideoRenderTrace(inputPath, $"PDF→Audiveris→{GetFormatTagFromPath(converted)}", sw.Elapsed.TotalMilliseconds);
+                            // Registrar lentitud si > 30s para backoff futuro
+                            if (sw.Elapsed.TotalSeconds > 30)
+                                Interlocked.Increment(ref _videoConversionSlowCount);
+                            return converted;
+                        }
+                    }
+                    // Si no es éxito completo pero tampoco fallo transitorio, salir
+                    if (!r.PageFailure) break;
+                }
+                catch (TimeoutException) when (audiverisTries == 1)
+                {
+                    LogDebug($"🔄 Video PDF: reintentando Audiveris tras timeout (intento {audiverisTries}/2)");
+                    continue;  // reintentar una sola vez
+                }
+            }
+        }
+
+        // Fallback: oemer para PDF (genera páginas MXL).
+        var (oemerExe, prefixArgs) = ResolveOemerCommand();
+        if (!string.IsNullOrWhiteSpace(oemerExe))
+        {
+            int oemerTries = 0;
+            while (oemerTries < 2)  // máx 2 intentos
+            {
+                oemerTries++;
+                try
+                {
+                    var r = await RunOemerOnPdfAsync(oemerExe, prefixArgs, inputPath, ct).ConfigureAwait(false);
+                    if (r.Success)
+                    {
+                        InvalidateRawFilesCache(destFolder);
+                        var converted = ResolveBestVideoSourceForPdf(inputPath);
+                        if (!string.IsNullOrWhiteSpace(converted) && File.Exists(converted))
+                        {
+                            sw.Stop();
+                            RecordVideoRenderTrace(inputPath, $"PDF→oemer→{GetFormatTagFromPath(converted)}", sw.Elapsed.TotalMilliseconds);
+                            // Registrar lentitud si > 30s para backoff futuro
+                            if (sw.Elapsed.TotalSeconds > 30)
+                                Interlocked.Increment(ref _videoConversionSlowCount);
+                            return converted;
+                        }
+                    }
+                }
+                catch (TimeoutException) when (oemerTries == 1)
+                {
+                    LogDebug($"🔄 Video PDF: reintentando oemer tras timeout (intento {oemerTries}/2)");
+                    continue;
+                }
+            }
+        }
+
+        sw.Stop();
+        var diagnostics = new[]
+        {
+            $"⚠️ Video: no se pudo convertir PDF para render: {Path.GetFileName(inputPath)} ({sw.Elapsed.TotalSeconds:0.0}s)",
+            $"  → Audiveris: {(audiverisExe is not null ? "intentado" : "no disponible")}",
+            $"  → oemer: {(oemerExe is not null ? "intentado" : "no disponible")}",
+            $"  📋 Diagnóstico:",
+            $"    • Instala Audiveris: https://github.com/Audiveris/audiveris",
+            $"    • O instala oemer: pip install oemer",
+            $"    • Verifica que PDF no esté corrupto: abre en Adobe Reader",
+            $"    • Si persiste, guarda como imagen (PNG) y reintenta conversión"
+        };
+        Log(string.Join("\n", diagnostics));
+        return null;
+    }
+
+    private static string? ResolveBestVideoSourceForPdf(string pdfPath)
+    {
+        var dir = Path.GetDirectoryName(pdfPath) ?? string.Empty;
+        var stem = Path.GetFileNameWithoutExtension(pdfPath);
+        if (string.IsNullOrWhiteSpace(dir) || string.IsNullOrWhiteSpace(stem)) return null;
+
+        foreach (var candidateExt in VideoFormatPriority)
+        {
+            // Coincidencia directa: stem.ext
+            var direct = Path.Combine(dir, stem + candidateExt);
+            if (File.Exists(direct)) return direct;
+
+            // Audiveris: stem/stem.ext
+            var nested = Path.Combine(dir, stem, stem + candidateExt);
+            if (File.Exists(nested)) return nested;
+
+            // oemer: stem_p0001.ext (priorizar primera página)
+            try
+            {
+                var page = Directory.EnumerateFiles(dir, stem + "_p*" + candidateExt)
+                    .OrderBy(p => p, StringComparer.OrdinalIgnoreCase)
+                    .FirstOrDefault();
+                if (!string.IsNullOrWhiteSpace(page)) return page;
+            }
+            catch { }
+        }
+
+        return null;
+    }
+
+    private void RecordVideoRenderTrace(string inputPath, string trace, double elapsedMs)
+    {
+        var entry = new VideoRenderTraceEntry { Trace = trace, ElapsedMs = elapsedMs, RecordedAt = DateTimeOffset.UtcNow };
+        lock (_videoRenderTraceLru)
+        {
+            // Registrar o actualizar entrada
+            _videoRenderTrace.AddOrUpdate(inputPath, entry, (_, __) => entry);
+
+            // LRU real: si existe, mover al final; si es nuevo, registrar en set+lista.
+            if (_videoRenderTraceSet.Add(inputPath))
+                _videoRenderTraceOrder.AddLast(inputPath);
+            else
+            {
+                _videoRenderTraceOrder.Remove(inputPath);
+                _videoRenderTraceOrder.AddLast(inputPath);
+            }
+
+            // Podar si se excede límite: eliminar las más antiguas
+            while (_videoRenderTraceOrder.Count > VideoRenderTraceMaxEntries && _videoRenderTraceOrder.First is not null)
+            {
+                var oldest = _videoRenderTraceOrder.First.Value;
+                _videoRenderTraceOrder.RemoveFirst();
+                _videoRenderTraceSet.Remove(oldest);
+                _videoRenderTrace.TryRemove(oldest, out _);
+            }
+        }
+
+        // Actualizar tooltip en vivo si el item está visible en la grilla
+        var item = _videoSelectItems.FirstOrDefault(i => string.Equals(i.BestFile, inputPath, StringComparison.OrdinalIgnoreCase));
+        if (item is not null)
+        {
+            Dispatcher.InvokeAsync(() =>
+            {
+                item.FormatToolTip = $"{trace}  [{elapsedMs:0.0}ms]";
+            });
+        }
+
+        MaybePersistVideoRenderTraces();
+    }
+
     private async Task RunVideoGenerationAsync(IReadOnlyList<string> pending, string museScoreExe, IReadOnlyList<string> extraVideoArgs, string destFolder, CancellationToken externalCt)
     {
         // Guardia temprana: no debería ocurrir, pero mejor salir limpio antes de tocar UI
@@ -4509,17 +7875,63 @@ public partial class MainWindow : Window, IAsyncDisposable
 
         try
         {
+            // Calcular paralelismo adaptativo basado en trazas históricas
+            var effectiveParallel = CalculateAdaptiveVideoParallelism();
+
             await Parallel.ForEachAsync(
                 pending,
-                new ParallelOptions { MaxDegreeOfParallelism = _videoParallel, CancellationToken = _videoCts.Token },
+                new ParallelOptions { MaxDegreeOfParallelism = effectiveParallel, CancellationToken = _videoCts.Token },
                 async (input, innerCt) =>
                 {
                     var name = Path.GetFileName(input);
                     var idx = Interlocked.Increment(ref processed);
+                    var renderInput = await EnsureVideoRenderableInputAsync(input, destFolder, innerCt).ConfigureAwait(false);
+                    if (string.IsNullOrWhiteSpace(renderInput) || !File.Exists(renderInput))
+                    {
+                        var failNow = Interlocked.Increment(ref fail);
+                        Interlocked.Increment(ref _videoEtaFailed);
+                        Log($"⚠️ Sin vídeo (entrada no renderizable): {name} (ok={Volatile.Read(ref ok)}, fail={failNow})");
+                        VideoLog($"⚠️ Sin vídeo: {name} (PDF sin conversión) ");
+                        await Dispatcher.InvokeAsync(() =>
+                        {
+                            if (itemLookup.TryGetValue(input, out var si))
+                                si.Status = VideoStatus.Error;
+                            pbVideoGeneral.Foreground = System.Windows.Media.Brushes.OrangeRed;
+                            pbVideoGeneral.Value = Interlocked.Increment(ref _videoEtaCompleted);
+                            UpdateVideoEtaLabel();
+                            UpdateVideoSelectButton();
+                        });
+                        return;
+                    }
+
                     var outputMp4 = Path.Combine(
                         Path.GetDirectoryName(input) ?? destFolder,
                         Path.GetFileNameWithoutExtension(input) + ".mp4");
                     var startedAt = DateTimeOffset.UtcNow;
+
+                    if (itemLookup.TryGetValue(input, out var displayItem))
+                    {
+                        var sourceTag = GetFormatTagFromPath(input);
+                        var renderTag = GetFormatTagFromPath(renderInput);
+                        var conversionTrace = string.Equals(sourceTag, renderTag, StringComparison.OrdinalIgnoreCase)
+                            ? $"Origen/Render: {sourceTag}"
+                            : $"Origen: {sourceTag} | Render: {renderTag} ({Path.GetFileName(renderInput)})";
+
+                        if (!string.Equals(sourceTag, renderTag, StringComparison.OrdinalIgnoreCase))
+                        {
+                            await Dispatcher.InvokeAsync(() =>
+                            {
+                                displayItem.FormatTag = $"{sourceTag}→{renderTag}";
+                                displayItem.FormatColor = GetFormatBrushForExt(Path.GetExtension(renderInput));
+                                displayItem.FormatToolTip = conversionTrace;
+                            });
+                        }
+                        else
+                        {
+                            await Dispatcher.InvokeAsync(() =>
+                                displayItem.FormatToolTip = conversionTrace);
+                        }
+                    }
 
                     await Dispatcher.InvokeAsync(() =>
                         txtStatus.Text = $"🎥 Video [{idx}/{pending.Count}] {name}");
@@ -4536,7 +7948,8 @@ public partial class MainWindow : Window, IAsyncDisposable
                     bool generated;
                     try
                     {
-                        generated = await RunMuseScoreVideoAsync(museScoreExe, input, outputMp4, extraVideoArgs, innerCt).ConfigureAwait(false);
+                        generated = await RunMuseScoreVideoAsync(museScoreExe, renderInput, outputMp4, extraVideoArgs, innerCt,
+                            errMsg => VideoLog($"  ⚠️ Error MuseScore:\n{errMsg}")).ConfigureAwait(false);
                     }
                     catch (Exception ex) when (ex is not OperationCanceledException)
                     {
@@ -4567,15 +7980,83 @@ public partial class MainWindow : Window, IAsyncDisposable
                                 Log($"✨ Intro portada aplicada ({name}): título + autor(es)");
                                 VideoLog($"  ✨ Portada añadida");
                             }
+                            else
+                            {
+                                Log($"⚠️ No se pudo aplicar portada/títulos iniciales ({name}). Revisa log FFmpeg.");
+                                VideoLog("  ⚠️ Portada no aplicada");
+                            }
+                        }
+
+                        // Recorta posible cola negra de transición justo después de la intro.
+                        if (File.Exists(outputMp4))
+                        {
+                            var trimmedBlackHead = await TryTrimBlackHeadAsync(outputMp4, innerCt).ConfigureAwait(false);
+                            if (trimmedBlackHead)
+                            {
+                                Log($"🧽 Recorte negro tras intro aplicado ({name})");
+                                VideoLog("  🧽 Negro tras intro eliminado");
+                            }
+                        }
+
+                        if (_videoEndHoldSeconds > 0 && File.Exists(outputMp4))
+                        {
+                            var held = await TryHoldLastFrameAtEndAsync(outputMp4, _videoEndHoldSeconds, innerCt).ConfigureAwait(false);
+                            if (held)
+                            {
+                                Log($"🖼️ Hold final aplicado ({name}): +{_videoEndHoldSeconds:F1}s última imagen");
+                                VideoLog($"  🖼️ Hold final: +{_videoEndHoldSeconds:F1}s");
+                            }
                         }
 
                         if (_videoTrimTailSeconds > 0 && File.Exists(outputMp4))
                         {
-                            var trimmed = await TryTrimVideoTailAsync(outputMp4, _videoTrimTailSeconds, innerCt).ConfigureAwait(false);
-                            if (trimmed)
+                            // Primero: recortar la tarjeta final "Made with MuseScore Studio" si aparece.
+                            var trimmedMuseScoreOutro = await TryTrimMuseScoreOutroAsync(outputMp4, innerCt).ConfigureAwait(false);
+                            if (trimmedMuseScoreOutro)
                             {
-                                Log($"✂️ Recorte aplicado ({name}): -{_videoTrimTailSeconds}s al final");
-                                VideoLog($"  ✂️ Recorte: -{_videoTrimTailSeconds}s");
+                                Log($"🎼 Recorte de outro MuseScore aplicado ({name})");
+                                VideoLog($"  🎼 Outro MuseScore eliminado");
+                            }
+                            else
+                            {
+                                // Intenta recorte inteligente por cambio de escena.
+                                var trimmedByScene = await TryTrimVideoAtSceneChangeAsync(outputMp4, innerCt).ConfigureAwait(false);
+                                if (trimmedByScene)
+                                {
+                                    Log($"✨ Recorte inteligente por escena aplicado ({name})");
+                                    VideoLog($"  ✨ Recorte automático por escena");
+                                }
+                                else
+                                {
+                                    // Segundo intento: recorte por cola negra al final (útil si no hay cambio de escena claro).
+                                    var trimmedByBlackTail = await TryTrimBlackTailAsync(outputMp4, innerCt).ConfigureAwait(false);
+                                    if (trimmedByBlackTail)
+                                    {
+                                        Log($"🧹 Recorte por cola negra aplicado ({name})");
+                                        VideoLog($"  🧹 Recorte automático por cola negra");
+                                    }
+                                    else
+                                    {
+                                        // Tercer intento: recorte por silencio final de audio.
+                                        var trimmedBySilence = await TryTrimAudioSilenceTailAsync(outputMp4, innerCt).ConfigureAwait(false);
+                                        if (trimmedBySilence)
+                                        {
+                                            Log($"🔇 Recorte por silencio final aplicado ({name})");
+                                            VideoLog($"  🔇 Recorte automático por silencio final");
+                                        }
+                                        else
+                                        {
+                                            // Fallback final: recorte por tiempo fijo.
+                                            var fallbackTrimSeconds = Math.Max(_videoTrimTailSeconds, 2.2);
+                                            var trimmedByTime = await TryTrimVideoTailAsync(outputMp4, fallbackTrimSeconds, innerCt).ConfigureAwait(false);
+                                            if (trimmedByTime)
+                                            {
+                                                Log($"✂️ Recorte por tiempo aplicado ({name}): -{fallbackTrimSeconds:F1}s al final");
+                                                VideoLog($"  ✂️ Recorte: -{fallbackTrimSeconds:F1}s");
+                                            }
+                                        }
+                                    }
+                                }
                             }
                         }
 
@@ -4665,6 +8146,39 @@ public partial class MainWindow : Window, IAsyncDisposable
             _videoRunning = false;
             _videoCts?.Dispose();
             _videoCts = null;
+
+            // Verificar fail rate y ajustar paralelismo para futuras ejecuciones
+            if (ok + fail > 0)
+            {
+                _videoAdaptiveRunCounter++;
+                var failRate = (double)fail / (ok + fail);
+                if (failRate > 0.10)  // > 10%
+                {
+                    var baseline = _videoAdaptiveParallel <= 0 ? _videoParallel : _videoAdaptiveParallel;
+                    var newParallel = Math.Max(1, baseline - 1);
+                    _videoAdaptiveParallel = newParallel;
+                    _videoAdaptiveLastDecision = "rollback-failrate";
+                    _videoAdaptiveLastDecisionLogged = "rollback-failrate";
+                    _videoAdaptiveLastChangeUtc = DateTimeOffset.UtcNow;
+                    _videoAdaptiveLastChangeRun = _videoAdaptiveRunCounter;
+                    _videoAdaptiveDownSignalStreak = 0;
+                    _videoAdaptiveUpSignalStreak = 0;
+                    AddVideoAdaptiveDecisionHistory("rollback-failrate", baseline, newParallel, _videoAdaptiveLastP95Ms, _videoAdaptiveLastEwmaMs, _videoAdaptiveLastSamples,
+                        $"failRate={failRate:P1}");
+                    SaveVideoAdaptiveSettings();
+                    Log($"🔴 Rollback paralelismo: {failRate * 100:F1}% de fallos. Se sugiere reducir a {newParallel} en próxima ejecución");
+                    VideoLog($"\n🔴 Tasa error: {failRate * 100:F1}% - Paralelismo guardado: {newParallel}");
+                }
+                else
+                {
+                    SaveVideoAdaptiveSettings();
+                }
+            }
+
+            // Guardar métricas y trazas antes de limpiar
+            LogVideoMetrics();
+            SaveVideoRenderTracesAndMetrics();
+
             btnGenerateVideo.IsEnabled = true;
             btnCancelVideo.IsEnabled = false;
             btnVideoSelectCancelGen.IsEnabled = false;
@@ -4851,6 +8365,26 @@ public partial class MainWindow : Window, IAsyncDisposable
             }
             UpdateVideoSelectButton();   // restaurar botones según estado real
         }
+    }
+
+    private void BtnVideoSelectDiagnostics_Click(object sender, RoutedEventArgs e)
+    {
+        ShowVideoRenderDiagnosticsModal();
+    }
+
+    private void BtnVideoSelectExportCSV_Click(object sender, RoutedEventArgs e)
+    {
+        ExportVideoMetricsToCSV();
+    }
+
+    private void BtnVideoSelectResetAdaptive_Click(object sender, RoutedEventArgs e)
+    {
+        ResetVideoAdaptiveParallelism();
+    }
+
+    private void BtnVideoSelectExportAdaptiveCSV_Click(object sender, RoutedEventArgs e)
+    {
+        ExportVideoAdaptiveHistoryToCSV();
     }
 
     private async void BtnVideoSelectGenerate_Click(object sender, RoutedEventArgs e)
@@ -5045,6 +8579,7 @@ public partial class MainWindow : Window, IAsyncDisposable
             "Est" => nameof(VideoSelectItem.Status),
             "Nombre" => nameof(VideoSelectItem.DisplayName),
             "Formato" => nameof(VideoSelectItem.FormatTag),
+            "Tamaño" => nameof(VideoSelectItem.ScoreSizeBytes),   // ordenamiento numérico por bytes
             "Carpeta" => nameof(VideoSelectItem.FolderShort),
             "▶" => nameof(VideoSelectItem.HasVideo),   // ordenar por tiene/no-tiene MP4
             _ => null
@@ -5139,11 +8674,11 @@ public partial class MainWindow : Window, IAsyncDisposable
                 : "📁 Seleccionar toda la carpeta";
         }
         var visibleWithMp4 = VisibleItems.Count(i => i.HasVideo);
-        mnuCtxVideoCopyAllMp4.Header    = visibleWithMp4 > 0 ? $"📋 Copiar rutas MP4 visibles ({visibleWithMp4})" : "📋 Copiar rutas MP4 visibles";
+        mnuCtxVideoCopyAllMp4.Header = visibleWithMp4 > 0 ? $"📋 Copiar rutas MP4 visibles ({visibleWithMp4})" : "📋 Copiar rutas MP4 visibles";
         mnuCtxVideoCopyAllMp4.IsEnabled = visibleWithMp4 > 0;
         // Seleccionar / Deseleccionar: mostrar cuenta si hay multi-selección
         var selDesCount = genCount;   // misma base que "Generar"
-        mnuCtxVideoSelect.Header   = selDesCount > 1 ? $"☑ Seleccionar ({selDesCount})"   : "☑ Seleccionar";
+        mnuCtxVideoSelect.Header = selDesCount > 1 ? $"☑ Seleccionar ({selDesCount})" : "☑ Seleccionar";
         mnuCtxVideoDeselect.Header = selDesCount > 1 ? $"☐ Deseleccionar ({selDesCount})" : "☐ Deseleccionar";
         // Copiar ruta: mostrar cuenta si hay multi-selección
         mnuCtxVideoCopyPath.Header = selDesCount > 1 ? $"📋 Copiar rutas ({selDesCount})" : "📋 Copiar ruta";
@@ -5848,6 +9383,151 @@ public partial class MainWindow : Window, IAsyncDisposable
         }
     }
 
+    private static async Task<bool> HasAudioStreamAsync(string ffprobeExe, string inputPath, CancellationToken ct)
+    {
+        try
+        {
+            var psi = new ProcessStartInfo
+            {
+                FileName = ffprobeExe,
+                UseShellExecute = false,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                CreateNoWindow = true
+            };
+            psi.ArgumentList.Add("-v");
+            psi.ArgumentList.Add("error");
+            psi.ArgumentList.Add("-select_streams");
+            psi.ArgumentList.Add("a:0");
+            psi.ArgumentList.Add("-show_entries");
+            psi.ArgumentList.Add("stream=index");
+            psi.ArgumentList.Add("-of");
+            psi.ArgumentList.Add("default=noprint_wrappers=1:nokey=1");
+            psi.ArgumentList.Add(inputPath);
+
+            using var p = new Process { StartInfo = psi };
+            if (!p.Start()) return false;
+
+            var stdoutTask = p.StandardOutput.ReadToEndAsync();
+            var stderrTask = p.StandardError.ReadToEndAsync();
+            await p.WaitForExitAsync(ct).ConfigureAwait(false);
+            var stdout = (await stdoutTask.ConfigureAwait(false)).Trim();
+            _ = await stderrTask.ConfigureAwait(false);
+
+            return p.ExitCode == 0 && !string.IsNullOrWhiteSpace(stdout);
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private static List<string> BuildTrimTranscodeArgs(string inputPath, string targetStr, string outputPath, bool hasAudio)
+    {
+        var args = new List<string>
+        {
+            "-y",
+            "-i", inputPath,
+        };
+
+        if (hasAudio)
+        {
+            args.AddRange(new[]
+            {
+                "-filter_complex", $"[0:v]trim=0:{targetStr},setpts=PTS-STARTPTS[v];[0:a]atrim=0:{targetStr},asetpts=PTS-STARTPTS[a]",
+                "-map", "[v]",
+                "-map", "[a]",
+            });
+        }
+        else
+        {
+            args.AddRange(new[]
+            {
+                "-filter_complex", $"[0:v]trim=0:{targetStr},setpts=PTS-STARTPTS[v]",
+                "-map", "[v]",
+            });
+        }
+
+        args.AddRange(new[]
+        {
+            "-c:v", "libx264",
+            "-preset", "medium",
+            "-crf", "18",
+            "-pix_fmt", "yuv420p",
+        });
+
+        if (hasAudio)
+        {
+            args.AddRange(new[]
+            {
+                "-c:a", "aac",
+                "-ar", "44100",
+                "-ac", "2",
+            });
+        }
+
+        args.AddRange(new[]
+        {
+            "-movflags", "+faststart",
+            outputPath
+        });
+
+        return args;
+    }
+
+    private static List<string> BuildStartTrimTranscodeArgs(string inputPath, string startStr, string outputPath, bool hasAudio)
+    {
+        var args = new List<string>
+        {
+            "-y",
+            "-i", inputPath,
+        };
+
+        if (hasAudio)
+        {
+            args.AddRange(new[]
+            {
+                "-filter_complex", $"[0:v]trim=start={startStr},setpts=PTS-STARTPTS[v];[0:a]atrim=start={startStr},asetpts=PTS-STARTPTS[a]",
+                "-map", "[v]",
+                "-map", "[a]",
+            });
+        }
+        else
+        {
+            args.AddRange(new[]
+            {
+                "-filter_complex", $"[0:v]trim=start={startStr},setpts=PTS-STARTPTS[v]",
+                "-map", "[v]",
+            });
+        }
+
+        args.AddRange(new[]
+        {
+            "-c:v", "libx264",
+            "-preset", "medium",
+            "-crf", "18",
+            "-pix_fmt", "yuv420p",
+        });
+
+        if (hasAudio)
+        {
+            args.AddRange(new[]
+            {
+                "-c:a", "aac",
+                "-ar", "44100",
+                "-ac", "2",
+            });
+        }
+
+        args.AddRange(new[]
+        {
+            "-movflags", "+faststart",
+            outputPath
+        });
+
+        return args;
+    }
+
     private sealed record VideoPresentationMeta(string Title, string Subtitle, string Authors);
 
     private enum VideoStatus { None, Running, Done, Error }
@@ -5926,11 +9606,60 @@ public partial class MainWindow : Window, IAsyncDisposable
 
         public string BestFile { get; init; } = string.Empty;
         public string DisplayName { get; init; } = string.Empty;
-        public string FormatTag { get; init; } = string.Empty;
-        public System.Windows.Media.Brush FormatColor { get; init; } = System.Windows.Media.Brushes.DimGray;
+
+        private string _formatTag = string.Empty;
+        public string FormatTag
+        {
+            get => _formatTag;
+            set { if (_formatTag == value) return; _formatTag = value; Notify(nameof(FormatTag)); }
+        }
+
+        private System.Windows.Media.Brush _formatColor = System.Windows.Media.Brushes.DimGray;
+        public System.Windows.Media.Brush FormatColor
+        {
+            get => _formatColor;
+            set { if (ReferenceEquals(_formatColor, value)) return; _formatColor = value; Notify(nameof(FormatColor)); }
+        }
+
+        private string _formatToolTip = string.Empty;
+        public string FormatToolTip
+        {
+            get => _formatToolTip;
+            set { if (_formatToolTip == value) return; _formatToolTip = value; Notify(nameof(FormatToolTip)); }
+        }
         public string HasVideoMark => _hasVideo ? "✓" : string.Empty;
         public string FolderShort { get; init; } = string.Empty;
         public string FolderFull => Path.GetDirectoryName(BestFile) ?? string.Empty;
+
+        public long ScoreSizeBytes
+        {
+            get
+            {
+                if (string.IsNullOrWhiteSpace(BestFile) || !File.Exists(BestFile))
+                    return 0;
+                try
+                {
+                    return new FileInfo(BestFile).Length;
+                }
+                catch
+                {
+                    return 0;
+                }
+            }
+        }
+
+        public string ScoreSizeText
+        {
+            get
+            {
+                var bytes = ScoreSizeBytes;
+                if (bytes == 0)
+                    return "—";
+                if (bytes >= 1024 * 1024)
+                    return $"{bytes / (1024.0 * 1024.0):F1} MB";
+                return $"{bytes / 1024.0:F0} KB";
+            }
+        }
 
         private string _mp4SizeToolTip = string.Empty;
         public string Mp4SizeToolTip
@@ -5946,7 +9675,7 @@ public partial class MainWindow : Window, IAsyncDisposable
 
     // Priority order for "best quality" file selection per score stem
     private static readonly string[] VideoFormatPriority =
-        { ".mscz", ".mxl", ".musicxml", ".xml" };
+        { ".mscz", ".mscx", ".mxl", ".musicxml", ".xml" };
 
     private static string EscapeFfmpegDrawText(string value)
     {
@@ -6045,13 +9774,18 @@ public partial class MainWindow : Window, IAsyncDisposable
         return null;
     }
 
-    private static string CreateTempOverlayTextFile(string content, string fileName)
+    private static string CreateTempOverlayTextFile(string content, string fileName, string? scopeToken = null)
     {
-        var dir = Path.Combine(Path.GetTempPath(), "ScoreDown", "video-overlay-text");
+        var dir = string.IsNullOrWhiteSpace(scopeToken)
+            ? Path.Combine(Path.GetTempPath(), "ScoreDown", "video-overlay-text")
+            : Path.Combine(Path.GetTempPath(), "ScoreDown", "video-overlay-text", scopeToken);
         Directory.CreateDirectory(dir);
-        var path = Path.Combine(dir, fileName);
+        var ext = Path.GetExtension(fileName);
+        var stem = Path.GetFileNameWithoutExtension(fileName);
+        var uniqueName = $"{stem}-{Guid.NewGuid():N}{ext}";
+        var path = Path.Combine(dir, uniqueName);
         File.WriteAllText(path, content, new UTF8Encoding(false));
-        return path.Replace("\\", "/", StringComparison.Ordinal).Replace(":", "\\:", StringComparison.Ordinal);
+        return path;
     }
 
     private static string EscapeFfmpegFilterPath(string path)
@@ -6074,14 +9808,23 @@ public partial class MainWindow : Window, IAsyncDisposable
         }
 
         var baseDir = AppContext.BaseDirectory;
-        AddCandidate(Path.Combine(baseDir, "logo_scores.png"));
-        AddCandidate(Path.Combine(baseDir, "preview", "logo_scores.png"));
+        var logoNames = new[] { "video_scores_logo.png", "logo_scores.png" };
+        foreach (var logoName in logoNames)
+        {
+            AddCandidate(Path.Combine(baseDir, logoName));
+            AddCandidate(Path.Combine(baseDir, "preview", logoName));
+            AddCandidate(Path.Combine(Environment.CurrentDirectory, logoName));
+            AddCandidate(Path.Combine(Environment.CurrentDirectory, "preview", logoName));
+        }
 
         var dir = new DirectoryInfo(baseDir);
         for (var i = 0; i < 6 && dir is not null; i++, dir = dir.Parent)
         {
-            AddCandidate(Path.Combine(dir.FullName, "preview", "logo_scores.png"));
-            AddCandidate(Path.Combine(dir.FullName, "ScoreDown", "preview", "logo_scores.png"));
+            foreach (var logoName in logoNames)
+            {
+                AddCandidate(Path.Combine(dir.FullName, "preview", logoName));
+                AddCandidate(Path.Combine(dir.FullName, "ScoreDown", "preview", logoName));
+            }
         }
 
         foreach (var candidate in candidates.Distinct(StringComparer.OrdinalIgnoreCase))
@@ -6198,144 +9941,293 @@ public partial class MainWindow : Window, IAsyncDisposable
         if (string.IsNullOrWhiteSpace(ffmpegExe))
             return false;
 
-        var meta = BuildVideoPresentationMeta(inputPath);
-        var titleText = WrapTextForOverlay(meta.Title, 22, 2);
-        var subtitleText = WrapTextForOverlay(meta.Subtitle, 34, 2);
-        var authorsText = string.IsNullOrWhiteSpace(meta.Authors) ? string.Empty : meta.Authors.Replace("\n", " ", StringComparison.Ordinal).Trim();
-        var showAuthors = !string.IsNullOrWhiteSpace(authorsText);
-        var secs = _videoLuxuryTitleSeconds;
-        var fontPath = ResolveElegantFontForDrawText();
-        var fontOpt = string.IsNullOrWhiteSpace(fontPath) ? string.Empty : $"fontfile='{fontPath}':";
-        var logoFile = ResolveLuxuryLogoOverlayFile();
-        var titleLines = string.IsNullOrWhiteSpace(titleText)
-            ? Array.Empty<string>()
-            : titleText.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-        var subtitleLines = string.IsNullOrWhiteSpace(subtitleText)
-            ? Array.Empty<string>()
-            : subtitleText.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        var overlayScopeToken = Guid.NewGuid().ToString("N", System.Globalization.CultureInfo.InvariantCulture);
+        var overlayScopeDir = Path.Combine(Path.GetTempPath(), "ScoreDown", "video-overlay-text", overlayScopeToken);
+        var overlayTextFiles = new List<string>();
 
-        // Build drawtext filters for the portada PNG (static — no 'enable' filter needed)
-        var filters = new List<string>
+        string CreateScopedOverlayTextFile(string content, string fileName)
+        {
+            var rawPath = CreateTempOverlayTextFile(content, fileName, overlayScopeToken);
+            overlayTextFiles.Add(rawPath);
+            return EscapeFfmpegFilterPath(rawPath);
+        }
+
+        try
+        {
+
+            var meta = BuildVideoPresentationMeta(inputPath);
+            var titleText = WrapTextForOverlay(meta.Title, 22, 2);
+            var subtitleText = WrapTextForOverlay(meta.Subtitle, 34, 2);
+            var authorsText = string.IsNullOrWhiteSpace(meta.Authors) ? string.Empty : meta.Authors.Replace("\n", " ", StringComparison.Ordinal).Trim();
+            var showAuthors = !string.IsNullOrWhiteSpace(authorsText);
+            var secs = _videoLuxuryTitleSeconds;
+            var fontPath = ResolveElegantFontForDrawText();
+            var fontOpt = string.IsNullOrWhiteSpace(fontPath) ? string.Empty : $"fontfile='{fontPath}':";
+            var logoFile = ResolveLuxuryLogoOverlayFile();
+            if (logoFile is null)
+                Log("⚠️ Logo de portada no encontrado; se genera portada sin logo.");
+            else
+                LogDebug($"🖼️ Logo portada: {logoFile}");
+            var titleLines = string.IsNullOrWhiteSpace(titleText)
+                ? Array.Empty<string>()
+                : titleText.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+            var subtitleLines = string.IsNullOrWhiteSpace(subtitleText)
+                ? Array.Empty<string>()
+                : subtitleText.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+
+            // Build drawtext filters for the portada PNG (static — no 'enable' filter needed)
+            var filters = new List<string>
         {
             "drawbox=x=0:y=0:w=iw:h=ih:color=0x0b0704@1.0:t=fill",
             "drawbox=x=0:y=0:w=iw:h=6:color=0xD4AF37@0.95:t=fill",
             "drawbox=x=0:y=ih-6:w=iw:h=6:color=0xD4AF37@0.95:t=fill"
         };
 
-        for (var i = 0; i < titleLines.Length; i++)
-        {
-            var titleFile = CreateTempOverlayTextFile(titleLines[i], $"title-{i}.txt");
-            var titleY = 0.32 + (i * 0.12);
-            filters.Add($"drawtext={fontOpt}textfile='{titleFile}':x=(w-text_w)/2:y=h*{titleY.ToString(System.Globalization.CultureInfo.InvariantCulture)}:fontsize=240:fontcolor=0xF0D98C:borderw=8:bordercolor=black@0.99:shadowx=4:shadowy=4:shadowcolor=black@0.90");
-        }
-
-        if (subtitleLines.Length > 0)
-        {
-            for (var i = 0; i < subtitleLines.Length; i++)
+            for (var i = 0; i < titleLines.Length; i++)
             {
-                var subtitleFile = CreateTempOverlayTextFile(subtitleLines[i], $"subtitle-{i}.txt");
-                var subtitleY = 0.62 + (i * 0.08);
-                filters.Add($"drawtext={fontOpt}textfile='{subtitleFile}':x=(w-text_w)/2:y=h*{subtitleY.ToString(System.Globalization.CultureInfo.InvariantCulture)}:fontsize=148:fontcolor=0xF0D98C:borderw=6:bordercolor=black@0.99:shadowx=4:shadowy=4:shadowcolor=black@0.86");
+                var titleFile = CreateScopedOverlayTextFile(titleLines[i], $"title-{i}.txt");
+                var titleY = 0.32 + (i * 0.12);
+                filters.Add($"drawtext={fontOpt}textfile='{titleFile}':x=(w-text_w)/2:y=h*{titleY.ToString(System.Globalization.CultureInfo.InvariantCulture)}:fontsize=240:fontcolor=0xF0D98C:borderw=8:bordercolor=black@0.99:shadowx=4:shadowy=4:shadowcolor=black@0.90");
             }
-        }
 
-        if (showAuthors)
-        {
-            var authorsFile = CreateTempOverlayTextFile(authorsText, "authors.txt");
-            filters.Add($"drawtext={fontOpt}textfile='{authorsFile}':x=(w-text_w)/2:y=h*0.83:fontsize=132:fontcolor=0xF0D98C:borderw=6:bordercolor=black@0.99:shadowx=4:shadowy=4:shadowcolor=black@0.86");
-        }
+            if (subtitleLines.Length > 0)
+            {
+                for (var i = 0; i < subtitleLines.Length; i++)
+                {
+                    var subtitleFile = CreateScopedOverlayTextFile(subtitleLines[i], $"subtitle-{i}.txt");
+                    var subtitleY = 0.62 + (i * 0.08);
+                    filters.Add($"drawtext={fontOpt}textfile='{subtitleFile}':x=(w-text_w)/2:y=h*{subtitleY.ToString(System.Globalization.CultureInfo.InvariantCulture)}:fontsize=148:fontcolor=0xF0D98C:borderw=6:bordercolor=black@0.99:shadowx=4:shadowy=4:shadowcolor=black@0.86");
+                }
+            }
 
-        // Step 1: Generate portada PNG (3840×2160, dark background + text + logo)
-        var portadaPng = outputMp4 + ".portada.png";
-        try { if (File.Exists(portadaPng)) File.Delete(portadaPng); } catch { }
+            if (showAuthors)
+            {
+                var authorsFile = CreateScopedOverlayTextFile(authorsText, "authors.txt");
+                filters.Add($"drawtext={fontOpt}textfile='{authorsFile}':x=(w-text_w)/2:y=h*0.83:fontsize=132:fontcolor=0xF0D98C:borderw=6:bordercolor=black@0.99:shadowx=4:shadowy=4:shadowcolor=black@0.86");
+            }
 
-        bool portadaOk;
-        if (logoFile is not null)
-        {
-            var fc = $"[0:v]{string.Join(",", filters)}[base];[1:v]scale=1260:-1:flags=lanczos[logo];[base][logo]overlay=x=(main_w-overlay_w)/2:y=50:format=auto[outv]";
-            portadaOk = await RunProcessAsync(ffmpegExe,
-                new List<string> { "-y", "-f", "lavfi", "-i", "color=c=0x0b0704:s=3840x2160:d=1", "-i", logoFile,
+            // Step 1: Generate portada PNG (3840×2160, dark background + text + logo)
+            var portadaPng = outputMp4 + ".portada.png";
+            try { if (File.Exists(portadaPng)) File.Delete(portadaPng); } catch { }
+
+            bool portadaOk;
+            if (logoFile is not null)
+            {
+                var fc = $"[0:v]{string.Join(",", filters)}[base];[1:v]scale=w=1700:h=620:force_original_aspect_ratio=decrease:flags=lanczos,format=rgba[logo];[base][logo]overlay=x=(main_w-overlay_w)/2:y=72:format=auto[outv]";
+                portadaOk = await RunProcessAsync(ffmpegExe,
+                    new List<string> { "-y", "-f", "lavfi", "-i", "color=c=0x0b0704:s=3840x2160:d=1", "-i", logoFile,
                     "-filter_complex", fc, "-map", "[outv]", "-frames:v", "1", portadaPng },
-                "portada.png", "FFmpeg portada", TimeSpan.FromMinutes(2), ct).ConfigureAwait(false);
-        }
-        else
-        {
-            portadaOk = await RunProcessAsync(ffmpegExe,
-                new List<string> { "-y", "-f", "lavfi", "-i", "color=c=0x0b0704:s=3840x2160:d=1",
+                    "portada.png", "FFmpeg portada", TimeSpan.FromMinutes(2), ct).ConfigureAwait(false);
+            }
+            else
+            {
+                portadaOk = await RunProcessAsync(ffmpegExe,
+                    new List<string> { "-y", "-f", "lavfi", "-i", "color=c=0x0b0704:s=3840x2160:d=1",
                     "-vf", string.Join(",", filters), "-frames:v", "1", portadaPng },
-                "portada.png", "FFmpeg portada", TimeSpan.FromMinutes(2), ct).ConfigureAwait(false);
-        }
+                    "portada.png", "FFmpeg portada", TimeSpan.FromMinutes(2), ct).ConfigureAwait(false);
+            }
 
-        if (!portadaOk || !File.Exists(portadaPng))
-            return false;
+            if (!portadaOk || !File.Exists(portadaPng))
+                return false;
 
-        // Step 2: Encode portada as intro video (1920×1080, 30 fps, fade-in 1s / fade-out 1s)
-        var introMp4 = outputMp4 + ".intro.tmp.mp4";
-        try { if (File.Exists(introMp4)) File.Delete(introMp4); } catch { }
-        var fadeOutSt = (secs - 1).ToString("F3", System.Globalization.CultureInfo.InvariantCulture);
-        var secsStr = secs.ToString("F3", System.Globalization.CultureInfo.InvariantCulture);
-        var introVf = $"scale=1920:1080,fps=30,fade=t=in:st=0:d=1,fade=t=out:st={fadeOutSt}:d=1,format=yuv420p";
-        var introOk = await RunProcessAsync(ffmpegExe,
-            new List<string> { "-y", "-loop", "1", "-i", portadaPng,
+            // Step 2: Encode portada as intro video (1920×1080, 30 fps, fade-in 1s)
+            var introMp4 = outputMp4 + ".intro.tmp.mp4";
+            try { if (File.Exists(introMp4)) File.Delete(introMp4); } catch { }
+            var secsStr = secs.ToString("F3", System.Globalization.CultureInfo.InvariantCulture);
+            var introVf = "scale=1920:1080,fps=30,fade=t=in:st=0:d=1,format=yuv420p";
+            var introOk = await RunProcessAsync(ffmpegExe,
+                new List<string> { "-y", "-loop", "1", "-i", portadaPng,
                 "-f", "lavfi", "-i", "anullsrc=channel_layout=stereo:sample_rate=44100",
                 "-vf", introVf, "-t", secsStr, "-r", "30",
                 "-c:v", "libx264", "-preset", "medium", "-crf", "18",
                 "-c:a", "aac", introMp4 },
-            "intro.mp4", "FFmpeg intro", TimeSpan.FromMinutes(2), ct).ConfigureAwait(false);
+                "intro.mp4", "FFmpeg intro", TimeSpan.FromMinutes(2), ct).ConfigureAwait(false);
 
-        try { if (File.Exists(portadaPng)) File.Delete(portadaPng); } catch { }
+            try { if (File.Exists(portadaPng)) File.Delete(portadaPng); } catch { }
 
-        if (!introOk || !File.Exists(introMp4))
-            return false;
+            if (!introOk || !File.Exists(introMp4))
+                return false;
 
-        // Step 3: Normalize score video to 1920×1080, 30 fps (to match intro)
-        var normMp4 = outputMp4 + ".norm.tmp.mp4";
-        try { if (File.Exists(normMp4)) File.Delete(normMp4); } catch { }
-        var normOk = await RunProcessAsync(ffmpegExe,
-            new List<string> { "-y", "-i", outputMp4,
+            // Step 3: Normalize score video to 1920×1080, 30 fps (to match intro)
+            var normMp4 = outputMp4 + ".norm.tmp.mp4";
+            try { if (File.Exists(normMp4)) File.Delete(normMp4); } catch { }
+            var normOk = await RunProcessAsync(ffmpegExe,
+                new List<string> { "-y", "-i", outputMp4,
                 "-vf", "scale=1920:1080,fps=30,format=yuv420p",
                 "-c:v", "libx264", "-preset", "medium", "-crf", "18",
                 "-c:a", "aac", "-ar", "44100", "-ac", "2", normMp4 },
-            "norm.mp4", "FFmpeg normalize", TimeSpan.FromMinutes(10), ct).ConfigureAwait(false);
+                "norm.mp4", "FFmpeg normalize", TimeSpan.FromMinutes(10), ct).ConfigureAwait(false);
 
-        if (!normOk || !File.Exists(normMp4))
-        {
-            try { if (File.Exists(introMp4)) File.Delete(introMp4); } catch { }
-            return false;
+            if (!normOk || !File.Exists(normMp4))
+            {
+                try { if (File.Exists(introMp4)) File.Delete(introMp4); } catch { }
+                return false;
+            }
+
+            // Step 4: Concat intro + score using filter_complex (more robust than demuxer+copy)
+            var tmp = outputMp4 + ".lux.tmp.mp4";
+            try { if (File.Exists(tmp)) File.Delete(tmp); } catch { }
+            var concatOk = await RunProcessAsync(ffmpegExe,
+                new List<string> { "-y", "-i", introMp4, "-i", normMp4,
+                "-filter_complex", "[0:v:0]setpts=PTS-STARTPTS[v0];[0:a:0]asetpts=PTS-STARTPTS[a0];[1:v:0]setpts=PTS-STARTPTS[v1];[1:a:0]asetpts=PTS-STARTPTS[a1];[v0][a0][v1][a1]concat=n=2:v=1:a=1[v][a]",
+                "-map", "[v]", "-map", "[a]",
+                "-c:v", "libx264", "-preset", "medium", "-crf", "18",
+                "-c:a", "aac", "-ar", "44100", "-ac", "2",
+                "-movflags", "+faststart", tmp },
+                Path.GetFileName(outputMp4), "FFmpeg concat intro", TimeSpan.FromMinutes(5), ct).ConfigureAwait(true);
+
+            foreach (var f in new[] { introMp4, normMp4 })
+                try { if (File.Exists(f)) File.Delete(f); } catch { }
+
+            if (!concatOk || !File.Exists(tmp))
+                return false;
+
+            try
+            {
+                File.Move(tmp, outputMp4, true);
+                return true;
+            }
+            catch
+            {
+                try { if (File.Exists(tmp)) File.Delete(tmp); } catch { }
+                return false;
+            }
         }
+        finally
+        {
+            foreach (var f in overlayTextFiles)
+                try { if (File.Exists(f)) File.Delete(f); } catch { }
+            try
+            {
+                if (Directory.Exists(overlayScopeDir))
+                    Directory.Delete(overlayScopeDir, recursive: true);
+            }
+            catch { }
+        }
+    }
 
-        // Step 4: Concat intro + score via concat demuxer
-        var concatList = outputMp4 + ".concat.txt";
-        await File.WriteAllTextAsync(concatList,
-            $"file '{introMp4.Replace("\\", "/", StringComparison.Ordinal)}'\nfile '{normMp4.Replace("\\", "/", StringComparison.Ordinal)}'",
-            System.Text.Encoding.UTF8, ct).ConfigureAwait(false);
+    /// <summary>
+    /// Detecta el último cambio de escena en el video y recorta hasta ese punto.
+    /// Usa umbral de 0.3 para detectar cambios de escena significativos.
+    /// </summary>
+    private async Task<bool> TryTrimVideoAtSceneChangeAsync(string outputMp4, CancellationToken ct)
+    {
+        if (!File.Exists(outputMp4))
+            return false;
 
-        var tmp = outputMp4 + ".lux.tmp.mp4";
-        try { if (File.Exists(tmp)) File.Delete(tmp); } catch { }
-        var concatOk = await RunProcessAsync(ffmpegExe,
-            new List<string> { "-y", "-f", "concat", "-safe", "0", "-i", concatList,
-                "-c", "copy", "-movflags", "+faststart", tmp },
-            Path.GetFileName(outputMp4), "FFmpeg concat intro", TimeSpan.FromMinutes(5), ct).ConfigureAwait(true);
+        var ffprobeExe = await ResolveFfprobeExecutableAsync().ConfigureAwait(false);
+        if (string.IsNullOrWhiteSpace(ffprobeExe))
+            return false;
 
-        foreach (var f in new[] { introMp4, normMp4, concatList })
-            try { if (File.Exists(f)) File.Delete(f); } catch { }
-
-        if (!concatOk || !File.Exists(tmp))
+        var ffmpegExe = await ResolveFfmpegExecutableAsync().ConfigureAwait(false);
+        if (string.IsNullOrWhiteSpace(ffmpegExe))
             return false;
 
         try
         {
-            File.Move(tmp, outputMp4, true);
-            return true;
-        }
-        catch
-        {
+            // Detecta cambios de escena con umbral 0.3
+            const double sceneThreshold = 0.3;
+
+            // Prepara el path escapeando comillas dobles para ffmpeg lavfi
+            var escapedPath = outputMp4.Replace("\"", "\\\"");
+
+            var psi = new ProcessStartInfo
+            {
+                FileName = ffprobeExe,
+                UseShellExecute = false,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                CreateNoWindow = true
+            };
+            psi.ArgumentList.Add("-f");
+            psi.ArgumentList.Add("lavfi");
+            psi.ArgumentList.Add("-i");
+            // Usa comillas dobles alrededor del path para mayor compatibilidad en Windows
+            psi.ArgumentList.Add($"movie=\"{escapedPath}\",select='gt(scene\\,{sceneThreshold.ToString(System.Globalization.CultureInfo.InvariantCulture)})',showinfo");
+            psi.ArgumentList.Add("-show_entries");
+            psi.ArgumentList.Add("frame=pts_time");
+            psi.ArgumentList.Add("-of");
+            psi.ArgumentList.Add("csv=p=0");
+            psi.ArgumentList.Add("-v");
+            psi.ArgumentList.Add("quiet");
+
+            using var p = new Process { StartInfo = psi };
+            if (!p.Start()) return false;
+
+            var stdout = await p.StandardOutput.ReadToEndAsync().ConfigureAwait(false);
+            var stderr = await p.StandardError.ReadToEndAsync().ConfigureAwait(false);
+            await p.WaitForExitAsync(ct).ConfigureAwait(false);
+
+            if (p.ExitCode != 0)
+            {
+                Log($"ℹ️ Detección de escenas falló (ffprobe exit={p.ExitCode}); usando recorte por tiempo.");
+                return false;
+            }
+
+            var lines = stdout.Trim().Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries)
+                .Where(l => !string.IsNullOrWhiteSpace(l) && char.IsDigit(l[0]))
+                .ToArray();
+
+            if (lines.Length == 0)
+            {
+                Log("ℹ️ No se detectaron cambios de escena significativos; usando recorte por tiempo.");
+                return false;
+            }
+
+            // Obtén el último timestamp de cambio de escena
+            var lastSceneTimeStr = lines[lines.Length - 1].Trim();
+            if (!double.TryParse(lastSceneTimeStr, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var lastSceneTime))
+            {
+                Log($"ℹ️ Parse error en timestamp '{lastSceneTimeStr}'; usando recorte por tiempo.");
+                return false;
+            }
+
+            // Obtén duración total
+            var totalDuration = await GetMediaDurationSecondsAsync(ffprobeExe, outputMp4, ct).ConfigureAwait(false);
+            if (totalDuration is null || totalDuration.Value < 3)
+            {
+                Log("ℹ️ Video muy corto para análisis de escenas; usando recorte por tiempo.");
+                return false;
+            }
+
+            if (lastSceneTime >= totalDuration.Value - 0.5)
+            {
+                Log($"ℹ️ Último cambio de escena muy cercano al final ({lastSceneTime:F2}s de {totalDuration.Value:F2}s); sin cambios.");
+                return false;
+            }
+
+            var targetStr = lastSceneTime.ToString("F3", System.Globalization.CultureInfo.InvariantCulture);
+            var tmp = outputMp4 + ".trim-scene.tmp.mp4";
             try { if (File.Exists(tmp)) File.Delete(tmp); } catch { }
+
+            var hasAudio = await HasAudioStreamAsync(ffprobeExe, outputMp4, ct).ConfigureAwait(false);
+            var args = BuildTrimTranscodeArgs(outputMp4, targetStr, tmp, hasAudio);
+
+            var secondsRemoved = totalDuration.Value - lastSceneTime;
+            var ok = await RunProcessAsync(ffmpegExe, args, Path.GetFileName(outputMp4), "FFmpeg scene-based trim", TimeSpan.FromMinutes(2), ct).ConfigureAwait(true);
+            if (!ok || !File.Exists(tmp))
+                return false;
+
+            try
+            {
+                File.Move(tmp, outputMp4, true);
+                Log($"🎬 Recorte por cambio de escena: -{secondsRemoved:F2}s (última escena en {lastSceneTime:F2}s)");
+                return true;
+            }
+            catch
+            {
+                try { if (File.Exists(tmp)) File.Delete(tmp); } catch { }
+                return false;
+            }
+        }
+        catch (Exception ex)
+        {
+            Log($"⚠️ Error en detección de escenas: {ex.Message}");
             return false;
         }
     }
 
-    private async Task<bool> TryTrimVideoTailAsync(string outputMp4, int trimTailSeconds, CancellationToken ct)
+    private async Task<bool> TryTrimVideoTailAsync(string outputMp4, double trimTailSeconds, CancellationToken ct)
     {
         if (trimTailSeconds <= 0 || !File.Exists(outputMp4))
             return false;
@@ -6358,20 +10250,13 @@ public partial class MainWindow : Window, IAsyncDisposable
         var target = duration.Value - trimTailSeconds;
         if (target <= 2)
             return false;
+        var targetStr = target.ToString("F3", System.Globalization.CultureInfo.InvariantCulture);
 
         var tmp = outputMp4 + ".trim.tmp.mp4";
         try { if (File.Exists(tmp)) File.Delete(tmp); } catch { }
 
-        var args = new List<string>
-        {
-            "-y",
-            "-i", outputMp4,
-            "-t", target.ToString("F3", System.Globalization.CultureInfo.InvariantCulture),
-            "-map", "0",
-            "-c", "copy",
-            "-movflags", "+faststart",
-            tmp
-        };
+        var hasAudio = await HasAudioStreamAsync(ffprobeExe, outputMp4, ct).ConfigureAwait(false);
+        var args = BuildTrimTranscodeArgs(outputMp4, targetStr, tmp, hasAudio);
 
         var ok = await RunProcessAsync(ffmpegExe, args, Path.GetFileName(outputMp4), "FFmpeg trim", TimeSpan.FromMinutes(2), ct).ConfigureAwait(true);
         if (!ok || !File.Exists(tmp))
@@ -6385,6 +10270,472 @@ public partial class MainWindow : Window, IAsyncDisposable
         catch
         {
             try { if (File.Exists(tmp)) File.Delete(tmp); } catch { }
+            return false;
+        }
+    }
+
+    private async Task<bool> TryTrimBlackTailAsync(string outputMp4, CancellationToken ct)
+    {
+        if (!File.Exists(outputMp4))
+            return false;
+
+        var ffmpegExe = await ResolveFfmpegExecutableAsync().ConfigureAwait(false);
+        if (string.IsNullOrWhiteSpace(ffmpegExe))
+            return false;
+
+        var ffprobeExe = await ResolveFfprobeExecutableAsync().ConfigureAwait(false);
+        if (string.IsNullOrWhiteSpace(ffprobeExe))
+            return false;
+
+        var duration = await GetMediaDurationSecondsAsync(ffprobeExe, outputMp4, ct).ConfigureAwait(false);
+        if (duration is null || duration.Value < 4)
+            return false;
+
+        try
+        {
+            // Detecta segmentos negros; buscamos uno que llegue al final del vídeo.
+            var psi = new ProcessStartInfo
+            {
+                FileName = ffmpegExe,
+                UseShellExecute = false,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                CreateNoWindow = true
+            };
+            psi.ArgumentList.Add("-hide_banner");
+            psi.ArgumentList.Add("-i");
+            psi.ArgumentList.Add(outputMp4);
+            psi.ArgumentList.Add("-vf");
+            psi.ArgumentList.Add("blackdetect=d=0.8:pic_th=0.98:pix_th=0.10");
+            psi.ArgumentList.Add("-an");
+            psi.ArgumentList.Add("-f");
+            psi.ArgumentList.Add("null");
+            psi.ArgumentList.Add("-");
+
+            using var p = new Process { StartInfo = psi };
+            if (!p.Start())
+                return false;
+
+            _ = await p.StandardOutput.ReadToEndAsync().ConfigureAwait(false);
+            var stderr = await p.StandardError.ReadToEndAsync().ConfigureAwait(false);
+            await p.WaitForExitAsync(ct).ConfigureAwait(false);
+
+            double? tailBlackStart = null;
+            foreach (var line in stderr.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries))
+            {
+                var iStart = line.IndexOf("black_start:", StringComparison.Ordinal);
+                var iEnd = line.IndexOf(" black_end:", StringComparison.Ordinal);
+                if (iStart < 0 || iEnd <= iStart)
+                    continue;
+
+                var startStr = line.Substring(iStart + "black_start:".Length, iEnd - (iStart + "black_start:".Length)).Trim();
+                if (!double.TryParse(startStr, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var blackStart))
+                    continue;
+
+                var iDur = line.IndexOf(" black_duration:", StringComparison.Ordinal);
+                if (iDur <= iEnd)
+                    continue;
+
+                var endStr = line.Substring(iEnd + " black_end:".Length, iDur - (iEnd + " black_end:".Length)).Trim();
+                var durStr = line.Substring(iDur + " black_duration:".Length).Trim();
+                if (!double.TryParse(endStr, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var blackEnd))
+                    continue;
+                if (!double.TryParse(durStr, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var blackDur))
+                    continue;
+
+                // Cola válida: segmento suficientemente largo y pegado al final del vídeo.
+                if (blackDur >= 0.8 && blackEnd >= duration.Value - 0.15)
+                    tailBlackStart = blackStart;
+            }
+
+            if (tailBlackStart is null || tailBlackStart.Value <= 2)
+                return false;
+
+            var targetStr = tailBlackStart.Value.ToString("F3", System.Globalization.CultureInfo.InvariantCulture);
+            var tmp = outputMp4 + ".trim-black.tmp.mp4";
+            try { if (File.Exists(tmp)) File.Delete(tmp); } catch { }
+
+            var hasAudio = await HasAudioStreamAsync(ffprobeExe, outputMp4, ct).ConfigureAwait(false);
+            var args = BuildTrimTranscodeArgs(outputMp4, targetStr, tmp, hasAudio);
+
+            var ok = await RunProcessAsync(ffmpegExe, args, Path.GetFileName(outputMp4), "FFmpeg black-tail trim", TimeSpan.FromMinutes(2), ct).ConfigureAwait(true);
+            if (!ok || !File.Exists(tmp))
+                return false;
+
+            try
+            {
+                File.Move(tmp, outputMp4, true);
+                var removed = duration.Value - tailBlackStart.Value;
+                Log($"🧹 Recorte cola negra: -{removed:F2}s (inicio negro {tailBlackStart.Value:F2}s)");
+                return true;
+            }
+            catch
+            {
+                try { if (File.Exists(tmp)) File.Delete(tmp); } catch { }
+                return false;
+            }
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private async Task<bool> TryTrimBlackHeadAsync(string outputMp4, CancellationToken ct)
+    {
+        if (!File.Exists(outputMp4))
+            return false;
+
+        var ffmpegExe = await ResolveFfmpegExecutableAsync().ConfigureAwait(false);
+        if (string.IsNullOrWhiteSpace(ffmpegExe))
+            return false;
+
+        var ffprobeExe = await ResolveFfprobeExecutableAsync().ConfigureAwait(false);
+        if (string.IsNullOrWhiteSpace(ffprobeExe))
+            return false;
+
+        var duration = await GetMediaDurationSecondsAsync(ffprobeExe, outputMp4, ct).ConfigureAwait(false);
+        if (duration is null || duration.Value < 3)
+            return false;
+
+        try
+        {
+            var psi = new ProcessStartInfo
+            {
+                FileName = ffmpegExe,
+                UseShellExecute = false,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                CreateNoWindow = true
+            };
+            psi.ArgumentList.Add("-hide_banner");
+            psi.ArgumentList.Add("-i");
+            psi.ArgumentList.Add(outputMp4);
+            psi.ArgumentList.Add("-vf");
+            psi.ArgumentList.Add("blackdetect=d=0.20:pic_th=0.98:pix_th=0.10");
+            psi.ArgumentList.Add("-an");
+            psi.ArgumentList.Add("-f");
+            psi.ArgumentList.Add("null");
+            psi.ArgumentList.Add("-");
+
+            using var p = new Process { StartInfo = psi };
+            if (!p.Start())
+                return false;
+
+            _ = await p.StandardOutput.ReadToEndAsync().ConfigureAwait(false);
+            var stderr = await p.StandardError.ReadToEndAsync().ConfigureAwait(false);
+            await p.WaitForExitAsync(ct).ConfigureAwait(false);
+
+            double? blackHeadEnd = null;
+            foreach (var line in stderr.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries))
+            {
+                var iStart = line.IndexOf("black_start:", StringComparison.Ordinal);
+                var iEnd = line.IndexOf(" black_end:", StringComparison.Ordinal);
+                if (iStart < 0 || iEnd <= iStart)
+                    continue;
+
+                var startStr = line.Substring(iStart + "black_start:".Length, iEnd - (iStart + "black_start:".Length)).Trim();
+                if (!double.TryParse(startStr, NumberStyles.Float, CultureInfo.InvariantCulture, out var blackStart))
+                    continue;
+
+                var iDur = line.IndexOf(" black_duration:", StringComparison.Ordinal);
+                if (iDur <= iEnd)
+                    continue;
+
+                var endStr = line.Substring(iEnd + " black_end:".Length, iDur - (iEnd + " black_end:".Length)).Trim();
+                var durStr = line.Substring(iDur + " black_duration:".Length).Trim();
+                if (!double.TryParse(endStr, NumberStyles.Float, CultureInfo.InvariantCulture, out var blackEnd))
+                    continue;
+                if (!double.TryParse(durStr, NumberStyles.Float, CultureInfo.InvariantCulture, out var blackDur))
+                    continue;
+
+                if (blackStart <= 0.12 && blackDur >= 0.20)
+                {
+                    blackHeadEnd = blackEnd;
+                    break;
+                }
+            }
+
+            if (blackHeadEnd is null || blackHeadEnd.Value < 0.20)
+                return false;
+            if (blackHeadEnd.Value >= duration.Value - 1)
+                return false;
+
+            var start = blackHeadEnd.Value + 0.03;
+            var startStrTrim = start.ToString("F3", CultureInfo.InvariantCulture);
+            var tmp = outputMp4 + ".trim-head-black.tmp.mp4";
+            try { if (File.Exists(tmp)) File.Delete(tmp); } catch { }
+
+            var hasAudio = await HasAudioStreamAsync(ffprobeExe, outputMp4, ct).ConfigureAwait(false);
+            var args = BuildStartTrimTranscodeArgs(outputMp4, startStrTrim, tmp, hasAudio);
+
+            var ok = await RunProcessAsync(ffmpegExe, args, Path.GetFileName(outputMp4), "FFmpeg black-head trim", TimeSpan.FromMinutes(2), ct).ConfigureAwait(true);
+            if (!ok || !File.Exists(tmp))
+                return false;
+
+            try
+            {
+                File.Move(tmp, outputMp4, true);
+                Log($"🧽 Recorte negro inicial: -{start:F2}s");
+                return true;
+            }
+            catch
+            {
+                try { if (File.Exists(tmp)) File.Delete(tmp); } catch { }
+                return false;
+            }
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private async Task<bool> TryTrimMuseScoreOutroAsync(string outputMp4, CancellationToken ct)
+    {
+        if (!File.Exists(outputMp4))
+            return false;
+
+        var ffmpegExe = await ResolveFfmpegExecutableAsync().ConfigureAwait(false);
+        if (string.IsNullOrWhiteSpace(ffmpegExe))
+            return false;
+
+        var ffprobeExe = await ResolveFfprobeExecutableAsync().ConfigureAwait(false);
+        if (string.IsNullOrWhiteSpace(ffprobeExe))
+            return false;
+
+        var duration = await GetMediaDurationSecondsAsync(ffprobeExe, outputMp4, ct).ConfigureAwait(false);
+        if (duration is null || duration.Value < 4)
+            return false;
+
+        var sampleWindowSeconds = Math.Min(6.0, Math.Max(2.0, duration.Value - 1.0));
+        var sampleStart = Math.Max(0.0, duration.Value - sampleWindowSeconds);
+        const double sampleFps = 4.0;
+        const int blueThreshold = 800;
+
+        var tempDir = Path.Combine(Path.GetTempPath(), "ScoreDown", "outro-detect", Guid.NewGuid().ToString("N", CultureInfo.InvariantCulture));
+        Directory.CreateDirectory(tempDir);
+        try
+        {
+            var pattern = Path.Combine(tempDir, "frame_%03d.png");
+            var args = new List<string>
+            {
+                "-y",
+                "-sseof", $"-{sampleWindowSeconds.ToString("F3", CultureInfo.InvariantCulture)}",
+                "-i", outputMp4,
+                "-vf", $"fps={sampleFps.ToString("F3", CultureInfo.InvariantCulture)}",
+                pattern
+            };
+
+            var ok = await RunProcessAsync(ffmpegExe, args, Path.GetFileName(outputMp4), "FFmpeg outro sample", TimeSpan.FromMinutes(1), ct).ConfigureAwait(true);
+            if (!ok)
+                return false;
+
+            var frames = Directory.GetFiles(tempDir, "frame_*.png").OrderBy(p => p, StringComparer.OrdinalIgnoreCase).ToArray();
+            if (frames.Length < 2)
+                return false;
+
+            var consecutive = 0;
+            double? outroStart = null;
+            for (var i = 0; i < frames.Length; i++)
+            {
+                ct.ThrowIfCancellationRequested();
+                var blueCount = CountStrongBluePixels(frames[i]);
+                if (blueCount >= blueThreshold)
+                {
+                    consecutive++;
+                    if (consecutive >= 2)
+                    {
+                        var firstIndex = i - 1;
+                        outroStart = sampleStart + (firstIndex / sampleFps);
+                        break;
+                    }
+                }
+                else
+                {
+                    consecutive = 0;
+                }
+            }
+
+            if (outroStart is null)
+                return false;
+            if (duration.Value - outroStart.Value < 0.4)
+                return false;
+
+            var target = Math.Max(0.0, outroStart.Value - 0.10);
+            if (target <= 2)
+                return false;
+
+            var targetStr = target.ToString("F3", CultureInfo.InvariantCulture);
+            var tmp = outputMp4 + ".trim-outro.tmp.mp4";
+            try { if (File.Exists(tmp)) File.Delete(tmp); } catch { }
+
+            var hasAudio = await HasAudioStreamAsync(ffprobeExe, outputMp4, ct).ConfigureAwait(false);
+            var trimArgs = BuildTrimTranscodeArgs(outputMp4, targetStr, tmp, hasAudio);
+
+            var trimOk = await RunProcessAsync(ffmpegExe, trimArgs, Path.GetFileName(outputMp4), "FFmpeg MuseScore outro trim", TimeSpan.FromMinutes(2), ct).ConfigureAwait(true);
+            if (!trimOk || !File.Exists(tmp))
+                return false;
+
+            try
+            {
+                File.Move(tmp, outputMp4, true);
+                var removed = duration.Value - target;
+                Log($"🎼 Recorte outro MuseScore: -{removed:F2}s (outro desde {outroStart.Value:F2}s)");
+                return true;
+            }
+            catch
+            {
+                try { if (File.Exists(tmp)) File.Delete(tmp); } catch { }
+                return false;
+            }
+        }
+        catch
+        {
+            return false;
+        }
+        finally
+        {
+            try
+            {
+                if (Directory.Exists(tempDir))
+                    Directory.Delete(tempDir, recursive: true);
+            }
+            catch { }
+        }
+    }
+
+    private static int CountStrongBluePixels(string imagePath)
+    {
+        using var bitmap = new System.Drawing.Bitmap(imagePath);
+        var count = 0;
+        for (var y = 0; y < bitmap.Height; y += 4)
+        {
+            for (var x = 0; x < bitmap.Width; x += 4)
+            {
+                var pixel = bitmap.GetPixel(x, y);
+                if (pixel.B > 180 && pixel.B > pixel.R + 40 && pixel.B > pixel.G + 30)
+                    count++;
+            }
+        }
+
+        return count;
+    }
+
+    private async Task<bool> TryTrimAudioSilenceTailAsync(string outputMp4, CancellationToken ct)
+    {
+        if (!File.Exists(outputMp4))
+            return false;
+
+        var ffmpegExe = await ResolveFfmpegExecutableAsync().ConfigureAwait(false);
+        if (string.IsNullOrWhiteSpace(ffmpegExe))
+            return false;
+
+        var ffprobeExe = await ResolveFfprobeExecutableAsync().ConfigureAwait(false);
+        if (string.IsNullOrWhiteSpace(ffprobeExe))
+            return false;
+
+        var duration = await GetMediaDurationSecondsAsync(ffprobeExe, outputMp4, ct).ConfigureAwait(false);
+        if (duration is null || duration.Value < 6)
+            return false;
+
+        try
+        {
+            // Busca inicio de silencio; si llega al final, recorta ahí.
+            var psi = new ProcessStartInfo
+            {
+                FileName = ffmpegExe,
+                UseShellExecute = false,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                CreateNoWindow = true
+            };
+            psi.ArgumentList.Add("-hide_banner");
+            psi.ArgumentList.Add("-i");
+            psi.ArgumentList.Add(outputMp4);
+            psi.ArgumentList.Add("-af");
+            psi.ArgumentList.Add("silencedetect=n=-45dB:d=1.2");
+            psi.ArgumentList.Add("-f");
+            psi.ArgumentList.Add("null");
+            psi.ArgumentList.Add("-");
+
+            using var p = new Process { StartInfo = psi };
+            if (!p.Start())
+                return false;
+
+            _ = await p.StandardOutput.ReadToEndAsync().ConfigureAwait(false);
+            var stderr = await p.StandardError.ReadToEndAsync().ConfigureAwait(false);
+            await p.WaitForExitAsync(ct).ConfigureAwait(false);
+
+            double? tailSilenceStart = null;
+            double? currentSilenceStart = null;
+
+            foreach (var line in stderr.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries))
+            {
+                var iStart = line.IndexOf("silence_start:", StringComparison.Ordinal);
+                if (iStart >= 0)
+                {
+                    var startStr = line.Substring(iStart + "silence_start:".Length).Trim();
+                    if (double.TryParse(startStr, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var s))
+                        currentSilenceStart = s;
+                    continue;
+                }
+
+                var iEnd = line.IndexOf("silence_end:", StringComparison.Ordinal);
+                if (iEnd >= 0)
+                {
+                    var endPart = line.Substring(iEnd + "silence_end:".Length).Trim();
+                    var split = endPart.Split('|', StringSplitOptions.TrimEntries);
+                    if (split.Length > 0 && double.TryParse(split[0], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var e))
+                    {
+                        if (currentSilenceStart is not null && e >= duration.Value - 0.15)
+                            tailSilenceStart = currentSilenceStart.Value;
+                    }
+                    currentSilenceStart = null;
+                }
+            }
+
+            // Caso EOF: ffmpeg puede dejar un silence_start abierto sin emitir silence_end al final.
+            if (tailSilenceStart is null && currentSilenceStart is not null)
+            {
+                if (duration.Value - currentSilenceStart.Value >= 1.2)
+                    tailSilenceStart = currentSilenceStart.Value;
+            }
+
+            // Si silencio se extiende hasta EOF y dura al menos 1.2s, recorta ahí.
+            if (tailSilenceStart is null)
+                return false;
+            if (tailSilenceStart.Value <= 2)
+                return false;
+            if (duration.Value - tailSilenceStart.Value < 1.2)
+                return false;
+
+            var targetStr = tailSilenceStart.Value.ToString("F3", System.Globalization.CultureInfo.InvariantCulture);
+            var tmp = outputMp4 + ".trim-silence.tmp.mp4";
+            try { if (File.Exists(tmp)) File.Delete(tmp); } catch { }
+
+            var hasAudio = await HasAudioStreamAsync(ffprobeExe, outputMp4, ct).ConfigureAwait(false);
+            var args = BuildTrimTranscodeArgs(outputMp4, targetStr, tmp, hasAudio);
+
+            var ok = await RunProcessAsync(ffmpegExe, args, Path.GetFileName(outputMp4), "FFmpeg silence-tail trim", TimeSpan.FromMinutes(2), ct).ConfigureAwait(true);
+            if (!ok || !File.Exists(tmp))
+                return false;
+
+            try
+            {
+                File.Move(tmp, outputMp4, true);
+                var removed = duration.Value - tailSilenceStart.Value;
+                Log($"🔇 Recorte silencio final: -{removed:F2}s (silence_start {tailSilenceStart.Value:F2}s)");
+                return true;
+            }
+            catch
+            {
+                try { if (File.Exists(tmp)) File.Delete(tmp); } catch { }
+                return false;
+            }
+        }
+        catch
+        {
             return false;
         }
     }
@@ -6411,19 +10762,29 @@ public partial class MainWindow : Window, IAsyncDisposable
         var tmp = outputMp4 + ".fadeout.tmp.mp4";
         try { if (File.Exists(tmp)) File.Delete(tmp); } catch { }
 
+        var hasAudio = await HasAudioStreamAsync(ffprobeExe, outputMp4, ct).ConfigureAwait(false);
+
         var args = new List<string>
         {
             "-y",
             "-i", outputMp4,
             "-vf", $"fade=t=out:st={fadeStart}:d={fadeDur}",
-            "-af", $"afade=t=out:st={fadeStart}:d={fadeDur}",
             "-c:v", "libx264",
             "-preset", "medium",
             "-crf", "18",
             "-pix_fmt", "yuv420p",
-            "-c:a", "aac",
-            tmp
         };
+
+        if (hasAudio)
+        {
+            args.AddRange(new[]
+            {
+                "-af", $"afade=t=out:st={fadeStart}:d={fadeDur}",
+                "-c:a", "aac",
+            });
+        }
+
+        args.Add(tmp);
 
         var ok = await RunProcessAsync(ffmpegExe, args, Path.GetFileName(outputMp4), "FFmpeg fade-out", TimeSpan.FromMinutes(8), ct).ConfigureAwait(true);
         if (!ok || !File.Exists(tmp))
@@ -6441,7 +10802,88 @@ public partial class MainWindow : Window, IAsyncDisposable
         }
     }
 
-    private async Task<bool> RunMuseScoreVideoAsync(string museScoreExe, string inputPath, string outputMp4, IReadOnlyList<string> extraVideoArgs, CancellationToken ct = default)
+    private async Task<bool> TryHoldLastFrameAtEndAsync(string outputMp4, double holdSeconds, CancellationToken ct)
+    {
+        if (holdSeconds <= 0 || !File.Exists(outputMp4))
+            return false;
+
+        var ffmpegExe = await ResolveFfmpegExecutableAsync().ConfigureAwait(false);
+        if (string.IsNullOrWhiteSpace(ffmpegExe))
+            return false;
+
+        var ffprobeExe = await ResolveFfprobeExecutableAsync().ConfigureAwait(false);
+        var hasAudio = !string.IsNullOrWhiteSpace(ffprobeExe)
+            && await HasAudioStreamAsync(ffprobeExe, outputMp4, ct).ConfigureAwait(false);
+
+        var holdDur = holdSeconds.ToString("F3", System.Globalization.CultureInfo.InvariantCulture);
+        var tmp = outputMp4 + ".hold.tmp.mp4";
+        try { if (File.Exists(tmp)) File.Delete(tmp); } catch { }
+
+        var args = new List<string>
+        {
+            "-y",
+            "-i", outputMp4,
+        };
+
+        if (hasAudio)
+        {
+            args.AddRange(new[]
+            {
+                "-filter_complex", $"[0:v]tpad=stop_mode=clone:stop_duration={holdDur}[v];[0:a]apad=pad_dur={holdDur}[a]",
+                "-map", "[v]",
+                "-map", "[a]",
+            });
+        }
+        else
+        {
+            args.AddRange(new[]
+            {
+                "-filter_complex", $"[0:v]tpad=stop_mode=clone:stop_duration={holdDur}[v]",
+                "-map", "[v]",
+            });
+        }
+
+        args.AddRange(new[]
+        {
+            "-c:v", "libx264",
+            "-preset", "medium",
+            "-crf", "18",
+            "-pix_fmt", "yuv420p",
+        });
+
+        if (hasAudio)
+        {
+            args.AddRange(new[]
+            {
+                "-c:a", "aac",
+                "-ar", "44100",
+                "-ac", "2",
+            });
+        }
+
+        args.AddRange(new[]
+        {
+            "-movflags", "+faststart",
+            tmp
+        });
+
+        var ok = await RunProcessAsync(ffmpegExe, args, Path.GetFileName(outputMp4), "FFmpeg hold final", TimeSpan.FromMinutes(4), ct).ConfigureAwait(true);
+        if (!ok || !File.Exists(tmp))
+            return false;
+
+        try
+        {
+            File.Move(tmp, outputMp4, true);
+            return true;
+        }
+        catch
+        {
+            try { if (File.Exists(tmp)) File.Delete(tmp); } catch { }
+            return false;
+        }
+    }
+
+    private async Task<bool> RunMuseScoreVideoAsync(string museScoreExe, string inputPath, string outputMp4, IReadOnlyList<string> extraVideoArgs, CancellationToken ct = default, Action<string>? onFail = null)
     {
         static List<string> BuildCommandArgs(string input, string output, IReadOnlyList<string> renderArgs, string? stylePath)
         {
@@ -6487,6 +10929,14 @@ public partial class MainWindow : Window, IAsyncDisposable
         var stylePath = TryCreateSubtitleStyleOverrideFile();
         var tempRenderInput = await TryCreateSanitizedVideoInputAsync(inputPath, ct).ConfigureAwait(false);
         var renderInputPath = string.IsNullOrWhiteSpace(tempRenderInput) ? inputPath : tempRenderInput;
+        var hadStructuralMeasureError = false;
+
+        void HandleMuseScoreFailure(string msg)
+        {
+            if (IsMuseScoreMeasureStructureError(msg))
+                hadStructuralMeasureError = true;
+            onFail?.Invoke(msg);
+        }
 
         var primaryResolution = GetArgValue(extraVideoArgs, "--resolution") ?? "2160p";
         var primaryFps = GetArgValue(extraVideoArgs, "--fps") ?? "60";
@@ -6519,10 +10969,17 @@ public partial class MainWindow : Window, IAsyncDisposable
                 "MuseScore MP4",
                 TimeSpan.FromSeconds(_videoTimeoutSeconds),
                 ct,
-                primaryProgress).ConfigureAwait(true);
+                primaryProgress,
+                HandleMuseScoreFailure).ConfigureAwait(true);
 
             if (primaryOk && File.Exists(outputMp4))
                 return true;
+
+            if (hadStructuralMeasureError)
+            {
+                Log($"⚠️ MuseScore detectó compases incompletos en {inputName}; se omite reintento porque no va a corregir el score.");
+                return false;
+            }
 
             if (ct.IsCancellationRequested)
                 return false;
@@ -6556,7 +11013,8 @@ public partial class MainWindow : Window, IAsyncDisposable
                 "MuseScore MP4 (retry)",
                 TimeSpan.FromSeconds(retryTimeoutSec),
                 ct,
-                retryProgress).ConfigureAwait(true);
+                retryProgress,
+                HandleMuseScoreFailure).ConfigureAwait(true);
 
             return retryOk && File.Exists(outputMp4);
         }
@@ -6578,6 +11036,44 @@ public partial class MainWindow : Window, IAsyncDisposable
             || raw.Equals("true", StringComparison.OrdinalIgnoreCase)
             || raw.Equals("yes", StringComparison.OrdinalIgnoreCase)
             || raw.Equals("si", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool IsMuseScoreMeasureStructureError(string message)
+    {
+        if (string.IsNullOrWhiteSpace(message))
+            return false;
+
+        var normalized = RemoveDiacritics(message).ToLowerInvariant();
+
+        if (normalized.Contains("compas incompleto", StringComparison.Ordinal)
+            || normalized.Contains("compases incompletos", StringComparison.Ordinal)
+            || normalized.Contains("incomplete measure", StringComparison.Ordinal)
+            || normalized.Contains("incomplete measures", StringComparison.Ordinal)
+            || normalized.Contains("measure incomplete", StringComparison.Ordinal)
+            || normalized.Contains("measure is incomplete", StringComparison.Ordinal))
+        {
+            return true;
+        }
+
+        return normalized.Contains("comp", StringComparison.Ordinal)
+            && normalized.Contains("incomplet", StringComparison.Ordinal)
+            && normalized.Contains("se esperaba", StringComparison.Ordinal);
+    }
+
+    private static string RemoveDiacritics(string text)
+    {
+        if (string.IsNullOrEmpty(text))
+            return string.Empty;
+
+        var normalized = text.Normalize(NormalizationForm.FormD);
+        var sb = new StringBuilder(normalized.Length);
+        foreach (var c in normalized)
+        {
+            if (CharUnicodeInfo.GetUnicodeCategory(c) != UnicodeCategory.NonSpacingMark)
+                sb.Append(c);
+        }
+
+        return sb.ToString().Normalize(NormalizationForm.FormC);
     }
 
     private async Task<bool> RunMuseScoreInteractiveExportAsync(string museScoreExe, string inputPath, string outputMp4, IReadOnlyList<string> extraVideoArgs)
@@ -6614,7 +11110,7 @@ public partial class MainWindow : Window, IAsyncDisposable
         return false;
     }
 
-    private async Task<bool> RunProcessAsync(string exe, IEnumerable<string> args, string inputName, string stage, TimeSpan? timeout = null, CancellationToken ct = default, Action<int>? onPercent = null)
+    private async Task<bool> RunProcessAsync(string exe, IEnumerable<string> args, string inputName, string stage, TimeSpan? timeout = null, CancellationToken ct = default, Action<int>? onPercent = null, Action<string>? onFail = null)
     {
         var startedAt = DateTimeOffset.UtcNow;
         var psi = new System.Diagnostics.ProcessStartInfo
@@ -6699,12 +11195,49 @@ public partial class MainWindow : Window, IAsyncDisposable
 
         var err = stderrSb.ToString().Trim();
         var stdout = stdoutSb.ToString().Trim();
-        var msg = !string.IsNullOrWhiteSpace(err) ? err
-            : !string.IsNullOrWhiteSpace(stdout) ? stdout
-            : $"exit={process.ExitCode}";
+        var msg = BuildProcessFailureMessage(process.ExitCode, err, stdout, psi.ArgumentList);
         var elapsedFail = DateTimeOffset.UtcNow - startedAt;
         Log($"⚠️ {stage} fallo ({inputName}) tras {elapsedFail.TotalSeconds:F1}s: {msg}");
+        onFail?.Invoke(msg);
         return false;
+    }
+
+    private static string BuildProcessFailureMessage(int exitCode, string stderr, string stdout, IReadOnlyList<string> args)
+    {
+        var parts = new List<string> { $"exit={exitCode}" };
+
+        var stderrTail = TakeLastLines(stderr, 10, 2500);
+        if (!string.IsNullOrWhiteSpace(stderrTail))
+            parts.Add($"stderr:\n{stderrTail}");
+
+        var stdoutTail = TakeLastLines(stdout, 8, 1500);
+        if (!string.IsNullOrWhiteSpace(stdoutTail))
+            parts.Add($"stdout:\n{stdoutTail}");
+
+        if (args.Count > 0)
+            parts.Add($"args: {string.Join(' ', args)}");
+
+        return string.Join("\n\n", parts);
+    }
+
+    private static string TakeLastLines(string text, int maxLines, int maxChars)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+            return string.Empty;
+
+        var lines = text
+            .Replace("\r\n", "\n", StringComparison.Ordinal)
+            .Split('\n', StringSplitOptions.RemoveEmptyEntries);
+
+        if (lines.Length == 0)
+            return string.Empty;
+
+        var tail = lines.Skip(Math.Max(0, lines.Length - maxLines)).ToArray();
+        var compact = string.Join("\n", tail).Trim();
+        if (compact.Length <= maxChars)
+            return compact;
+
+        return "..." + compact[^maxChars..];
     }
 
     private static bool TryParsePercentFromText(string text, out int percent)
@@ -6888,6 +11421,18 @@ public partial class MainWindow : Window, IAsyncDisposable
         });
     }
 
+    private void BtnCopyVideoLog_Click(object sender, RoutedEventArgs e)
+    {
+        Dispatcher.InvokeAsync(() =>
+        {
+            if (!string.IsNullOrEmpty(txtVideoLog.Text))
+            {
+                System.Windows.Forms.Clipboard.SetText(txtVideoLog.Text);
+                Log("✅ Log de vídeo copiado al portapapeles");
+            }
+        });
+    }
+
     private static string NormalizeKey(string value)
     {
         return (value ?? string.Empty).Trim().ToUpperInvariant();
@@ -7010,6 +11555,15 @@ public partial class MainWindow : Window, IAsyncDisposable
     {
         public string FamilyKey { get; set; } = string.Empty;
         public DateTime ExpiresUtc { get; set; }
+
+
+
+    }
+
+    private sealed class AudiverisQuarantineEntry
+    {
+        public string Key { get; set; } = string.Empty;
+        public DateTime QuarantinedUtc { get; set; }
     }
 
     private void LoadAudiverisTimeoutFamilies()
@@ -7044,6 +11598,292 @@ public partial class MainWindow : Window, IAsyncDisposable
         _audiverisTimeoutFamiliesDirty = false;
     }
 
+    private void LoadAudiverisAllVariantsFailed()
+    {
+        _audiverisAllVariantsFailed.Clear();
+        var cutoff = DateTime.UtcNow - TimeSpan.FromDays(_audiverisQuarantineDays);
+        // Try new format first (dated entries), fall back to legacy List<string>
+        var dated = JsonStore.Load<List<AudiverisQuarantineEntry>>(_audiverisAllVariantsFailedPath, null);
+        if (dated is { Count: > 0 } && dated.Any(e => !string.IsNullOrWhiteSpace(e.Key)))
+        {
+            int expired = 0;
+            int invalid = 0;
+            int dedupSkipped = 0;
+            var futureCutoff = DateTime.UtcNow.AddDays(2);
+            var seenCanonical = new HashSet<string>();
+            foreach (var e in dated)
+            {
+                if (string.IsNullOrWhiteSpace(e.Key)) continue;
+                if (e.QuarantinedUtc == default || e.QuarantinedUtc > futureCutoff) { invalid++; continue; }
+                if (e.QuarantinedUtc < cutoff) { expired++; continue; }
+                var canonPath = Path.GetFullPath(e.Key).ToLowerInvariant();
+                if (seenCanonical.Contains(canonPath)) { dedupSkipped++; continue; }
+                seenCanonical.Add(canonPath);
+                _audiverisAllVariantsFailed[e.Key] = e.QuarantinedUtc;
+            }
+            if (expired > 0)
+                Log($"ℹ️ Audiveris: {expired} entrada(s) de cuarentena expiradas (TTL={_audiverisQuarantineDays}d) eliminadas.");
+            if (invalid > 0)
+                Log($"ℹ️ Audiveris: {invalid} entrada(s) de cuarentena con fecha inválida/futura descartadas.");
+            if (dedupSkipped > 0)
+                Log($"ℹ️ Audiveris: {dedupSkipped} entrada(s) de cuarentena duplicadas (path normalizado) omitidas.");
+            if (expired > 0 || invalid > 0 || dedupSkipped > 0)
+            {
+                _audiverisAllVariantsFailedDirty = true;
+                SaveAudiverisAllVariantsFailed();
+            }
+        }
+        else
+        {
+            // Legacy: plain list of keys — load with UtcNow (no date info available)
+            var legacy = JsonStore.Load<List<string>>(_audiverisAllVariantsFailedPath, []);
+            var seenCanonical = new HashSet<string>();
+            foreach (var key in legacy)
+            {
+                if (string.IsNullOrWhiteSpace(key)) continue;
+                var canonPath = Path.GetFullPath(key).ToLowerInvariant();
+                if (!seenCanonical.Contains(canonPath))
+                {
+                    _audiverisAllVariantsFailed[key] = DateTime.UtcNow;
+                    seenCanonical.Add(canonPath);
+                }
+            }
+            if (legacy.Count > _audiverisAllVariantsFailed.Count)
+            {
+                _audiverisAllVariantsFailedDirty = true;
+                SaveAudiverisAllVariantsFailed();
+            }
+        }
+        if (_audiverisAllVariantsFailed.Count > 0)
+            Log($"ℹ️ Audiveris: {_audiverisAllVariantsFailed.Count} familia(s) en cuarentena (ambas variantes fallaron) cargadas (TTL={_audiverisQuarantineDays}d).");
+        _audiverisAllVariantsFailedDirty = false;
+    }
+
+    private void SaveAudiverisAllVariantsFailed()
+    {
+        if (!_audiverisAllVariantsFailedDirty)
+            return;
+        var snapshot = _audiverisAllVariantsFailed
+            .OrderBy(kv => kv.Key, StringComparer.OrdinalIgnoreCase)
+            .Select(kv => new AudiverisQuarantineEntry { Key = kv.Key, QuarantinedUtc = kv.Value })
+            .ToList();
+        JsonStore.Save(_audiverisAllVariantsFailedPath, snapshot);
+        _audiverisAllVariantsFailedDirty = false;
+    }
+
+    /// <summary>
+    /// Reads last <paramref name="n"/> rows from the OMR metrics CSV for <paramref name="engine"/>
+    /// and returns a one-liner health summary (success%, fallback%, guardrail hits).
+    /// </summary>
+    private string GetOmrHealthLine(string engine, int? n = null, string? rootDir = null)
+    {
+        try
+        {
+            if (!File.Exists(_omrMetricsHistoryCsvPath)) return string.Empty;
+            var take = n ?? _omrHealthHistoryN;
+            var cacheKey = BuildOmrHealthCacheKey(engine, take, rootDir);
+            if (TryGetCachedOmrHealthLine(cacheKey, out var cached))
+                return cached;
+
+            var lines = File.ReadAllLines(_omrMetricsHistoryCsvPath);
+            if (lines.Length < 2) return string.Empty;
+            // Parse header dynamically — tolerant to column additions/reordering
+            var header = ParseCsvLine(lines[0]);
+            int cDateUtc = Array.FindIndex(header, h => h.Trim().Equals("DateUtc", StringComparison.OrdinalIgnoreCase));
+            int cEngine = Array.FindIndex(header, h => h.Trim().Equals("Engine", StringComparison.OrdinalIgnoreCase));
+            int cInputCount = Array.FindIndex(header, h => h.Trim().Equals("InputCount", StringComparison.OrdinalIgnoreCase));
+            int cConvertedOk = Array.FindIndex(header, h => h.Trim().Equals("ConvertedOk", StringComparison.OrdinalIgnoreCase));
+            int cConvertedPart = Array.FindIndex(header, h => h.Trim().Equals("ConvertedPartial", StringComparison.OrdinalIgnoreCase));
+            int cFailed = Array.FindIndex(header, h => h.Trim().Equals("Failed", StringComparison.OrdinalIgnoreCase));
+            int cFbSuccesses = Array.FindIndex(header, h => h.Trim().Equals("FallbackSuccesses", StringComparison.OrdinalIgnoreCase));
+            int cFbAttempts = Array.FindIndex(header, h => h.Trim().Equals("FallbackAttempts", StringComparison.OrdinalIgnoreCase));
+            int cFbSkips = Array.FindIndex(header, h => h.Trim().Equals("FallbackBudgetSkips", StringComparison.OrdinalIgnoreCase));
+            int cBudgetHitRatePct = Array.FindIndex(header, h => h.Trim().Equals("FallbackBudgetHitRatePct", StringComparison.OrdinalIgnoreCase));
+            int cGuardrail = Array.FindIndex(header, h => h.Trim().Equals("AbortedByGuardrail", StringComparison.OrdinalIgnoreCase));
+            int cTimeoutAvg = Array.FindIndex(header, h => h.Trim().Equals("TimeoutSecondsAppliedAvg", StringComparison.OrdinalIgnoreCase));
+            int cTimeoutRatePct = Array.FindIndex(header, h => h.Trim().Equals("TimeoutRatePct", StringComparison.OrdinalIgnoreCase));
+            int cDominantFailType = Array.FindIndex(header, h => h.Trim().Equals("DominantFailType", StringComparison.OrdinalIgnoreCase));
+            int cDurationSeconds = Array.FindIndex(header, h => h.Trim().Equals("DurationSeconds", StringComparison.OrdinalIgnoreCase));
+            int cConductorDeltaPct = Array.FindIndex(header, h => h.Trim().Equals("ConductorDeltaPct", StringComparison.OrdinalIgnoreCase));
+            int cRootDir = Array.FindIndex(header, h => h.Trim().Equals("RootDir", StringComparison.OrdinalIgnoreCase));
+            if (cEngine < 0 || cInputCount < 0 || cFailed < 0) return string.Empty;
+            var rootFilter = rootDir?.Trim();
+            int minCols = new[] { cEngine, cInputCount, cConvertedOk, cConvertedPart, cFailed, cFbSuccesses, cFbAttempts, cFbSkips, cBudgetHitRatePct, cGuardrail }
+                .Where(i => i >= 0).DefaultIfEmpty(0).Max() + 1;
+            List<string[]> CollectRows(bool applyRootFilter) => lines.Skip(1)
+                .Where(l => !string.IsNullOrWhiteSpace(l))
+                .Select(ParseCsvLine)
+                .Where(cols =>
+                    cols.Length >= minCols &&
+                    string.Equals(cols[cEngine].Trim(), engine, StringComparison.OrdinalIgnoreCase) &&
+                    (!applyRootFilter || string.IsNullOrWhiteSpace(rootFilter) || cRootDir < 0 || cRootDir >= cols.Length || string.Equals(cols[cRootDir].Trim(), rootFilter, StringComparison.OrdinalIgnoreCase)))
+                .TakeLast(take)
+                .ToList();
+
+            var engineRows = CollectRows(applyRootFilter: true);
+            if (engineRows.Count == 0 && !string.IsNullOrWhiteSpace(rootFilter))
+                engineRows = CollectRows(applyRootFilter: false);
+            if (engineRows.Count == 0)
+            {
+                SaveCachedOmrHealthLine(cacheKey, string.Empty);
+                return string.Empty;
+            }
+            int totalIn = 0, totalOk = 0, totalPartial = 0, totalFail = 0, totalFbOk = 0, totalFbAttempts = 0, totalFbSkips = 0, guardrailHits = 0;
+            int timeoutSamples = 0, timeoutSecondsSum = 0;
+            int timeoutRateSamples = 0, timeoutRateSum = 0;
+            int budgetHitSamples = 0, budgetHitRateSum = 0;
+            int conductorSamples = 0, conductorDeltaSum = 0;
+            double durationSecondsSum = 0;
+            var failTypeCounts = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+            var dayGroupedRows = new Dictionary<string, List<string[]>>();
+
+            static int ParseInt(string[] cols, int idx)
+            {
+                if (idx < 0 || idx >= cols.Length) return 0;
+                return int.TryParse(cols[idx].Trim(), out var value) ? value : 0;
+            }
+
+            int ComputeFailRatePct(List<string[]> rows)
+            {
+                var inSum = 0;
+                var failSum = 0;
+                foreach (var row in rows)
+                {
+                    inSum += ParseInt(row, cInputCount);
+                    failSum += ParseInt(row, cFailed);
+                }
+
+                return inSum > 0
+                    ? (int)Math.Round(failSum * 100.0 / Math.Max(1, inSum))
+                    : 0;
+            }
+
+            foreach (var cols in engineRows)
+            {
+                var dayKey = "unknown";
+                if (cDateUtc >= 0 && cDateUtc < cols.Length &&
+                    DateTime.TryParse(cols[cDateUtc].Trim(), CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal, out var dt))
+                {
+                    dayKey = dt.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
+                }
+
+                if (!dayGroupedRows.TryGetValue(dayKey, out var dayList))
+                {
+                    dayList = new List<string[]>();
+                    dayGroupedRows[dayKey] = dayList;
+                }
+                dayList.Add(cols);
+
+                if (int.TryParse(cols[cInputCount].Trim(), out var inp)) totalIn += inp;
+                if (cConvertedOk >= 0 && int.TryParse(cols[cConvertedOk].Trim(), out var ok)) totalOk += ok;
+                if (cConvertedPart >= 0 && int.TryParse(cols[cConvertedPart].Trim(), out var part)) totalPartial += part;
+                if (int.TryParse(cols[cFailed].Trim(), out var fail)) totalFail += fail;
+                if (cFbSuccesses >= 0 && int.TryParse(cols[cFbSuccesses].Trim(), out var fbOk)) totalFbOk += fbOk;
+                if (cFbAttempts >= 0 && int.TryParse(cols[cFbAttempts].Trim(), out var fbAttempts)) totalFbAttempts += fbAttempts;
+                if (cFbSkips >= 0 && cFbSkips < cols.Length && int.TryParse(cols[cFbSkips].Trim(), out var fbSkips)) totalFbSkips += fbSkips;
+                if (cGuardrail >= 0 && (string.Equals(cols[cGuardrail].Trim(), "1", StringComparison.Ordinal) ||
+                                        string.Equals(cols[cGuardrail].Trim(), "True", StringComparison.OrdinalIgnoreCase))) guardrailHits++;
+                if (cBudgetHitRatePct >= 0 && cBudgetHitRatePct < cols.Length && int.TryParse(cols[cBudgetHitRatePct].Trim(), out var budgetHitPct))
+                {
+                    budgetHitSamples++;
+                    budgetHitRateSum += Math.Clamp(budgetHitPct, 0, 100);
+                }
+                if (cTimeoutAvg >= 0 && cTimeoutAvg < cols.Length && int.TryParse(cols[cTimeoutAvg].Trim(), out var timeoutAvg) && timeoutAvg > 0)
+                {
+                    timeoutSamples++;
+                    timeoutSecondsSum += timeoutAvg;
+                }
+                if (cTimeoutRatePct >= 0 && cTimeoutRatePct < cols.Length && int.TryParse(cols[cTimeoutRatePct].Trim(), out var timeoutPct))
+                {
+                    timeoutRateSamples++;
+                    timeoutRateSum += Math.Clamp(timeoutPct, 0, 100);
+                }
+                if (cConductorDeltaPct >= 0 && cConductorDeltaPct < cols.Length && int.TryParse(cols[cConductorDeltaPct].Trim(), out var conductorDelta))
+                {
+                    conductorSamples++;
+                    conductorDeltaSum += Math.Clamp(conductorDelta, -100, 100);
+                }
+                if (cDurationSeconds >= 0 && cDurationSeconds < cols.Length &&
+                    double.TryParse(cols[cDurationSeconds].Trim(), NumberStyles.Float, CultureInfo.InvariantCulture, out var durSec) && durSec > 0)
+                {
+                    durationSecondsSum += durSec;
+                }
+                if (cDominantFailType >= 0 && cDominantFailType < cols.Length)
+                {
+                    var ft = cols[cDominantFailType].Trim();
+                    if (!string.IsNullOrWhiteSpace(ft))
+                        failTypeCounts[ft] = failTypeCounts.TryGetValue(ft, out var c) ? c + 1 : 1;
+                }
+            }
+            if (totalIn == 0)
+            {
+                SaveCachedOmrHealthLine(cacheKey, string.Empty);
+                return string.Empty;
+            }
+            var successPct = (int)Math.Round((totalOk + totalPartial) * 100.0 / totalIn);
+            var fbPct = totalFbAttempts > 0 ? (int)Math.Round(totalFbOk * 100.0 / totalFbAttempts) : 0;
+            var healthLabel = successPct >= 80 ? "✅" : successPct >= 50 ? "⚠️" : "❌";
+            var fb = totalFbAttempts > 0 ? $" fb={fbPct}%" : string.Empty;
+            var budgetPart = budgetHitSamples > 0
+                ? $" bdg={(int)Math.Round(budgetHitRateSum / (double)budgetHitSamples)}%"
+                : (totalFbAttempts + totalFbSkips) > 0
+                    ? $" bdg={(int)Math.Round(totalFbSkips * 100.0 / Math.Max(1, totalFbAttempts + totalFbSkips))}%"
+                    : "";
+            var guard = guardrailHits > 0 ? $" 🛑{guardrailHits}" : string.Empty;
+            var timeoutPart = timeoutSamples > 0
+                ? $" tmo={(int)Math.Round(timeoutSecondsSum / (double)timeoutSamples)}s"
+                : " tmo=n/a";
+            var timeoutRatePart = timeoutRateSamples > 0
+                ? $" tmr={(int)Math.Round(timeoutRateSum / (double)timeoutRateSamples)}%"
+                : string.Empty;
+            var conductorPart = conductorSamples > 0
+                ? $" cond={(int)Math.Round(conductorDeltaSum / (double)conductorSamples):+#;-#;0}%"
+                : string.Empty;
+            var converted = totalOk + totalPartial;
+            var throughputPart = durationSecondsSum > 0
+                ? $" rpm={(converted / (durationSecondsSum / 60.0)):0.0}"
+                : string.Empty;
+            var failTypePart = string.Empty;
+            var trendPart = string.Empty;
+            if (failTypeCounts.Count > 0)
+            {
+                var topFails = failTypeCounts
+                    .OrderByDescending(kv => kv.Value)
+                    .ThenBy(kv => kv.Key, StringComparer.OrdinalIgnoreCase)
+                    .Take(2)
+                    .Select(kv => kv.Key)
+                    .ToList();
+                failTypePart = $" ft={string.Join("+", topFails)}";
+            }
+
+            var datedBuckets = dayGroupedRows
+                .Where(kv => !string.Equals(kv.Key, "unknown", StringComparison.OrdinalIgnoreCase))
+                .OrderBy(kv => kv.Key, StringComparer.Ordinal)
+                .ToList();
+            if (datedBuckets.Count >= 3)
+            {
+                var last3 = datedBuckets.TakeLast(3).ToList();
+                var oldestFailRate = ComputeFailRatePct(last3[0].Value);
+                var newestFailRate = ComputeFailRatePct(last3[^1].Value);
+                if (oldestFailRate > 0)
+                {
+                    var deltaPct = (newestFailRate - oldestFailRate) * 100.0 / oldestFailRate;
+                    var absDelta = Math.Abs((int)Math.Round(deltaPct));
+                    if (absDelta >= 1)
+                    {
+                        var arrow = deltaPct <= -2 ? "↓" : deltaPct >= 2 ? "↑" : "→";
+                        trendPart = $" [3d{arrow}{absDelta}%]";
+                    }
+                }
+            }
+
+            var result = $"{healthLabel} Hist({engineRows.Count}): ok={successPct}%{fb}{budgetPart}{timeoutPart}{timeoutRatePart}{conductorPart}{throughputPart}{failTypePart}{guard}{trendPart}";
+            SaveCachedOmrHealthLine(cacheKey, result);
+            return result;
+        }
+        catch { return string.Empty; }
+    }
+
     private void UpdateAudiverisStatus()
     {
         if (!IsInitialized || txtAudiverisStatus is null) return;
@@ -7059,25 +11899,60 @@ public partial class MainWindow : Window, IAsyncDisposable
             .ToList();
         var strikeCount = _audiverisTimeoutStrikes.Count(kv => kv.Value > 0);
         var cooldownCount = activeFamilies.Count;
-        txtAudiverisStatus.Text = cooldownCount > 0 || strikeCount > 0
-            ? $"Cooldown: {cooldownCount} | Strikes: {strikeCount}"
-            : string.Empty;
+        var activeHostile = GetActiveHostileFoldersSnapshot(now);
+        var hottest = _omrFolderHeatScore
+            .OrderByDescending(kv => kv.Value)
+            .FirstOrDefault();
+        var healthLine = GetOmrHealthLine("audiveris", rootDir: ResolveCurrentOmrRootDir("audiveris"));
+        var statusParts = new List<string>(4);
+        if (cooldownCount > 0 || strikeCount > 0) statusParts.Add($"Cooldown: {cooldownCount} | Strikes: {strikeCount}");
+        if (activeHostile.Count > 0) statusParts.Add($"🚫 Hostile: {activeHostile.Count}");
+        if (!string.IsNullOrWhiteSpace(hottest.Key) && hottest.Value >= 40)
+            statusParts.Add($"🔥 {Path.GetFileName(hottest.Key)}:{hottest.Value:0}%");
+        if (!string.IsNullOrEmpty(healthLine)) statusParts.Add(healthLine);
+        txtAudiverisStatus.Text = statusParts.Count > 0 ? string.Join("  ", statusParts) : string.Empty;
+        var tooltipParts = new List<string>();
         if (cooldownCount > 0)
         {
-            var lines = activeFamilies.Take(10).Select(kv =>
+            var tooltipLines = activeFamilies.Take(10).Select(kv =>
             {
                 var key = kv.Key.Length > 60 ? kv.Key[^60..] : kv.Key;
                 var remaining = (kv.Value - now).TotalMinutes;
                 var strikes = _audiverisTimeoutStrikes.TryGetValue(kv.Key, out var s) ? s : 0;
                 return $"{key}  [{remaining:F0}min, s{strikes}]";
             });
-            txtAudiverisStatus.ToolTip = "Familias en cooldown:\n" + string.Join("\n", lines) +
-                (cooldownCount > 10 ? $"\n... +{cooldownCount - 10} más" : string.Empty);
+            tooltipParts.Add("Familias en cooldown:\n" + string.Join("\n", tooltipLines) +
+                (cooldownCount > 10 ? $"\n... +{cooldownCount - 10} más" : string.Empty));
         }
-        else
+        if (activeHostile.Count > 0)
         {
-            txtAudiverisStatus.ToolTip = null;
+            var hostileLines = activeHostile.Take(10).Select(kv =>
+            {
+                var key = kv.Key.Length > 60 ? kv.Key[^60..] : kv.Key;
+                var remaining = (kv.Value - now).TotalMinutes;
+                return $"{key}  [⚠️ {remaining:F0}min restantes]";
+            });
+            tooltipParts.Add("🚫 Carpetas hostiles:\n" + string.Join("\n", hostileLines) +
+                (activeHostile.Count > 10 ? $"\n... +{activeHostile.Count - 10} más" : string.Empty));
         }
+        var hotFolders = _omrFolderHeatScore
+            .OrderByDescending(kv => kv.Value)
+            .Take(3)
+            .Where(kv => kv.Value >= 30)
+            .Select(kv => $"{Path.GetFileName(kv.Key)}={kv.Value:0}%")
+            .ToList();
+        if (hotFolders.Count > 0)
+            tooltipParts.Add("🔥 Heatmap:\n" + string.Join("\n", hotFolders));
+        var hotGenomes = _omrGenomePressure
+            .OrderByDescending(kv => kv.Value)
+            .Take(3)
+            .Where(kv => kv.Value > 0)
+            .Select(kv => $"{kv.Key}=g{kv.Value}")
+            .ToList();
+        if (hotGenomes.Count > 0)
+            tooltipParts.Add("🧬 Genoma:\n" + string.Join("\n", hotGenomes));
+        if (!string.IsNullOrEmpty(healthLine)) tooltipParts.Add(healthLine);
+        txtAudiverisStatus.ToolTip = tooltipParts.Count > 0 ? string.Join("\n\n", tooltipParts) : null;
     }
 
     private sealed class AudiverisStrikeRecord
@@ -7095,8 +11970,72 @@ public partial class MainWindow : Window, IAsyncDisposable
         public DateTime DateUtc { get; set; }
     }
 
-    /// <summary>Ring-buffer telemetry: appends entry, keeps last <paramref name="maxEntries"/> (default 50). Thread-safe via file lock.</summary>
-    private static void AppendTelemetry(string path, TimeoutTelemetryEntry entry, int maxEntries = 50)
+    /// <summary>
+    /// Reads telemetry ring-buffer and returns the p<paramref name="percentile"/> of successful (non-timeout)
+    /// elapsed times, multiplied by <paramref name="marginFactor"/>, as a suggested minimum timeout floor.
+    /// Returns 0 if there are fewer than <paramref name="minSamples"/> success entries.
+    /// </summary>
+    private static int ComputeP95TimeoutFloor(string telemetryPath, int minSamples = 10,
+        double percentile = 0.95, double marginFactor = 1.2, double escalationPercent = 0.0)
+    {
+        try
+        {
+            if (!File.Exists(telemetryPath)) return 0;
+            var raw = File.ReadAllText(telemetryPath);
+            var list = JsonSerializer.Deserialize<List<TimeoutTelemetryEntry>>(raw);
+            if (list is null || list.Count == 0) return 0;
+            var successTimes = list
+                .Where(e => !e.TimedOut && e.ActualElapsedSeconds > 1)
+                .Select(e => e.ActualElapsedSeconds)
+                .OrderBy(x => x)
+                .ToList();
+            if (successTimes.Count < minSamples) return 0;
+            var pValue = ComputeSortedQuantile(successTimes, percentile);
+            var result = (int)Math.Ceiling(pValue * marginFactor);
+            if (escalationPercent > 0.0)
+                result = (int)(result * (1.0 - escalationPercent));
+            return Math.Max(5, result);
+        }
+        catch { return 0; }
+    }
+
+    private static int ComputeP95TimeoutConfidenceHalfWidth(string telemetryPath, int minSamples = 10)
+    {
+        try
+        {
+            if (!File.Exists(telemetryPath)) return 0;
+            var raw = File.ReadAllText(telemetryPath);
+            var list = JsonSerializer.Deserialize<List<TimeoutTelemetryEntry>>(raw);
+            if (list is null || list.Count == 0) return 0;
+            var successTimes = list
+                .Where(e => !e.TimedOut && e.ActualElapsedSeconds > 1)
+                .Select(e => e.ActualElapsedSeconds)
+                .OrderBy(x => x)
+                .ToList();
+            if (successTimes.Count < minSamples) return 0;
+
+            // Heuristic CI: half-width derived from spread between p90 and p99.
+            var p90 = ComputeSortedQuantile(successTimes, 0.90);
+            var p99 = ComputeSortedQuantile(successTimes, 0.99);
+            var ciHalf = (int)Math.Ceiling(Math.Max(0.0, (p99 - p90) / 2.0));
+            return ciHalf;
+        }
+        catch
+        {
+            return 0;
+        }
+    }
+
+    private static double ComputeSortedQuantile(List<double> sortedValues, double quantile)
+    {
+        if (sortedValues.Count == 0) return 0;
+        var q = Math.Clamp(quantile, 0.0, 1.0);
+        var idx = (int)Math.Ceiling(sortedValues.Count * q) - 1;
+        return sortedValues[Math.Clamp(idx, 0, sortedValues.Count - 1)];
+    }
+
+    /// <summary>Ring-buffer telemetry: appends entry, keeps last <paramref name="maxEntries"/> (default 200). Thread-safe via file lock.</summary>
+    private static void AppendTelemetry(string path, TimeoutTelemetryEntry entry, int maxEntries = 200)
     {
         try
         {
@@ -7139,6 +12078,18 @@ public partial class MainWindow : Window, IAsyncDisposable
         _audiverisTimeoutStrikesDirty = false;
     }
 
+    private void LoadAudiverisSuccessStreaks()
+    {
+        var data = JsonStore.Load<Dictionary<string, int>>(_audiverisSuccessStreakPath, []);
+        _audiverisSuccessStreakByFamily.Clear();
+        foreach (var kv in data)
+        {
+            if (string.IsNullOrWhiteSpace(kv.Key) || kv.Value <= 0) continue;
+            _audiverisSuccessStreakByFamily[kv.Key] = Math.Clamp(kv.Value, 1, 2000);
+        }
+        _audiverisSuccessStreakDirty = false;
+    }
+
     private void SaveAudiverisTimeoutStrikes()
     {
         if (!_audiverisTimeoutStrikesDirty)
@@ -7155,6 +12106,17 @@ public partial class MainWindow : Window, IAsyncDisposable
                 StringComparer.OrdinalIgnoreCase);
         JsonStore.Save(_audiverisTimeoutStrikesPath, snapshot);
         _audiverisTimeoutStrikesDirty = false;
+    }
+
+    private void SaveAudiverisSuccessStreaks()
+    {
+        if (!_audiverisSuccessStreakDirty)
+            return;
+        var snapshot = _audiverisSuccessStreakByFamily
+            .Where(kv => kv.Value > 0)
+            .ToDictionary(kv => kv.Key, kv => kv.Value, StringComparer.OrdinalIgnoreCase);
+        JsonStore.Save(_audiverisSuccessStreakPath, snapshot);
+        _audiverisSuccessStreakDirty = false;
     }
 
     private bool IsAudiverisFamilyInTimeoutCooldown(string inputPath, string? familyKey = null)
@@ -7185,6 +12147,8 @@ public partial class MainWindow : Window, IAsyncDisposable
     {
         familyKey ??= NormalizeAudiverisFamilyKey(inputPath);
         var now = DateTime.UtcNow;
+        if (_audiverisSuccessStreakByFamily.TryRemove(familyKey, out _))
+            _audiverisSuccessStreakDirty = true;
 
         // Increment strikes first (cap at 12)
         var newStrikes = _audiverisTimeoutStrikes.AddOrUpdate(
@@ -7203,6 +12167,45 @@ public partial class MainWindow : Window, IAsyncDisposable
             (_, current) => current > expiresUtc ? current : expiresUtc);
         _audiverisTimeoutFamiliesDirty = true;
         _audiverisTimeoutStrikesDirty = true;
+    }
+
+    private void ResetAudiverisSuccessStreak(string familyKey)
+    {
+        if (!string.IsNullOrWhiteSpace(familyKey))
+            if (_audiverisSuccessStreakByFamily.TryRemove(familyKey, out _))
+                _audiverisSuccessStreakDirty = true;
+    }
+
+    private void RegisterAudiverisSuccess(string familyKey)
+    {
+        if (string.IsNullOrWhiteSpace(familyKey))
+            return;
+
+        var streak = _audiverisSuccessStreakByFamily.AddOrUpdate(familyKey, 1, (_, current) => Math.Clamp(current + 1, 1, 2000));
+        _audiverisSuccessStreakDirty = true;
+        if (streak < _audiverisSuccessStreakForDecay)
+            return;
+
+        _audiverisSuccessStreakByFamily[familyKey] = 0;
+        if (!_audiverisTimeoutStrikes.TryGetValue(familyKey, out var currentStrike) || currentStrike <= 0)
+            return;
+
+        var reduced = currentStrike - 1;
+        if (reduced <= 0)
+        {
+            if (_audiverisTimeoutStrikes.TryRemove(familyKey, out _))
+                _audiverisTimeoutStrikesDirty = true;
+            if (_audiverisStrikeLastUtc.TryRemove(familyKey, out _))
+                _audiverisTimeoutStrikesDirty = true;
+        }
+        else
+        {
+            _audiverisTimeoutStrikes[familyKey] = reduced;
+            _audiverisStrikeLastUtc[familyKey] = DateTime.UtcNow;
+            _audiverisTimeoutStrikesDirty = true;
+        }
+
+        LogDebug($"🎼 Audiveris strike decay por éxito: familia='{familyKey}', strike {currentStrike}→{Math.Max(0, reduced)}.");
     }
 
     // ── oemer persistence & cooldown ───────────────────────────────────────
@@ -7393,22 +12396,60 @@ public partial class MainWindow : Window, IAsyncDisposable
             .ToList();
         var strikeCount = _oemerTimeoutStrikes.Count(kv => kv.Value > 0);
         var cooldownCount = activeFamilies.Count;
-        txtOemerStatus.Text = cooldownCount > 0 || strikeCount > 0
-            ? $"Cooldown: {cooldownCount} | Strikes: {strikeCount}"
-            : string.Empty;
+        var activeHostile = GetActiveHostileFoldersSnapshot(now);
+        var hottest = _omrFolderHeatScore
+            .OrderByDescending(kv => kv.Value)
+            .FirstOrDefault();
+        var healthLine = GetOmrHealthLine("oemer", rootDir: ResolveCurrentOmrRootDir("oemer"));
+        var statusParts = new List<string>(4);
+        if (cooldownCount > 0 || strikeCount > 0) statusParts.Add($"Cooldown: {cooldownCount} | Strikes: {strikeCount}");
+        if (activeHostile.Count > 0) statusParts.Add($"🚫 Hostile: {activeHostile.Count}");
+        if (!string.IsNullOrWhiteSpace(hottest.Key) && hottest.Value >= 40)
+            statusParts.Add($"🔥 {Path.GetFileName(hottest.Key)}:{hottest.Value:0}%");
+        if (!string.IsNullOrEmpty(healthLine)) statusParts.Add(healthLine);
+        txtOemerStatus.Text = statusParts.Count > 0 ? string.Join("  ", statusParts) : string.Empty;
+        var tooltipParts = new List<string>();
         if (cooldownCount > 0)
         {
-            var lines = activeFamilies.Take(10).Select(kv =>
+            var tooltipLines = activeFamilies.Take(10).Select(kv =>
             {
                 var key = kv.Key.Length > 60 ? kv.Key[^60..] : kv.Key;
                 var remaining = (kv.Value - now).TotalMinutes;
                 var strikes = _oemerTimeoutStrikes.TryGetValue(kv.Key, out var s) ? s : 0;
                 return $"{key}  [{remaining:F0}min, s{strikes}]";
             });
-            txtOemerStatus.ToolTip = "Familias en cooldown:\n" + string.Join("\n", lines) +
-                (cooldownCount > 10 ? $"\n... +{cooldownCount - 10} más" : string.Empty);
+            tooltipParts.Add("Familias en cooldown:\n" + string.Join("\n", tooltipLines) +
+                (cooldownCount > 10 ? $"\n... +{cooldownCount - 10} más" : string.Empty));
         }
-        else { txtOemerStatus.ToolTip = null; }
+        if (activeHostile.Count > 0)
+        {
+            var hostileLines = activeHostile.Take(10).Select(kv =>
+            {
+                var key = kv.Key.Length > 60 ? kv.Key[^60..] : kv.Key;
+                var remaining = (kv.Value - now).TotalMinutes;
+                return $"{key}  [⚠️ {remaining:F0}min restantes]";
+            });
+            tooltipParts.Add("🚫 Carpetas hostiles:\n" + string.Join("\n", hostileLines) +
+                (activeHostile.Count > 10 ? $"\n... +{activeHostile.Count - 10} más" : string.Empty));
+        }
+        var hotFolders = _omrFolderHeatScore
+            .OrderByDescending(kv => kv.Value)
+            .Take(3)
+            .Where(kv => kv.Value >= 30)
+            .Select(kv => $"{Path.GetFileName(kv.Key)}={kv.Value:0}%")
+            .ToList();
+        if (hotFolders.Count > 0)
+            tooltipParts.Add("🔥 Heatmap:\n" + string.Join("\n", hotFolders));
+        var hotGenomes = _omrGenomePressure
+            .OrderByDescending(kv => kv.Value)
+            .Take(3)
+            .Where(kv => kv.Value > 0)
+            .Select(kv => $"{kv.Key}=g{kv.Value}")
+            .ToList();
+        if (hotGenomes.Count > 0)
+            tooltipParts.Add("🧬 Genoma:\n" + string.Join("\n", hotGenomes));
+        if (!string.IsNullOrEmpty(healthLine)) tooltipParts.Add(healthLine);
+        txtOemerStatus.ToolTip = tooltipParts.Count > 0 ? string.Join("\n\n", tooltipParts) : null;
     }
 
     private void BtnExportLibrary_Click(object sender, RoutedEventArgs e)
@@ -7579,6 +12620,22 @@ public partial class MainWindow : Window, IAsyncDisposable
             chkAutoConvertAudiveris.IsChecked = state.AutoConvertAudiveris.Value;
         if (state.AutoConvertOemer.HasValue)
             chkAutoConvertOemer.IsChecked = state.AutoConvertOemer.Value;
+        if (state.LastAudiverisBatchSize.HasValue)
+            _lastAudiverisRequestedBatchSize = Math.Clamp(state.LastAudiverisBatchSize.Value, 1, 10000);
+        if (state.LastOemerBatchSize.HasValue)
+            _lastOemerRequestedBatchSize = Math.Clamp(state.LastOemerBatchSize.Value, 1, 10000);
+        if (state.AudiverisFallbackBudgetScale.HasValue)
+            _audiverisFallbackBudgetScale = Math.Clamp(state.AudiverisFallbackBudgetScale.Value, 0.50, 1.50);
+        if (state.OemerFallbackBudgetScale.HasValue)
+            _oemerFallbackBudgetScale = Math.Clamp(state.OemerFallbackBudgetScale.Value, 0.50, 1.50);
+        if (state.AudiverisParallelScale.HasValue)
+            _audiverisParallelScale = Math.Clamp(state.AudiverisParallelScale.Value, 0.50, 1.60);
+        if (state.OemerParallelScale.HasValue)
+            _oemerParallelScale = Math.Clamp(state.OemerParallelScale.Value, 0.50, 1.60);
+        if (state.OemerTimeoutHeavyStreak.HasValue)
+            _oemerTimeoutHeavyStreak = Math.Max(0, state.OemerTimeoutHeavyStreak.Value);
+        if (state.AudiverisTimeoutHeavyStreak.HasValue)
+            _audiverisTimeoutHeavyStreak = Math.Max(0, state.AudiverisTimeoutHeavyStreak.Value);
     }
 
     private void SaveUiState()
@@ -7596,7 +12653,15 @@ public partial class MainWindow : Window, IAsyncDisposable
             MusopenUserAgent = muUA,
             AutoConvertAudiveris = chkAutoConvertAudiveris.IsChecked == true,
             AutoConvertOemer = chkAutoConvertOemer.IsChecked == true,
-            OnlyClassical = chkOnlyClassical.IsChecked == true
+            OnlyClassical = chkOnlyClassical.IsChecked == true,
+            LastAudiverisBatchSize = _lastAudiverisRequestedBatchSize,
+            LastOemerBatchSize = _lastOemerRequestedBatchSize,
+            AudiverisFallbackBudgetScale = _audiverisFallbackBudgetScale,
+            OemerFallbackBudgetScale = _oemerFallbackBudgetScale,
+            AudiverisParallelScale = _audiverisParallelScale,
+            OemerParallelScale = _oemerParallelScale,
+            OemerTimeoutHeavyStreak = _oemerTimeoutHeavyStreak,
+            AudiverisTimeoutHeavyStreak = _audiverisTimeoutHeavyStreak
         });
     }
 

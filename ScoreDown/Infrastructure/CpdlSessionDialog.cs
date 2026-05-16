@@ -4,6 +4,10 @@ using System.Text.Json;
 using System.Windows;
 using System.Windows.Controls;
 using WpfButton = System.Windows.Controls.Button;
+using WpfBrushes = System.Windows.Media.Brushes;
+using WpfColor = System.Windows.Media.Color;
+using WpfColorConverter = System.Windows.Media.ColorConverter;
+using WpfSolidColorBrush = System.Windows.Media.SolidColorBrush;
 
 namespace ScoreDown.Infrastructure;
 
@@ -46,6 +50,8 @@ public sealed class CpdlSessionDialog : Window
         MinWidth = 860;
         MinHeight = 560;
         WindowStartupLocation = WindowStartupLocation.CenterOwner;
+        Background = CreateBrush("#1E1E2E");
+        Foreground = WpfBrushes.White;
 
         var root = new Grid();
         root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
@@ -56,7 +62,8 @@ public sealed class CpdlSessionDialog : Window
         {
             Margin = new Thickness(10, 8, 10, 6),
             TextWrapping = TextWrapping.Wrap,
-            Text = $"1) Completa el challenge/login en {_siteLabel}. 2) Pulsa 'Usar esta sesión'."
+            Text = $"1) Completa el challenge/login en {_siteLabel}. 2) Pulsa 'Usar esta sesión'.",
+            Foreground = CreateBrush("#C7D2FE")
         };
         Grid.SetRow(header, 0);
         root.Children.Add(header);
@@ -65,11 +72,17 @@ public sealed class CpdlSessionDialog : Window
         Grid.SetRow(_webView, 1);
         root.Children.Add(_webView);
 
-        var footer = new DockPanel { LastChildFill = true, Margin = new Thickness(10, 8, 10, 10) };
+        var footer = new DockPanel
+        {
+            LastChildFill = true,
+            Margin = new Thickness(10, 8, 10, 10),
+            Background = CreateBrush("#1E1E2E")
+        };
         _txtStatus = new TextBlock
         {
             VerticalAlignment = VerticalAlignment.Center,
-            Text = $"Abriendo {_siteLabel}..."
+            Text = $"Abriendo {_siteLabel}...",
+            Foreground = CreateBrush("#94A3B8")
         };
         DockPanel.SetDock(_txtStatus, Dock.Left);
         footer.Children.Add(_txtStatus);
@@ -84,7 +97,11 @@ public sealed class CpdlSessionDialog : Window
             Content = "Diagnóstico cookies",
             Padding = new Thickness(10, 6, 10, 6),
             Margin = new Thickness(0, 0, 6, 0),
-            IsEnabled = false
+            IsEnabled = false,
+            Background = CreateBrush("#2D2D44"),
+            Foreground = WpfBrushes.White,
+            BorderBrush = CreateBrush("#555555"),
+            BorderThickness = new Thickness(1)
         };
         _btnCheckCookies.Click += BtnCheckCookies_Click;
 
@@ -92,7 +109,11 @@ public sealed class CpdlSessionDialog : Window
         {
             Content = "Cancelar",
             Padding = new Thickness(10, 6, 10, 6),
-            Margin = new Thickness(0, 0, 6, 0)
+            Margin = new Thickness(0, 0, 6, 0),
+            Background = CreateBrush("#374151"),
+            Foreground = WpfBrushes.White,
+            BorderBrush = CreateBrush("#555555"),
+            BorderThickness = new Thickness(1)
         };
         btnCancel.Click += (_, _) => Close();
 
@@ -100,7 +121,11 @@ public sealed class CpdlSessionDialog : Window
         {
             Content = "Usar esta sesión",
             Padding = new Thickness(12, 6, 12, 6),
-            IsEnabled = false
+            IsEnabled = false,
+            Background = CreateBrush("#7C3AED"),
+            Foreground = WpfBrushes.White,
+            BorderBrush = CreateBrush("#555555"),
+            BorderThickness = new Thickness(1)
         };
         _btnUseSession.Click += BtnUseSession_Click;
 
@@ -116,6 +141,9 @@ public sealed class CpdlSessionDialog : Window
         Content = root;
         Loaded += OnLoaded;
     }
+
+    private static WpfSolidColorBrush CreateBrush(string hex)
+        => new((WpfColor)WpfColorConverter.ConvertFromString(hex)!);
 
     private async void OnLoaded(object sender, RoutedEventArgs e)
     {

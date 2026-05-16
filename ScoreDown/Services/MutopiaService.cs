@@ -169,13 +169,13 @@ public class MutopiaService
                     var href = link.GetAttributeValue("href", "");
                     if (string.IsNullOrWhiteSpace(href)) continue;
                     if (href.EndsWith(".pdf", StringComparison.OrdinalIgnoreCase))
-                        files.Add(new PartituraFile { Format = "PDF", DownloadUrl = href, FileName = SanitizeFileName(Path.GetFileName(href)) });
+                        files.Add(new PartituraFile { Format = "PDF", DownloadUrl = href, FileName = FileNameHelper.GenerateFileName(composer, title, "PDF") });
                     else if (href.EndsWith(".mid", StringComparison.OrdinalIgnoreCase))
-                        files.Add(new PartituraFile { Format = "MIDI", DownloadUrl = href, FileName = SanitizeFileName(Path.GetFileName(href)) });
+                        files.Add(new PartituraFile { Format = "MIDI", DownloadUrl = href, FileName = FileNameHelper.GenerateFileName(composer, title, "MIDI") });
                     else if (href.EndsWith(".mxl", StringComparison.OrdinalIgnoreCase))
-                        files.Add(new PartituraFile { Format = "MXL", DownloadUrl = href, FileName = SanitizeFileName(Path.GetFileName(href)) });
+                        files.Add(new PartituraFile { Format = "MXL", DownloadUrl = href, FileName = FileNameHelper.GenerateFileName(composer, title, "MXL") });
                     else if (href.EndsWith(".xml", StringComparison.OrdinalIgnoreCase))
-                        files.Add(new PartituraFile { Format = "XML", DownloadUrl = href, FileName = SanitizeFileName(Path.GetFileName(href)) });
+                        files.Add(new PartituraFile { Format = "XML", DownloadUrl = href, FileName = FileNameHelper.GenerateFileName(composer, title, "XML") });
                 }
             }
 
@@ -236,13 +236,8 @@ public class MutopiaService
     private static readonly HashSet<char> s_invalidFileNameChars =
         new(Path.GetInvalidFileNameChars());
 
-    private static string SanitizeFileName(string name)
-    {
-        var sb = new StringBuilder(name.Length);
-        foreach (var c in name)
-            sb.Append(s_invalidFileNameChars.Contains(c) ? '_' : c);
-        return sb.ToString();
-    }
+    // SanitizeFileName deprecated — usar FileNameHelper.SanitizeFileName
+
 
     private Task<string?> FetchHtmlAsync(string url, CancellationToken ct)
         => HttpHelper.FetchHtmlAsync(_http, url, maxRetries: 3, ct);

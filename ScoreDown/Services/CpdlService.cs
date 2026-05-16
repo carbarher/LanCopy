@@ -148,7 +148,7 @@ public class CpdlService
             var doc = new HtmlDoc();
             doc.LoadHtml(html);
 
-            var files = ExtractFiles(doc, title);
+            var files = ExtractFiles(doc, title, ExtractComposer(doc, title));
             if (files.Count == 0) return null;
 
             return new PartituraItem
@@ -185,7 +185,7 @@ public class CpdlService
         return comma > 0 ? title[..comma].Trim() : string.Empty;
     }
 
-    private static List<PartituraFile> ExtractFiles(HtmlDoc doc, string baseTitle)
+    private static List<PartituraFile> ExtractFiles(HtmlDoc doc, string baseTitle, string composer)
     {
         var files = new List<PartituraFile>();
         var links = doc.DocumentNode.SelectNodes("//a[@href]");
@@ -208,10 +208,12 @@ public class CpdlService
 
             var fileName = Path.GetFileName(href.Split('?')[0]);
             if (string.IsNullOrWhiteSpace(fileName))
-                fileName = $"{CleanTitle(baseTitle)}.{ext.ToLowerInvariant()}";
-
-            if (!fileName.Contains('.', StringComparison.Ordinal))
-                fileName = $"{fileName}.{ext.ToLowerInvariant()}";
+                fileName = FileNameHelper.GenerateFileName(composer, CleanTitle(baseTitle), ext?.ToUpperInvariant());
+            else if (!fileName.Contains('.', StringComparison.Ordinal))
+                fileName = FileNameHelper.GenerateFileName(composer, CleanTitle(baseTitle), ext?.ToUpperInvariant());
+            else
+                // Mantener el nombre del archivo si viene con extensión del URL
+                fileName = FileNameHelper.SanitizeFileName(fileName);
 
             if (files.Any(f => string.Equals(f.DownloadUrl, absolute, StringComparison.OrdinalIgnoreCase)))
                 continue;
@@ -220,7 +222,7 @@ public class CpdlService
             {
                 Format = ext,
                 DownloadUrl = absolute,
-                FileName = SanitizeFileName(fileName)
+                FileName = fileName
             });
         }
 
@@ -270,13 +272,8 @@ public class CpdlService
 
     private static readonly HashSet<char> s_invalidFileNameChars = new(Path.GetInvalidFileNameChars());
 
-    private static string SanitizeFileName(string name)
-    {
-        var sb = new StringBuilder(name.Length);
-        foreach (var c in name)
-            sb.Append(s_invalidFileNameChars.Contains(c) ? '_' : c);
-        return sb.ToString();
-    }
+    // SanitizeFileName deprecated — usar FileNameHelper.SanitizeFileName
+
 
     private static string CleanTitle(string title) => title.Replace("  ", " ").Trim();
 

@@ -187,7 +187,7 @@ public class OpenScoreService
                 {
                     Format = "MXL",
                     DownloadUrl = rawUrl,
-                    FileName = x.Parts[^1],
+                    FileName = FileNameHelper.GenerateFileName(composer, title, "MXL"),
                     SizeBytes = x.Entry.Size,
                     SourcePageUrl = pageUrl
                 };

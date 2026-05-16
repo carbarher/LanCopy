@@ -288,8 +288,7 @@ public class MusopenService
             instrument = JoinNames(scoreInstr);
 
         var pageUrl = GetString(el, "url") ?? $"https://musopen.org/sheetmusic/{id}/";
-        var fileNameComposer = string.IsNullOrWhiteSpace(composer) ? "" : composer + " - ";
-        var fileName = SanitizeFileName($"{fileNameComposer}{title}.pdf");
+        var fileName = FileNameHelper.GenerateFileName(composer, title, "PDF");
 
         return new PartituraItem
         {
@@ -343,13 +342,5 @@ public class MusopenService
         return sb.ToString();
     }
 
-    private static readonly HashSet<char> s_invalidFileNameChars = new(System.IO.Path.GetInvalidFileNameChars());
-
-    private static string SanitizeFileName(string name)
-    {
-        var sb = new System.Text.StringBuilder(name.Length);
-        foreach (var c in name)
-            sb.Append(s_invalidFileNameChars.Contains(c) ? '_' : c);
-        return sb.ToString().Trim('_', ' ');
-    }
+    // SanitizeFileName deprecated — usar FileNameHelper.SanitizeFileName
 }

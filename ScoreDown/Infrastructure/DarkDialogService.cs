@@ -139,6 +139,35 @@ public static class DarkDialogService
         return path;
     }
 
+    public static string? PromptText(
+        Window? owner,
+        string title,
+        string caption,
+        string initialValue,
+        string hint,
+        string acceptText = "Aceptar")
+    {
+        var dlg = new DarkPathWindow(
+            title,
+            caption,
+            initialValue,
+            hint,
+            acceptText);
+
+        if (owner is not null)
+        {
+            dlg.Owner = owner;
+            dlg.WindowStartupLocation = WindowStartupLocation.CenterOwner;
+        }
+        else
+        {
+            dlg.WindowStartupLocation = WindowStartupLocation.CenterScreen;
+        }
+
+        if (dlg.ShowDialog() != true) return null;
+        return (dlg.PathValue ?? string.Empty).Trim();
+    }
+
     private static WpfSolidColorBrush Hex(string hex)
         => new((WpfColor)WpfColorConverter.ConvertFromString(hex)!);
 

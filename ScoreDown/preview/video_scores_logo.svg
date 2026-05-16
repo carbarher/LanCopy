@@ -1,0 +1,60 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1400" height="520" viewBox="0 0 1400 520">
+  <defs>
+    <linearGradient id="gold" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#f7e7a1"/>
+      <stop offset="45%" stop-color="#d6b15b"/>
+      <stop offset="100%" stop-color="#8f6b1f"/>
+    </linearGradient>
+    <filter id="glow" x="-20%" y="-20%" width="140%" height="140%">
+      <feGaussianBlur stdDeviation="3" result="blur"/>
+      <feColorMatrix in="blur" type="matrix" values="1 0 0 0 0.2  0 1 0 0 0.14  0 0 1 0 0  0 0 0 0.55 0" result="goldBlur"/>
+      <feMerge>
+        <feMergeNode in="goldBlur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+
+  <rect width="1400" height="520" rx="42" fill="#120d08" fill-opacity="0.0"/>
+
+  <g stroke="#d4af37" stroke-width="7" stroke-linecap="round" opacity="0.95">
+    <line x1="105" y1="170" x2="560" y2="170"/>
+    <line x1="105" y1="196" x2="560" y2="196"/>
+    <line x1="105" y1="222" x2="560" y2="222"/>
+    <line x1="105" y1="248" x2="560" y2="248"/>
+    <line x1="105" y1="274" x2="560" y2="274"/>
+  </g>
+
+  <g filter="url(#glow)">
+    <path d="M330 130
+             C308 130 289 147 289 169
+             C289 190 304 205 323 208
+             L323 335
+             C323 355 308 370 290 370
+             C273 370 258 356 258 338
+             C258 318 274 304 295 304
+             C313 304 327 317 327 334
+             C327 354 312 369 294 369
+             C263 369 237 345 237 313
+             C237 276 266 248 303 248
+             L303 165
+             C303 145 319 128 339 128
+             C357 128 372 141 372 159
+             C372 176 359 190 341 190
+             C326 190 314 180 311 166"
+          fill="none" stroke="url(#gold)" stroke-width="22" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="M368 112 L368 248" fill="none" stroke="url(#gold)" stroke-width="18" stroke-linecap="round"/>
+    <path d="M368 112 C404 132 430 164 439 202 C446 232 439 258 418 278" fill="none" stroke="url(#gold)" stroke-width="18" stroke-linecap="round"/>
+    <ellipse cx="300" cy="338" rx="34" ry="28" fill="url(#gold)" stroke="#2b1d07" stroke-width="9"/>
+    <ellipse cx="420" cy="285" rx="32" ry="26" fill="url(#gold)" stroke="#2b1d07" stroke-width="9"/>
+  </g>
+
+  <g fill="#f4d98d" filter="url(#glow)">
+    <text x="606" y="186" font-family="Garamond, Georgia, Times New Roman, serif" font-size="108" font-weight="700" letter-spacing="5">VIDEO</text>
+    <text x="606" y="304" font-family="Garamond, Georgia, Times New Roman, serif" font-size="156" font-weight="700" letter-spacing="6">SCORES</text>
+  </g>
+
+  <g stroke="#d4af37" stroke-width="6" stroke-linecap="round" opacity="0.9">
+    <line x1="610" y1="344" x2="1115" y2="344"/>
+  </g>
+</svg>

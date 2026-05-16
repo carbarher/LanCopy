@@ -580,21 +580,6 @@
                     IsChecked="True" Checked="SourceToggle_Changed" Unchecked="SourceToggle_Changed"
                     ToolTip="Habilitar OpenScore (CC0 MusicXML) en catálogo/descarga"/>
                 <Separator Style="{StaticResource {x:Static ToolBar.SeparatorStyleKey}}" Margin="4,0"/>
-                <CheckBox x:Name="chkOnlyPdf" Content="Solo PDF"
-                    Margin="0,0,8,0" VerticalAlignment="Center"
-                    Foreground="#A78BFA"
-                    Checked="FilterChanged" Unchecked="FilterChanged"
-                    ToolTip="Descargar solo archivos PDF"/>
-                <CheckBox x:Name="chkOnlyMidi" Content="Solo MIDI"
-                    Margin="0,0,8,0" VerticalAlignment="Center"
-                    Foreground="#A78BFA"
-                    Checked="FilterChanged" Unchecked="FilterChanged"
-                    ToolTip="Descargar solo archivos MIDI"/>
-                <CheckBox x:Name="chkOnlyXml" Content="Solo XML"
-                    Margin="0,0,8,0" VerticalAlignment="Center"
-                    Foreground="#A78BFA"
-                    Checked="FilterChanged" Unchecked="FilterChanged"
-                    ToolTip="Descargar solo archivos MusicXML/MXL y compatibles MuseScore (MSCZ/MSCX)"/>
                 <CheckBox x:Name="chkOnlyClassical" Content="Solo clásica"
                     Margin="0,0,8,0" VerticalAlignment="Center"
                     Foreground="#A78BFA"
@@ -640,6 +625,14 @@
                     Margin="0,0,4,0" Padding="10,7" Background="#7F1D1D"
                     Click="BtnDeleteAndRedownload_Click"
                     ToolTip="Borra todos los archivos de la carpeta destino y vuelve a descargar todo"/>
+                <Button x:Name="btnValidatePdfs" Content="✅ Comprobar PDF"
+                    Margin="0,0,4,0" Padding="10,7" Background="#5B21B6"
+                    Click="BtnValidatePdfs_Click"
+                    ToolTip="Valida PDFs: borra los inválidos y los ya procesados (con MXL/XML)"/>
+                <Button x:Name="btnValidateOnly" Content="🔍 Solo Validar"
+                    Margin="0,0,4,0" Padding="10,7" Background="#2E5090"
+                    Click="BtnValidateOnly_Click"
+                    ToolTip="Solo valida PDFs sin borrar nada (diagnóstico)"/>
                 <Button x:Name="btnGenerateVideo" Content="🎥 Video"
                     Margin="0,0,4,0" Padding="10,7" Background="#7C2D12"
                     Click="BtnGenerateVideo_Click"
@@ -964,7 +957,46 @@
                         </GroupStyle>
                     </ListView.GroupStyle>
                     <ListView.ContextMenu>
-                        <ContextMenu>
+                        <ContextMenu Background="#111827"
+                                     Foreground="#E5E7EB"
+                                     BorderBrush="#334155"
+                                     BorderThickness="1"
+                                     Padding="4">
+                            <ContextMenu.Resources>
+                                <Style TargetType="MenuItem">
+                                    <Setter Property="Foreground" Value="#E5E7EB"/>
+                                    <Setter Property="Background" Value="#111827"/>
+                                    <Setter Property="Padding" Value="10,6"/>
+                                    <Setter Property="BorderThickness" Value="0"/>
+                                    <Setter Property="Template">
+                                        <Setter.Value>
+                                            <ControlTemplate TargetType="MenuItem">
+                                                <Border x:Name="menuItemBorder"
+                                                        Background="{TemplateBinding Background}"
+                                                        CornerRadius="4"
+                                                        Margin="2,1"
+                                                        Padding="{TemplateBinding Padding}">
+                                                    <ContentPresenter ContentSource="Header"
+                                                                      RecognizesAccessKey="True"
+                                                                      VerticalAlignment="Center"/>
+                                                </Border>
+                                                <ControlTemplate.Triggers>
+                                                    <Trigger Property="IsHighlighted" Value="True">
+                                                        <Setter TargetName="menuItemBorder" Property="Background" Value="#1E293B"/>
+                                                    </Trigger>
+                                                    <Trigger Property="IsEnabled" Value="False">
+                                                        <Setter Property="Foreground" Value="#6B7280"/>
+                                                    </Trigger>
+                                                </ControlTemplate.Triggers>
+                                            </ControlTemplate>
+                                        </Setter.Value>
+                                    </Setter>
+                                </Style>
+                                <Style TargetType="Separator">
+                                    <Setter Property="Margin" Value="6,4"/>
+                                    <Setter Property="Background" Value="#334155"/>
+                                </Style>
+                            </ContextMenu.Resources>
                             <MenuItem x:Name="mnuCtxVideoOpen" Header="▶ Abrir vídeo MP4" Click="CtxVideoOpen_Click"/>
                             <MenuItem x:Name="mnuCtxVideoOpenInMuseScore" Header="🎼 Abrir en MuseScore" Click="CtxVideoOpenInMuseScore_Click"/>
                             <MenuItem Header="📂 Abrir carpeta del ítem" Click="CtxVideoOpenItemFolder_Click"/>
@@ -1020,7 +1052,8 @@
                                 </GridViewColumn.Header>
                                 <GridViewColumn.CellTemplate>
                                     <DataTemplate>
-                                        <Border Background="{Binding FormatColor}" CornerRadius="3" Padding="5,1">
+                                        <Border Background="{Binding FormatColor}" CornerRadius="3" Padding="5,1"
+                                                ToolTip="{Binding FormatToolTip}">
                                             <TextBlock Text="{Binding FormatTag}" FontSize="10"
                                                        FontWeight="Bold" Foreground="White"
                                                        HorizontalAlignment="Center"/>
@@ -1037,6 +1070,18 @@
                                         <TextBlock Text="{Binding DisplayName}" Foreground="#E5E7EB"
                                                    TextTrimming="CharacterEllipsis"
                                                    ToolTip="{Binding BestFile}"/>
+                                    </DataTemplate>
+                                </GridViewColumn.CellTemplate>
+                            </GridViewColumn>
+                            <GridViewColumn Width="70">
+                                <GridViewColumn.Header>
+                                    <TextBlock Text="Tamaño" ToolTip="Tamaño del archivo de partitura"/>
+                                </GridViewColumn.Header>
+                                <GridViewColumn.CellTemplate>
+                                    <DataTemplate>
+                                        <TextBlock Text="{Binding ScoreSizeText}" Foreground="#9CA3AF"
+                                                   FontSize="10" HorizontalAlignment="Right"
+                                                   Margin="0,0,6,0"/>
                                     </DataTemplate>
                                 </GridViewColumn.CellTemplate>
                             </GridViewColumn>
@@ -1114,6 +1159,9 @@
                             </Grid.RowDefinitions>
                             <StackPanel Grid.Row="0" Orientation="Horizontal" Margin="0,0,0,4">
                                 <TextBlock Text="📋 Log vídeo" Foreground="#A78BFA" VerticalAlignment="Center" Margin="2,0,8,0" FontWeight="SemiBold"/>
+                                <Button Content="📋 Copiar" Padding="8,4"
+                                    Style="{StaticResource LogActionButtonStyle}"
+                                        Background="#1E293B" Click="BtnCopyVideoLog_Click" ToolTip="Copiar log al portapapeles"/>
                                 <Button Content="🗑 Limpiar" Padding="8,4"
                                     Style="{StaticResource LogActionButtonStyle}"
                                         Background="#1E293B" Click="BtnClearVideoLog_Click" ToolTip="Limpiar log de vídeo"/>
@@ -1170,8 +1218,27 @@
                                     Margin="0,0,6,0" Padding="10,6" Background="#374151"
                                     Click="BtnVideoSelectRefresh_Click"
                                     ToolTip="Volver a escanear la carpeta de destino (F5)"/>
+                            <Button x:Name="btnVideoSelectDiagnostics" Content="🔍 Diagnóstico"
+                                    Margin="0,0,6,0" Padding="10,6" Background="#4B5563"
+                                    Click="BtnVideoSelectDiagnostics_Click"
+                                    ToolTip="Ver diagnóstico de métricas y trazas de render"/>
+                            <Button x:Name="btnVideoSelectExportCSV" Content="📊 Exportar CSV"
+                                    Margin="0,0,6,0" Padding="10,6" Background="#1F4E78"
+                                    Click="BtnVideoSelectExportCSV_Click"
+                                    ToolTip="Exportar métricas de render a archivo CSV"/>
+                                <Button x:Name="btnVideoSelectExportAdaptiveCSV" Content="🧠 Exportar Adaptativo"
+                                    Margin="0,0,6,0" Padding="10,6" Background="#22543D"
+                                    Click="BtnVideoSelectExportAdaptiveCSV_Click"
+                                    ToolTip="Exportar historial de decisiones del adaptativo a CSV"/>
+                                <Button x:Name="btnVideoSelectResetAdaptive" Content="♻ Reset Paralelo"
+                                    Margin="0,0,6,0" Padding="10,6" Background="#7C3E10"
+                                    Click="BtnVideoSelectResetAdaptive_Click"
+                                    ToolTip="Restablecer paralelismo adaptativo al valor base"/>
                             <TextBlock x:Name="txtVideoSelectCount" VerticalAlignment="Center"
                                        Foreground="#9CA3AF" FontSize="11" Margin="8,0,0,0"/>
+                                    <TextBlock x:Name="txtVideoAdaptiveStatus" VerticalAlignment="Center"
+                                           Foreground="#93C5FD" FontSize="11" FontWeight="SemiBold" Margin="10,0,0,0"
+                                           ToolTip="Paralelismo adaptativo actual respecto al base"/>
                         </WrapPanel>
                         <WrapPanel Grid.Column="1" VerticalAlignment="Center">
                             <Button x:Name="btnVideoSelectGenerate" Content="🎥 Generar (0)"
