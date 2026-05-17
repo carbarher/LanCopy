@@ -14,6 +14,7 @@ public static class MaintenanceImportPathGuards
         DestMissingOrInvalid,
         SrcMissingOrInvalid,
         SameDirectory,
+        NestedDirectoryConflict,
         PathError
     }
 
@@ -29,6 +30,12 @@ public static class MaintenanceImportPathGuards
             var s = Path.GetFullPath(importSourceDirectory.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
             if (string.Equals(s, d, StringComparison.OrdinalIgnoreCase))
                 return PathValidationCode.SameDirectory;
+
+            var dRoot = d + Path.DirectorySeparatorChar;
+            var sRoot = s + Path.DirectorySeparatorChar;
+            if (sRoot.StartsWith(dRoot, StringComparison.OrdinalIgnoreCase)
+                || dRoot.StartsWith(sRoot, StringComparison.OrdinalIgnoreCase))
+                return PathValidationCode.NestedDirectoryConflict;
         }
         catch (Exception)
         {

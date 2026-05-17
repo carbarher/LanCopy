@@ -81,16 +81,6 @@ public partial class ImportBibliotecaWindow : Window
         }
     }
 
-    private void BtnClose_Click(object? sender, RoutedEventArgs e)
-    {
-        if (_importCts != null)
-        {
-            _importCts.Cancel();
-            return;
-        }
-        Close();
-    }
-
     private void BtnCancelRun_Click(object? sender, RoutedEventArgs e) => _importCts?.Cancel();
 
     private async void BtnImport_Click(object? sender, RoutedEventArgs e)
@@ -109,6 +99,9 @@ public partial class ImportBibliotecaWindow : Window
                 return;
             case MaintenanceImportPathGuards.PathValidationCode.SameDirectory:
                 AppendLog("⚠️ Origen y destino no pueden ser la misma carpeta.");
+                return;
+            case MaintenanceImportPathGuards.PathValidationCode.NestedDirectoryConflict:
+                AppendLog("⚠️ Origen y destino no pueden estar anidados entre sí.");
                 return;
             case MaintenanceImportPathGuards.PathValidationCode.PathError:
                 AppendLog("⚠️ Rutas no válidas.");
@@ -209,7 +202,6 @@ public partial class ImportBibliotecaWindow : Window
         AppendLog("⚙️ Motor SlskDownBibliotecaImport (sin app principal)…");
 
         BtnImport!.IsEnabled = false;
-        BtnClose!.IsEnabled = false;
         if (Pb != null) { Pb.IsVisible = true; Pb.Value = 0; }
         if (BtnCancelRun != null) BtnCancelRun.IsVisible = true;
         TxtStatus!.Text = "Preparando…";
@@ -249,7 +241,6 @@ public partial class ImportBibliotecaWindow : Window
             await Dispatcher.UIThread.InvokeAsync(() =>
             {
                 BtnImport.IsEnabled = true;
-                BtnClose.IsEnabled = true;
                 if (Pb != null) Pb.IsVisible = false;
                 if (BtnCancelRun != null) BtnCancelRun.IsVisible = false;
                 _importCts?.Dispose();

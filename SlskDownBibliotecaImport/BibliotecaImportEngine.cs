@@ -62,6 +62,7 @@ public static class BibliotecaImportEngine
         int copied = 0, skipped = 0, errors = 0, txtOk = 0, txtFail = 0, extracted = 0;
         int skipExistingFile = 0, skipQuickSigDest = 0, skipContentHash = 0, skipPdPolicy = 0, copyIoRetries = 0;
         int resumeFromCheckpoint = 0, droppedQuickSigPrepass = 0;
+        int sourceDeletedFiles = 0, sourceDeletedArchives = 0, sourceDeleteErrors = 0, sourceDeletedDirs = 0;
         long copiedBytes = 0;
         var copiedPaths = new System.Collections.Concurrent.ConcurrentBag<string>();
         var failedCandidates = new System.Collections.Concurrent.ConcurrentBag<ImportCandidate>();
@@ -349,6 +350,50 @@ public static class BibliotecaImportEngine
 
             var checkpointIoLock = new object();
             var archiveExtractLocks = new System.Collections.Concurrent.ConcurrentDictionary<string, System.Threading.SemaphoreSlim>(StringComparer.OrdinalIgnoreCase);
+            var archivePendingEntries = new System.Collections.Concurrent.ConcurrentDictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+            var archiveHasFailures = new System.Collections.Concurrent.ConcurrentDictionary<string, byte>(StringComparer.OrdinalIgnoreCase);
+
+            foreach (var g in candidates.Where(static c => c.IsArchived).GroupBy(static c => c.ArchivePath, StringComparer.OrdinalIgnoreCase))
+                archivePendingEntries[g.Key] = g.Count();
+
+            void MarkProcessedAndDeleteSource(ImportCandidate candidate, bool processedWithoutError)
+            {
+                if (o.DryRun)
+                    return;
+
+                if (candidate.IsArchived)
+                {
+                    if (!processedWithoutError)
+                        archiveHasFailures.TryAdd(candidate.ArchivePath, 0);
+
+                    var remaining = archivePendingEntries.AddOrUpdate(candidate.ArchivePath, 0, static (_, current) => Math.Max(0, current - 1));
+                    if (remaining == 0)
+                    {
+                        if (archiveHasFailures.ContainsKey(candidate.ArchivePath))
+                            return;
+
+                        if (TryDeleteFileSafe(candidate.ArchivePath))
+                        {
+                            System.Threading.Interlocked.Increment(ref sourceDeletedArchives);
+                        }
+                        else
+                        {
+                            System.Threading.Interlocked.Increment(ref sourceDeleteErrors);
+                        }
+                    }
+
+                    return;
+                }
+
+                if (TryDeleteFileSafe(candidate.FilePath))
+                {
+                    System.Threading.Interlocked.Increment(ref sourceDeletedFiles);
+                }
+                else
+                {
+                    System.Threading.Interlocked.Increment(ref sourceDeleteErrors);
+                }
+            }
 
             var swCopyPhase = System.Diagnostics.Stopwatch.StartNew();
             await Parallel.ForEachAsync(candidates, parallelImport, async (cap, parallelCt) =>
@@ -374,6 +419,7 @@ public static class BibliotecaImportEngine
                 {
                     var pdSkipNum = System.Threading.Interlocked.Increment(ref skipPdPolicy);
                     System.Threading.Interlocked.Increment(ref skipped);
+                    MarkProcessedAndDeleteSource(cap, processedWithoutError: true);
                     if (!o.MinimalLog && (pdSkipNum <= 20 || pdSkipNum % 200 == 0))
                     {
                         var suffix = string.IsNullOrWhiteSpace(pdReason) ? string.Empty : $" — {pdReason}";
@@ -387,6 +433,7 @@ public static class BibliotecaImportEngine
                 {
                     System.Threading.Interlocked.Increment(ref skipExistingFile);
                     System.Threading.Interlocked.Increment(ref skipped);
+                    MarkProcessedAndDeleteSource(cap, processedWithoutError: true);
                     goto UpdateUi;
                 }
 
@@ -398,6 +445,7 @@ public static class BibliotecaImportEngine
                     {
                         System.Threading.Interlocked.Increment(ref skipQuickSigDest);
                         System.Threading.Interlocked.Increment(ref skipped);
+                        MarkProcessedAndDeleteSource(cap, processedWithoutError: true);
                         goto UpdateUi;
                     }
                 }
@@ -418,6 +466,7 @@ public static class BibliotecaImportEngine
                     {
                         System.Threading.Interlocked.Increment(ref skipContentHash);
                         System.Threading.Interlocked.Increment(ref skipped);
+                        MarkProcessedAndDeleteSource(cap, processedWithoutError: true);
                         goto UpdateUi;
                     }
                 }
@@ -504,6 +553,8 @@ public static class BibliotecaImportEngine
                         }
                     }
 
+                    var processedWithoutError = true;
+
                     // Generar TXT si está habilitado (solo si pasa tamaño ≥200 KB, español y calidad)
                     if (o.GenTxt && host.CalibreAvailable)
                     {
@@ -515,12 +566,25 @@ public static class BibliotecaImportEngine
                             try
                             {
                                 var r = await host.EnqueueCalibreTxtAsync(destFile, importDest, parallelCt).ConfigureAwait(false);
-                                if (r.Success && !r.Skipped) System.Threading.Interlocked.Increment(ref txtOk);
-                                else if (!r.Skipped) System.Threading.Interlocked.Increment(ref txtFail);
+                                if (r.Success && !r.Skipped)
+                                {
+                                    System.Threading.Interlocked.Increment(ref txtOk);
+                                }
+                                else if (!r.Skipped)
+                                {
+                                    System.Threading.Interlocked.Increment(ref txtFail);
+                                    processedWithoutError = false;
+                                }
                             }
-                            catch { System.Threading.Interlocked.Increment(ref txtFail); }
+                            catch
+                            {
+                                System.Threading.Interlocked.Increment(ref txtFail);
+                                processedWithoutError = false;
+                            }
                         }
                     }
+
+                    MarkProcessedAndDeleteSource(cap, processedWithoutError);
                 }
                 catch (OperationCanceledException) { throw; }
                 catch (Exception ex)
@@ -581,6 +645,9 @@ public static class BibliotecaImportEngine
                 try { sem.Dispose(); } catch { }
             }
             archiveExtractLocks.Clear();
+
+            if (!o.DryRun)
+                sourceDeletedDirs = CleanupOriginDirectoryAndParent(importSrc);
 
             // Modo rápido: fase 2 diferida de TXT (solo si usuario la pidió originalmente)
             if (o.FastMode && o.GenTxtRequested && host.CalibreAvailable && !copiedPaths.IsEmpty)
@@ -720,6 +787,8 @@ public static class BibliotecaImportEngine
             var summary = $"✅ {copied} importados ({extracted} extraídos de ZIP/RAR) · {skipped} duplicados · {errors} errores";
             if (o.GenTxt) summary += $" · TXT: {txtOk} OK / {txtFail} fail";
             summary += $" · {BibliotecaImportEngine.FormatBytes(copiedBytes)}";
+            if (!o.DryRun && (sourceDeletedFiles + sourceDeletedArchives + sourceDeletedDirs) > 0)
+                summary += $" · origen limpiado";
 
             if (copied > 0)
             {
@@ -744,10 +813,12 @@ public static class BibliotecaImportEngine
             host.Log(
                 $"⏱ Fases: scan {swScan.Elapsed.TotalSeconds:F1}s · hash-dest {swDestHash.Elapsed.TotalSeconds:F1}s · hash-src {swSrcHash.Elapsed.TotalSeconds:F1}s · " +
                 $"copia-paralela {report.CopyParallelSeconds:F1}s (~{report.AvgMsPerCandidateInCopyPhase:F0} ms/candidato) · total {swTotal.Elapsed.TotalSeconds:F1}s");
+            if (!o.DryRun)
+                host.Log($"🧹 Limpieza origen: archivos {sourceDeletedFiles:N0} · comprimidos {sourceDeletedArchives:N0} · directorios {sourceDeletedDirs:N0} · errores borrado {sourceDeleteErrors:N0}");
             if (!o.MinimalLog && (skipExistingFile + skipQuickSigDest + skipContentHash + skipPdPolicy + resumeFromCheckpoint) > 0)
-                host.Log($"   📎 Omitidos en copia: ya existía nombre {skipExistingFile:N0} · firma en destino {skipQuickSigDest:N0} · mismo contenido (hash) {skipContentHash:N0} · política BD/PD {skipPdPolicy:N0} · checkpoint previo {resumeFromCheckpoint:N0}");
+                host.Log($"   📎 Omitidos: nombre {skipExistingFile:N0} · firma {skipQuickSigDest:N0} · hash {skipContentHash:N0} · política {skipPdPolicy:N0} · checkpoint {resumeFromCheckpoint:N0}");
             if (!o.MinimalLog && (droppedSameDest + droppedQuickSigPrepass + copyIoRetries) > 0)
-                host.Log($"   📎 Pre-filtro / I/O: mismo destino en lista {droppedSameDest:N0} · misma firma en lista {droppedQuickSigPrepass:N0} · reintentos copia {copyIoRetries:N0}");
+                host.Log($"   📎 Pre-filtro / I/O: destino {droppedSameDest:N0} · firma lista {droppedQuickSigPrepass:N0} · reintentos {copyIoRetries:N0}");
             if (!sourceHeatmap.IsEmpty)
             {
                 var top = sourceHeatmap.OrderByDescending(kv => kv.Value).Take(5)
@@ -849,4 +920,94 @@ public static class BibliotecaImportEngine
             host.PipelineQueue($"❌ Importación: {ex.Message}", persistSnapshot: true);
         }
     }
+
+    private static bool TryDeleteFileSafe(string path)
+    {
+        try
+        {
+            if (string.IsNullOrWhiteSpace(path) || !File.Exists(path))
+                return true;
+
+            var attrs = File.GetAttributes(path);
+            if ((attrs & FileAttributes.ReadOnly) != 0)
+                File.SetAttributes(path, attrs & ~FileAttributes.ReadOnly);
+
+            File.Delete(path);
+            return true;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private static int CleanupOriginDirectoryAndParent(string importSrc)
+    {
+        if (string.IsNullOrWhiteSpace(importSrc) || !Directory.Exists(importSrc))
+            return 0;
+
+        int removed = 0;
+        var srcFull = Path.GetFullPath(importSrc)
+            .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+
+        // 1) Limpiar subdirectorios vacíos para permitir borrar la carpeta origen.
+        try
+        {
+            var subDirs = Directory.EnumerateDirectories(srcFull, "*", SearchOption.AllDirectories)
+                .OrderByDescending(static d => d.Length)
+                .ToList();
+            foreach (var d in subDirs)
+            {
+                try
+                {
+                    if (!Directory.EnumerateFileSystemEntries(d).Any())
+                    {
+                        Directory.Delete(d, recursive: false);
+                        removed++;
+                    }
+                }
+                catch { }
+            }
+        }
+        catch { }
+
+        // 2) Borrar carpeta origen si queda vacía.
+        bool srcDeleted = false;
+        try
+        {
+            if (!Directory.EnumerateFileSystemEntries(srcFull).Any())
+            {
+                Directory.Delete(srcFull, recursive: false);
+                removed++;
+                srcDeleted = true;
+            }
+        }
+        catch { }
+
+        // 3) Si origen se borró, borrar padre solo un nivel si quedó vacío.
+        if (srcDeleted)
+        {
+            try
+            {
+                var parent = Directory.GetParent(srcFull)?.FullName;
+                if (!string.IsNullOrWhiteSpace(parent))
+                {
+                    var parentFull = parent.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+                    var root = Path.GetPathRoot(parentFull)?.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+                    if (!string.IsNullOrWhiteSpace(root)
+                        && !string.Equals(parentFull, root, StringComparison.OrdinalIgnoreCase)
+                        && Directory.Exists(parentFull)
+                        && !Directory.EnumerateFileSystemEntries(parentFull).Any())
+                    {
+                        Directory.Delete(parentFull, recursive: false);
+                        removed++;
+                    }
+                }
+            }
+            catch { }
+        }
+
+        return removed;
+    }
+
 }

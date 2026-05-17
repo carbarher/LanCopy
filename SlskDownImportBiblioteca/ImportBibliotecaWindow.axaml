@@ -8,41 +8,46 @@
   <DockPanel Margin="14">
     <StackPanel DockPanel.Dock="Bottom" Orientation="Horizontal" HorizontalAlignment="Right" Spacing="10" Margin="0,12,0,0">
       <Button Name="BtnCancelRun" Content="Cancelar importación" IsVisible="False" Click="BtnCancelRun_Click" />
-      <Button Name="BtnClose" Content="Cerrar" Click="BtnClose_Click" />
-      <Button Name="BtnImport" Content="📥 Importar" Click="BtnImport_Click" />
     </StackPanel>
 
-    <Grid RowDefinitions="Auto,Auto,Auto,Auto,Auto,Auto,*,Auto,Auto" ColumnDefinitions="*,Auto">
+    <Grid RowDefinitions="Auto,Auto,Auto,Auto,Auto,Auto,Auto,*,Auto,Auto" ColumnDefinitions="*,Auto">
       <TextBlock Grid.Row="0" Grid.ColumnSpan="2" TextWrapping="Wrap" Margin="0,0,0,10"
                  Text="Herramienta independiente (sin Soulseek): motor SlskDownBibliotecaImport + Calibre. Usa el mismo config.json que la app principal (%AppData%\SlskDownAvalonia). La verificación completa post-import solo está en la app principal." />
 
-      <TextBlock Grid.Row="1" Grid.Column="0" VerticalAlignment="Center" Text="Origen:" />
-      <Button Grid.Row="1" Grid.Column="1" Content="📂" Click="BtnBrowseSource_Click" />
+      <Border Grid.Row="1" Grid.ColumnSpan="2" Margin="0,0,0,10" Padding="10,8" CornerRadius="6" Background="#16261C" BorderBrush="#2E7D32" BorderThickness="1">
+        <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Spacing="10">
+          <TextBlock VerticalAlignment="Center" Text="Importación de partituras:" Foreground="#B7E4C7" FontWeight="SemiBold" />
+          <Button Name="BtnImport" Content="📥 Importar" Click="BtnImport_Click" Background="#2E7D32" Foreground="White" Padding="18,8" FontWeight="Bold" MinWidth="150" />
+        </StackPanel>
+      </Border>
 
-      <TextBox Grid.Row="2" Grid.ColumnSpan="2" Name="TxtSource" Watermark="Carpeta origen" Margin="0,4,0,8" />
+      <TextBlock Grid.Row="2" Grid.Column="0" VerticalAlignment="Center" Text="Origen:" />
+      <Button Grid.Row="2" Grid.Column="1" Content="📂" Click="BtnBrowseSource_Click" />
 
-      <TextBlock Grid.Row="3" Grid.Column="0" VerticalAlignment="Center" Text="Destino (biblioteca / descargas):" />
-      <Button Grid.Row="3" Grid.Column="1" Content="📂" Click="BtnBrowseDest_Click" />
+      <TextBox Grid.Row="3" Grid.ColumnSpan="2" Name="TxtSource" Watermark="Carpeta origen" Margin="0,4,0,8" />
 
-      <TextBox Grid.Row="4" Grid.ColumnSpan="2" Name="TxtDest" Watermark="Carpeta de descargas" Margin="0,4,0,8" />
+      <TextBlock Grid.Row="4" Grid.Column="0" VerticalAlignment="Center" Text="Destino (biblioteca / descargas):" />
+      <Button Grid.Row="4" Grid.Column="1" Content="📂" Click="BtnBrowseDest_Click" />
 
-      <StackPanel Grid.Row="5" Grid.ColumnSpan="2" Orientation="Horizontal" Spacing="16" Margin="0,4,0,8">
+      <TextBox Grid.Row="5" Grid.ColumnSpan="2" Name="TxtDest" Watermark="Carpeta de descargas" Margin="0,4,0,8" />
+
+      <StackPanel Grid.Row="6" Grid.ColumnSpan="2" Orientation="Horizontal" Spacing="16" Margin="0,4,0,8">
         <TextBlock VerticalAlignment="Center" Text="Modo: Completo (hash dedup + validación PD)" FontWeight="SemiBold" />
         <CheckBox Name="ChkDryRun" Content="Simulación (dry-run)" />
         <CheckBox Name="ChkPipelineVerify" Content="Post: verificación completa" />
         <CheckBox Name="ChkPipelineTxt" Content="Post: TXTs faltantes" />
       </StackPanel>
 
-      <Border Grid.Row="6" Grid.ColumnSpan="2" BorderThickness="1" CornerRadius="4" Margin="0,4,0,8">
+      <Border Grid.Row="7" Grid.ColumnSpan="2" BorderThickness="1" CornerRadius="4" Margin="0,4,0,8">
         <ScrollViewer MaxHeight="280">
           <TextBox Name="TxtLog" IsReadOnly="True" TextWrapping="Wrap" AcceptsReturn="True"
                    BorderThickness="0" MinHeight="200" />
         </ScrollViewer>
       </Border>
 
-      <ProgressBar Grid.Row="7" Grid.ColumnSpan="2" Name="Pb" Height="14" IsVisible="False" Minimum="0" Maximum="100" Value="0" />
+      <ProgressBar Grid.Row="8" Grid.ColumnSpan="2" Name="Pb" Height="14" IsVisible="False" Minimum="0" Maximum="100" Value="0" />
 
-      <TextBlock Grid.Row="8" Grid.ColumnSpan="2" Name="TxtStatus" TextWrapping="Wrap" Margin="0,6,0,0" />
+      <TextBlock Grid.Row="9" Grid.ColumnSpan="2" Name="TxtStatus" TextWrapping="Wrap" Margin="0,6,0,0" />
     </Grid>
   </DockPanel>
 </Window>
