@@ -199,6 +199,7 @@ public class CpdlService
                 ?? GetExtension(link.GetAttributeValue("title", ""))
                 ?? GetExtension(link.ParentNode?.InnerText ?? string.Empty);
             if (ext is null) continue;
+            var format = ext;
 
             if (!LooksLikeDownloadLink(href, link)) continue;
 
@@ -220,7 +221,7 @@ public class CpdlService
 
             files.Add(new PartituraFile
             {
-                Format = ext,
+                Format = format,
                 DownloadUrl = absolute,
                 FileName = fileName
             });

@@ -23,4 +23,15 @@ public sealed class UiState
     public double? OemerParallelScale { get; set; }
     public int? OemerTimeoutHeavyStreak { get; set; }
     public int? AudiverisTimeoutHeavyStreak { get; set; }
+    public int? ValidateDeleteBudgetMs { get; set; }
+    public int? ValidateDeletePerDirBudgetMs { get; set; }
+    public bool? SkipValidationDryRunPrompt { get; set; }
+    public bool? ValidationDefaultDryRun { get; set; }
+    public string? ValidationHistoryFilterText { get; set; }
+    public string? ValidationHistoryMode { get; set; }
+    public string? ValidationHistoryRisk { get; set; }
+    public string? ValidationHistorySort { get; set; }
+    public bool? ValidationHistoryOnlyErrors { get; set; }
+    public bool? ValidationHistoryOnlyMissingSample { get; set; }
+    public int? ValidationHistoryLimit { get; set; }
 }

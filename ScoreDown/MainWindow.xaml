@@ -38,6 +38,14 @@
                 </Trigger>
             </Style.Triggers>
         </Style>
+        <Style x:Key="ShowWhenEnabledButtonStyle" TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
+            <Setter Property="Visibility" Value="Collapsed"/>
+            <Style.Triggers>
+                <Trigger Property="IsEnabled" Value="True">
+                    <Setter Property="Visibility" Value="Visible"/>
+                </Trigger>
+            </Style.Triggers>
+        </Style>
         <Style x:Key="LogActionButtonStyle" TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
             <Setter Property="RenderTransformOrigin" Value="0.5,0.5"/>
             <Setter Property="RenderTransform">
@@ -562,89 +570,181 @@
                         Click="BtnChooseFolder_Click" ToolTip="Seleccionar carpeta"/>
             </Grid>
             <!-- Fila 2: Acciones -->
-            <WrapPanel>
-                <Button x:Name="btnDownloadAllBottom" Content="🚀 Descargar todo"
-                    Margin="0,0,4,0" Padding="10,7" Background="#7C3AED"
-                    Click="BtnDownloadAll_Click"
-                    ToolTip="Un clic: usa fuente Todas, crea carpeta si falta y descarga todo"/>
-                <CheckBox x:Name="chkEnableMutopia" Content="Mutopia"
-                    Margin="0,0,8,0" VerticalAlignment="Center"
-                    IsChecked="True" Checked="SourceToggle_Changed" Unchecked="SourceToggle_Changed"
-                    ToolTip="Habilitar Mutopia en catálogo/descarga"/>
-                <CheckBox x:Name="chkEnableMusopen" Content="Musopen"
-                    Margin="0,0,8,0" VerticalAlignment="Center"
-                    IsChecked="True" Checked="SourceToggle_Changed" Unchecked="SourceToggle_Changed"
-                    ToolTip="Habilitar Musopen en catálogo/descarga"/>
-                <CheckBox x:Name="chkEnableOpenScore" Content="OpenScore"
-                    Margin="0,0,8,0" VerticalAlignment="Center"
-                    IsChecked="True" Checked="SourceToggle_Changed" Unchecked="SourceToggle_Changed"
-                    ToolTip="Habilitar OpenScore (CC0 MusicXML) en catálogo/descarga"/>
-                <Separator Style="{StaticResource {x:Static ToolBar.SeparatorStyleKey}}" Margin="4,0"/>
-                <CheckBox x:Name="chkOnlyClassical" Content="Solo clásica"
-                    Margin="0,0,8,0" VerticalAlignment="Center"
-                    Foreground="#A78BFA"
-                    IsChecked="True"
-                    Checked="FilterChanged" Unchecked="FilterChanged"
-                    ToolTip="Filtrar resultados por repertorio clásico (compositor/título)"/>
-                <Button x:Name="btnExportHtmlBottom" Content="🌐 HTML"
-                    Margin="0,0,4,0" Padding="10,7" Background="#334155"
-                    Click="BtnExportHtml_Click" ToolTip="Exportar resultados a HTML"/>
-                <Button x:Name="btnCancelAllDownloads" Content="⏹ Cancelar"
-                    Margin="0,0,4,0" Padding="10,7" Background="#7F1D1D" IsEnabled="False"
-                    Click="BtnCancelAllDownloads_Click" ToolTip="Cancelar descargas en curso"/>
-                <Button x:Name="btnMusopenSession" Content="🔐 Musopen sesión"
-                    Margin="0,0,4,0" Padding="10,7" Background="#1E3A8A"
-                    Click="BtnMusopenSession_Click" ToolTip="Iniciar sesión en Musopen para poder descargar partituras"/>
-                <Button x:Name="btnConvertAudiveris" Content="🎼 Audiveris"
-                    Margin="0,0,4,0" Padding="10,7" Background="#14532D"
-                    Click="BtnConvertAudiveris_Click"
-                    ToolTip="Convertir PDF/imagen de carpeta destino a MusicXML/MXL (solo los no convertidos)"/>
-                <Button x:Name="btnCancelAudiveris" Content="⏹ Parar"
-                    Margin="0,0,4,0" Padding="10,7" Background="#991B1B"
-                    Click="BtnCancelAudiveris_Click" IsEnabled="False"
-                    ToolTip="Cancelar conversión Audiveris en curso"/>
-                <CheckBox x:Name="chkAutoConvertAudiveris"
-                    Content="🔄 Auto-convertir" Margin="0,0,8,0" VerticalAlignment="Center"
-                    IsChecked="True"
-                    Checked="ChkAutoConvert_Changed" Unchecked="ChkAutoConvert_Changed"
-                    ToolTip="Lanzar Audiveris automáticamente al finalizar cada lote de descargas"/>
-                <Button x:Name="btnConvertOemer" Content="🎵 oemer"
-                    Margin="0,0,4,0" Padding="10,7" Background="#164E63"
-                    Click="BtnConvertOemer_Click"
-                    ToolTip="Convertir PDF/imagen con oemer (pip install oemer) a MusicXML"/>
-                <Button x:Name="btnCancelOemer" Content="⏹ Parar"
-                    Margin="0,0,4,0" Padding="10,7" Background="#991B1B"
-                    Click="BtnCancelOemer_Click" IsEnabled="False"
-                    ToolTip="Cancelar conversión oemer en curso"/>
-                <CheckBox x:Name="chkAutoConvertOemer"
-                    Content="🔄 Auto-oemer" Margin="0,0,8,0" VerticalAlignment="Center"
-                    IsChecked="False"
-                    Checked="ChkAutoConvert_Changed" Unchecked="ChkAutoConvert_Changed"
-                    ToolTip="Lanzar oemer automáticamente al finalizar cada lote de descargas"/>
-                <Button x:Name="btnDeleteAndRedownload" Content="🗑️ Re-descargar"
-                    Margin="0,0,4,0" Padding="10,7" Background="#7F1D1D"
-                    Click="BtnDeleteAndRedownload_Click"
-                    ToolTip="Borra todos los archivos de la carpeta destino y vuelve a descargar todo"/>
-                <Button x:Name="btnValidatePdfs" Content="✅ Comprobar PDF"
-                    Margin="0,0,4,0" Padding="10,7" Background="#5B21B6"
-                    Click="BtnValidatePdfs_Click"
-                    ToolTip="Valida PDFs: borra los inválidos y los ya procesados (con MXL/XML)"/>
-                <Button x:Name="btnValidateOnly" Content="🔍 Solo Validar"
-                    Margin="0,0,4,0" Padding="10,7" Background="#2E5090"
-                    Click="BtnValidateOnly_Click"
-                    ToolTip="Solo valida PDFs sin borrar nada (diagnóstico)"/>
-                <Button x:Name="btnGenerateVideo" Content="🎥 Video"
-                    Margin="0,0,4,0" Padding="10,7" Background="#7C2D12"
-                    Click="BtnGenerateVideo_Click"
-                    ToolTip="Generar vídeo MP4 animado de partituras MSCZ/MXL/XML con score-util (requiere Node.js)"/>
-                <Button x:Name="btnCancelVideo" Content="⏹ Parar"
-                    Margin="0,0,4,0" Padding="10,7" Background="#991B1B"
-                    Click="BtnCancelVideo_Click" IsEnabled="False"
-                    ToolTip="Cancelar generación de vídeo en curso"/>
-                <Button Content="🚪 Salir"
-                    Padding="10,7" Background="#374151"
-                    Click="BtnExit_Click" ToolTip="Cerrar la aplicación"/>
-            </WrapPanel>
+            <StackPanel>
+                <WrapPanel>
+                    <Button x:Name="btnDownloadAllBottom" Content="🚀 Descargar todo"
+                        Margin="0,0,4,0" Padding="10,7" Background="#7C3AED"
+                        Click="BtnDownloadAll_Click"
+                        ToolTip="Un clic: usa fuente Todas, crea carpeta si falta y descarga todo"/>
+                    <CheckBox x:Name="chkEnableMutopia" Content="Mutopia"
+                        Margin="0,0,8,0" VerticalAlignment="Center"
+                        IsChecked="True" Checked="SourceToggle_Changed" Unchecked="SourceToggle_Changed"
+                        ToolTip="Habilitar Mutopia en catálogo/descarga"/>
+                    <CheckBox x:Name="chkEnableMusopen" Content="Musopen"
+                        Margin="0,0,8,0" VerticalAlignment="Center"
+                        IsChecked="True" Checked="SourceToggle_Changed" Unchecked="SourceToggle_Changed"
+                        ToolTip="Habilitar Musopen en catálogo/descarga"/>
+                    <CheckBox x:Name="chkEnableOpenScore" Content="OpenScore"
+                        Margin="0,0,8,0" VerticalAlignment="Center"
+                        IsChecked="True" Checked="SourceToggle_Changed" Unchecked="SourceToggle_Changed"
+                        ToolTip="Habilitar OpenScore (CC0 MusicXML) en catálogo/descarga"/>
+                    <CheckBox x:Name="chkOnlyClassical" Content="Solo clásica"
+                        Margin="0,0,8,0" VerticalAlignment="Center"
+                        Foreground="#A78BFA"
+                        IsChecked="True"
+                        Checked="FilterChanged" Unchecked="FilterChanged"
+                        ToolTip="Filtrar resultados por repertorio clásico (compositor/título)"/>
+                    <Button x:Name="btnValidatePdfs" Content="✅ Validar scores"
+                        Margin="0,0,4,0" Padding="10,7" Background="#5B21B6"
+                        Click="BtnValidatePdfs_Click"
+                        ToolTip="Valida scores PDF: normaliza nombre, detecta inválidos y elimina ya procesados"/>
+                    <Button x:Name="btnCancelValidation" Content="⏹ Parar validación"
+                        Margin="0,0,4,0" Padding="10,7" Background="#991B1B" IsEnabled="False"
+                        Style="{StaticResource ShowWhenEnabledButtonStyle}"
+                        Click="BtnCancelValidation_Click"
+                        ToolTip="Cancelar validación de scores en curso"/>
+                    <Button x:Name="btnCopyValidationSummaryShort" Content="📋 Resumen corto"
+                        Margin="0,0,4,0" Padding="10,7" Background="#475569"
+                        Click="BtnCopyValidationSummaryShort_Click"
+                        ToolTip="Copiar una versión corta del último resumen de validación"/>
+                    <Button x:Name="btnImportScoresFromFolder" Content="📥 Importar carpeta"
+                        Margin="0,0,4,0" Padding="10,7" Background="#0F766E"
+                        Click="BtnImportScoresFromFolder_Click"
+                        ToolTip="Importa partituras desde otra carpeta al destino actual. Borra origen procesado y limpia carpetas vacías"/>
+                    <CheckBox x:Name="chkImportFolderDryRun"
+                        Content="🔍 Simulación"
+                        Margin="0,0,8,0" VerticalAlignment="Center"
+                        IsChecked="False"
+                        ToolTip="No copia ni borra: solo calcula qué archivos se importarían/eliminarían"/>
+                    <Button x:Name="btnCancelAllDownloads" Content="⏹ Cancelar"
+                        Margin="0,0,4,0" Padding="10,7" Background="#7F1D1D" IsEnabled="False"
+                        Style="{StaticResource ShowWhenEnabledButtonStyle}"
+                        Click="BtnCancelAllDownloads_Click" ToolTip="Cancelar descargas en curso"/>
+                    <Button Content="🚪 Salir"
+                        Padding="10,7" Background="#374151"
+                        Click="BtnExit_Click" ToolTip="Cerrar la aplicación"/>
+                </WrapPanel>
+
+                <Expander Header="Herramientas avanzadas" IsExpanded="False" Foreground="#9CA3AF">
+                    <StackPanel Margin="0,6,0,0">
+                        <TextBlock Text="Gestión" Foreground="#94A3B8" Margin="0,0,0,4" FontWeight="SemiBold"/>
+                        <WrapPanel Margin="0,0,0,6">
+                            <Button x:Name="btnExportHtmlBottom" Content="🌐 HTML"
+                                Margin="0,0,4,0" Padding="10,7" Background="#334155"
+                                Click="BtnExportHtml_Click" ToolTip="Exportar resultados a HTML"/>
+                            <Button x:Name="btnMusopenSession" Content="🔐 Musopen sesión"
+                                Margin="0,0,4,0" Padding="10,7" Background="#1E3A8A"
+                                Click="BtnMusopenSession_Click" ToolTip="Iniciar sesión en Musopen para poder descargar partituras"/>
+                            <Button x:Name="btnDeleteAndRedownload" Content="🗑️ Re-descargar"
+                                Margin="0,0,4,0" Padding="10,7" Background="#7F1D1D"
+                                Click="BtnDeleteAndRedownload_Click"
+                                ToolTip="Borra todos los archivos de la carpeta destino y vuelve a descargar todo"/>
+                            <Button x:Name="btnValidateOnly" Content="🔍 Solo Validar"
+                                Margin="0,0,4,0" Padding="10,7" Background="#2E5090"
+                                Click="BtnValidateOnly_Click"
+                                ToolTip="Solo valida PDFs sin borrar nada (diagnóstico)"/>
+                            <Button x:Name="btnCopyValidationSummary" Content="📋 Copiar resumen"
+                                Margin="0,0,4,0" Padding="10,7" Background="#334155"
+                                Click="BtnCopyValidationSummary_Click"
+                                ToolTip="Copiar al portapapeles el último resumen de validación"/>
+                        </WrapPanel>
+                        <WrapPanel Margin="0,0,0,8" VerticalAlignment="Center">
+                            <CheckBox x:Name="chkSkipValidationDryRunPrompt"
+                                      Content="No preguntar dry-run" Margin="0,0,10,0" VerticalAlignment="Center"
+                                      Checked="ValidationPreference_Changed" Unchecked="ValidationPreference_Changed"
+                                      ToolTip="No preguntar antes de validar; usar preferencia guardada."/>
+                            <CheckBox x:Name="chkValidationDefaultDryRun"
+                                      Content="Por defecto simulación" Margin="0,0,12,0" VerticalAlignment="Center"
+                                      Checked="ValidationPreference_Changed" Unchecked="ValidationPreference_Changed"
+                                      ToolTip="Si no se pregunta, usar vista previa en vez de borrado real."/>
+                            <Button x:Name="btnValidationAutoFast" Content="⚡ Auto rápido"
+                                    Margin="0,0,4,0" Padding="10,7" Background="#7C2D12"
+                                    Click="BtnValidationAutoFast_Click"
+                                    ToolTip="Autoajusta límites para terminar antes, con más omitidos potenciales."/>
+                            <Button x:Name="btnValidationAutoSafe" Content="🛡 Auto seguro"
+                                    Margin="0,0,4,0" Padding="10,7" Background="#14532D"
+                                    Click="BtnValidationAutoSafe_Click"
+                                    ToolTip="Autoajusta límites para minimizar omitidos en lotes grandes."/>
+                        </WrapPanel>
+                        <WrapPanel Margin="0,0,0,8" VerticalAlignment="Center">
+                            <TextBlock Text="Presupuesto borrado ms" VerticalAlignment="Center" Foreground="#9CA3AF" Margin="0,0,6,0"/>
+                            <TextBox x:Name="txtValidateDeleteBudgetMs" Width="92" Margin="0,0,10,0"
+                                     TextChanged="ValidationBudgetTextBox_TextChanged"
+                                     PreviewTextInput="ValidationBudgetTextBox_PreviewTextInput"
+                                     DataObject.Pasting="ValidationBudgetTextBox_Pasting"
+                                     ToolTip="Opcional. Límite global de tiempo para borrado/simulación. Vacío = sin límite."/>
+                            <TextBlock Text="Por carpeta ms" VerticalAlignment="Center" Foreground="#9CA3AF" Margin="0,0,6,0"/>
+                            <TextBox x:Name="txtValidateDeletePerDirBudgetMs" Width="92" Margin="0,0,10,0"
+                                     TextChanged="ValidationBudgetTextBox_TextChanged"
+                                     PreviewTextInput="ValidationBudgetTextBox_PreviewTextInput"
+                                     DataObject.Pasting="ValidationBudgetTextBox_Pasting"
+                                     ToolTip="Opcional. Límite por carpeta en fase de borrado/simulación. Vacío = sin límite."/>
+                            <Button x:Name="btnResetValidationBudgets" Content="↺ Restablecer límites"
+                                    Margin="0,0,10,0" Padding="10,7" Background="#475569"
+                                    Click="BtnResetValidationBudgets_Click"
+                                    ToolTip="Limpiar límites de borrado (global y por carpeta)."/>
+                                <Button x:Name="btnValidationPresetConservative" Content="Conservador"
+                                    Margin="0,0,4,0" Padding="10,7" Background="#0F766E"
+                                    Click="BtnValidationPresetConservative_Click"
+                                    ToolTip="Más tiempo de borrado: menos omitidos, más duración."/>
+                                <Button x:Name="btnValidationPresetBalanced" Content="Balanceado"
+                                    Margin="0,0,4,0" Padding="10,7" Background="#1D4ED8"
+                                    Click="BtnValidationPresetBalanced_Click"
+                                    ToolTip="Equilibrio entre tiempo total y omitidos."/>
+                                <Button x:Name="btnValidationPresetAggressive" Content="Agresivo"
+                                    Margin="0,0,10,0" Padding="10,7" Background="#B45309"
+                                    Click="BtnValidationPresetAggressive_Click"
+                                    ToolTip="Menos tiempo de borrado: más rápido, más omitidos."/>
+                            <TextBlock Text="(vacío = sin límite)" VerticalAlignment="Center" Foreground="#6B7280"/>
+                        </WrapPanel>
+
+                        <TextBlock Text="OMR" Foreground="#94A3B8" Margin="0,0,0,4" FontWeight="SemiBold"/>
+                        <WrapPanel Margin="0,0,0,6">
+                            <Button x:Name="btnConvertAudiveris" Content="🎼 Audiveris"
+                                Margin="0,0,4,0" Padding="10,7" Background="#14532D"
+                                Click="BtnConvertAudiveris_Click"
+                                ToolTip="Convertir PDF/imagen de carpeta destino a MusicXML/MXL (solo los no convertidos)"/>
+                            <Button x:Name="btnCancelAudiveris" Content="⏹ Parar Audiveris"
+                                Margin="0,0,4,0" Padding="10,7" Background="#991B1B"
+                                Style="{StaticResource ShowWhenEnabledButtonStyle}"
+                                Click="BtnCancelAudiveris_Click" IsEnabled="False"
+                                ToolTip="Cancelar conversión Audiveris en curso"/>
+                            <CheckBox x:Name="chkAutoConvertAudiveris"
+                                Content="🔄 Auto-convertir" Margin="0,0,8,0" VerticalAlignment="Center"
+                                IsChecked="True"
+                                Checked="ChkAutoConvert_Changed" Unchecked="ChkAutoConvert_Changed"
+                                ToolTip="Lanzar Audiveris automáticamente al finalizar cada lote de descargas"/>
+                            <Button x:Name="btnConvertOemer" Content="🎵 oemer"
+                                Margin="0,0,4,0" Padding="10,7" Background="#164E63"
+                                Click="BtnConvertOemer_Click"
+                                ToolTip="Convertir PDF/imagen con oemer (pip install oemer) a MusicXML"/>
+                            <Button x:Name="btnCancelOemer" Content="⏹ Parar oemer"
+                                Margin="0,0,4,0" Padding="10,7" Background="#991B1B"
+                                Style="{StaticResource ShowWhenEnabledButtonStyle}"
+                                Click="BtnCancelOemer_Click" IsEnabled="False"
+                                ToolTip="Cancelar conversión oemer en curso"/>
+                            <CheckBox x:Name="chkAutoConvertOemer"
+                                Content="🔄 Auto-oemer" Margin="0,0,8,0" VerticalAlignment="Center"
+                                IsChecked="False"
+                                Checked="ChkAutoConvert_Changed" Unchecked="ChkAutoConvert_Changed"
+                                ToolTip="Lanzar oemer automáticamente al finalizar cada lote de descargas"/>
+                        </WrapPanel>
+
+                        <TextBlock Text="Video" Foreground="#94A3B8" Margin="0,0,0,4" FontWeight="SemiBold"/>
+                        <WrapPanel>
+                            <Button x:Name="btnGenerateVideo" Content="🎥 Video"
+                                Margin="0,0,4,0" Padding="10,7" Background="#7C2D12"
+                                Click="BtnGenerateVideo_Click"
+                                ToolTip="Generar vídeo MP4 animado de partituras MSCZ/MXL/XML con score-util (requiere Node.js)"/>
+                            <Button x:Name="btnCancelVideo" Content="⏹ Parar video"
+                                Margin="0,0,4,0" Padding="10,7" Background="#991B1B"
+                                Style="{StaticResource ShowWhenEnabledButtonStyle}"
+                                Click="BtnCancelVideo_Click" IsEnabled="False"
+                                ToolTip="Cancelar generación de vídeo en curso"/>
+                        </WrapPanel>
+                    </StackPanel>
+                </Expander>
+            </StackPanel>
             <!-- Botones ocultos usados por code-behind -->
             <StackPanel Visibility="Collapsed">
                 <Button x:Name="btnDownload" Content="⬇ Descargar seleccionados"
@@ -690,6 +790,43 @@
                            HorizontalAlignment="Left" Margin="0,2,0,0"
                            Foreground="#F87171" FontSize="10" Text=""
                            ToolTip="Errores por tipo en sesión actual"/>
+                <TextBlock x:Name="txtValidationBudgetStatus" Grid.Row="1" Grid.Column="0"
+                           HorizontalAlignment="Center" Margin="120,2,120,0"
+                           Foreground="#9CA3AF" FontSize="10" Text="Validación: límites sin configurar"
+                           TextTrimming="CharacterEllipsis"
+                           ToolTip="Límites activos para validación de scores"/>
+                <TextBlock x:Name="txtValidationLiveStatus" Grid.Row="0" Grid.Column="0"
+                           HorizontalAlignment="Center" Margin="220,0,220,0"
+                           Foreground="#FDE68A" FontSize="10" Text=""
+                           TextTrimming="CharacterEllipsis"
+                           Visibility="Collapsed"
+                           ToolTip="Estado en vivo de validación"/>
+                <StackPanel Grid.Row="1" Grid.Column="1" Margin="0,2,0,0">
+                    <DockPanel LastChildFill="True">
+                        <TextBlock x:Name="txtValidationPhaseCounter"
+                                   DockPanel.Dock="Right"
+                                   Margin="6,-4,0,0"
+                                   Foreground="#F59E0B"
+                                   FontSize="9"
+                                   Visibility="Collapsed"/>
+                        <ProgressBar x:Name="pbValidationPhaseProgress"
+                                     Height="5" Minimum="0" Maximum="100"
+                                     Foreground="#F59E0B" Background="#2D2D44" BorderThickness="0"
+                                     Visibility="Collapsed"/>
+                    </DockPanel>
+                    <DockPanel LastChildFill="True" Margin="0,2,0,0">
+                        <TextBlock x:Name="txtDeletePhaseCounter"
+                                   DockPanel.Dock="Right"
+                                   Margin="6,-4,0,0"
+                                   Foreground="#EF4444"
+                                   FontSize="9"
+                                   Visibility="Collapsed"/>
+                        <ProgressBar x:Name="pbDeletePhaseProgress"
+                                     Height="5" Minimum="0" Maximum="100"
+                                     Foreground="#EF4444" Background="#2D2D44" BorderThickness="0"
+                                     Visibility="Collapsed"/>
+                    </DockPanel>
+                </StackPanel>
                 <ProgressBar x:Name="pbFileProgress" Grid.Row="1" Grid.Column="1"
                              Height="5" Minimum="0" Maximum="100" Margin="0,2,0,0"
                              Foreground="#A78BFA" Background="#2D2D44" BorderThickness="0"
@@ -712,6 +849,7 @@
                             <RowDefinition Height="Auto"/>
                             <RowDefinition Height="90"/>
                             <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="90"/>
                             <RowDefinition Height="Auto"/>
                             <RowDefinition Height="*" MinHeight="60"/>
                             <RowDefinition Height="Auto"/>
@@ -756,7 +894,172 @@
                                 </DataTemplate>
                             </ListBox.ItemTemplate>
                         </ListBox>
-                        <DockPanel Grid.Row="4" Margin="8,0,8,4">
+                        <TextBlock Grid.Row="4" Text="🧪 Validaciones" Foreground="#FDE68A" Margin="8,0,8,4" FontWeight="SemiBold"/>
+                        <DockPanel Grid.Row="5" Margin="6,0,6,6" LastChildFill="True">
+                            <WrapPanel DockPanel.Dock="Top" Margin="0,0,0,6">
+                                <TextBlock x:Name="txtValidationHistoryStats"
+                                           Margin="0,0,8,4"
+                                           VerticalAlignment="Center"
+                                           Foreground="#9CA3AF"
+                                           FontSize="9"
+                                           Text="0/0"
+                                           ToolTip="Entradas visibles / total"/>
+                                <TextBox x:Name="txtValidationHistoryFilter"
+                                         Width="88"
+                                         Margin="0,0,4,4"
+                                         TextChanged="ValidationHistoryFilter_Changed"
+                                         ToolTip="Filtrar historial de validaciones"/>
+                                <ComboBox x:Name="cmbValidationHistoryMode"
+                                          Width="92"
+                                          Margin="0,0,4,4"
+                                          SelectionChanged="ValidationHistoryFilter_Changed"
+                                          SelectedIndex="0"
+                                          ToolTip="Filtrar tipo de validación">
+                                    <ComboBoxItem>Todos</ComboBoxItem>
+                                    <ComboBoxItem>Diagnóstico</ComboBoxItem>
+                                    <ComboBoxItem>Vista previa</ComboBoxItem>
+                                    <ComboBoxItem>Borrado</ComboBoxItem>
+                                </ComboBox>
+                                <ComboBox x:Name="cmbValidationHistorySort"
+                                          Width="86"
+                                          Margin="0,0,4,4"
+                                          SelectionChanged="ValidationHistoryFilter_Changed"
+                                          SelectedIndex="0"
+                                          ToolTip="Orden del historial">
+                                    <ComboBoxItem>Fecha</ComboBoxItem>
+                                    <ComboBoxItem>Tipo</ComboBoxItem>
+                                    <ComboBoxItem>Riesgo</ComboBoxItem>
+                                    <ComboBoxItem>Inválidos</ComboBoxItem>
+                                    <ComboBoxItem>Errores</ComboBoxItem>
+                                </ComboBox>
+                                <ComboBox x:Name="cmbValidationHistoryRisk"
+                                          Width="76"
+                                          Margin="0,0,4,4"
+                                          SelectionChanged="ValidationHistoryFilter_Changed"
+                                          SelectedIndex="0"
+                                          ToolTip="Filtrar por riesgo">
+                                    <ComboBoxItem>Riesgo</ComboBoxItem>
+                                    <ComboBoxItem>Rojo</ComboBoxItem>
+                                    <ComboBoxItem>Amarillo</ComboBoxItem>
+                                    <ComboBoxItem>Verde</ComboBoxItem>
+                                </ComboBox>
+                                <CheckBox x:Name="chkValidationHistoryOnlyErrors"
+                                          Content="Err"
+                                          Margin="0,0,6,4"
+                                          VerticalAlignment="Center"
+                                          Checked="ValidationHistoryFilter_Changed"
+                                          Unchecked="ValidationHistoryFilter_Changed"
+                                          ToolTip="Mostrar solo validaciones con errores"/>
+                                <CheckBox x:Name="chkValidationHistoryOnlyMissingSample"
+                                          Content="Sin archivo"
+                                          Margin="0,0,6,4"
+                                          VerticalAlignment="Center"
+                                          Checked="ValidationHistoryFilter_Changed"
+                                          Unchecked="ValidationHistoryFilter_Changed"
+                                          ToolTip="Mostrar solo validaciones cuyo archivo ejemplo ya no existe"/>
+                                <TextBox x:Name="txtValidationHistoryLimit"
+                                         Width="42"
+                                         Margin="0,0,4,4"
+                                         Text="20"
+                                         PreviewTextInput="ValidationHistoryLimit_PreviewTextInput"
+                                         TextChanged="ValidationHistoryFilter_Changed"
+                                         ToolTip="Máximo de entradas guardadas"/>
+                                <Button x:Name="btnClearValidationHistory"
+                                        Content="🧹"
+                                        Margin="0,0,0,4"
+                                        Padding="5,2"
+                                        Background="#374151"
+                                        Click="BtnClearValidationHistory_Click"
+                                        ToolTip="Vaciar historial de validaciones"/>
+                            </WrapPanel>
+                            <ListBox x:Name="lstValidationHistory" BorderThickness="0"
+                                     MouseDoubleClick="LstValidationHistory_MouseDoubleClick">
+                                <ListBox.ContextMenu>
+                                    <ContextMenu>
+                                        <MenuItem Header="📂 Abrir carpeta validada" Click="CtxValidationHistoryOpenFolder_Click"/>
+                                        <MenuItem Header="🎯 Seleccionar archivo ejemplo" Click="CtxValidationHistorySelectFile_Click"/>
+                                        <MenuItem Header="🔁 Revalidar muestra" Click="CtxValidationHistoryRevalidateSample_Click"/>
+                                        <MenuItem Header="📋 Copiar ruta carpeta" Click="CtxValidationHistoryCopyFolderPath_Click"/>
+                                        <MenuItem Header="📋 Copiar ruta archivo" Click="CtxValidationHistoryCopySamplePath_Click"/>
+                                        <MenuItem Header="👁 Ver detalle" Click="CtxValidationHistoryShowDetail_Click"/>
+                                        <MenuItem Header="📋 Copiar resumen" Click="CtxValidationHistoryCopySummary_Click"/>
+                                        <MenuItem Header="📄 Copiar detalle" Click="CtxValidationHistoryCopyDetail_Click"/>
+                                        <MenuItem Header="↻ Repetir validación" Click="CtxValidationHistoryRepeat_Click"/>
+                                        <Separator/>
+                                        <MenuItem Header="🧹 Limpiar historial" Click="BtnClearValidationHistory_Click"/>
+                                    </ContextMenu>
+                                </ListBox.ContextMenu>
+                                <ListBox.ItemTemplate>
+                                    <DataTemplate>
+                                        <Border Margin="0,0,0,4" Padding="6" CornerRadius="6" BorderThickness="1"
+                                                ToolTip="{Binding TooltipText}">
+                                            <Border.Style>
+                                                <Style TargetType="Border">
+                                                    <Setter Property="Background" Value="#111827"/>
+                                                    <Setter Property="BorderBrush" Value="#1F2937"/>
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding Kind}" Value="Diagnostic">
+                                                            <Setter Property="Background" Value="#0F172A"/>
+                                                            <Setter Property="BorderBrush" Value="#1D4ED8"/>
+                                                        </DataTrigger>
+                                                        <DataTrigger Binding="{Binding Kind}" Value="Preview">
+                                                            <Setter Property="Background" Value="#1C1917"/>
+                                                            <Setter Property="BorderBrush" Value="#D97706"/>
+                                                        </DataTrigger>
+                                                        <DataTrigger Binding="{Binding Kind}" Value="Delete">
+                                                            <Setter Property="Background" Value="#1F1414"/>
+                                                            <Setter Property="BorderBrush" Value="#DC2626"/>
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </Border.Style>
+                                            <StackPanel>
+                                                <DockPanel Margin="0,0,0,3">
+                                                    <Border DockPanel.Dock="Left" Padding="5,1" CornerRadius="4" Margin="0,0,6,0">
+                                                        <Border.Style>
+                                                            <Style TargetType="Border">
+                                                                <Setter Property="Background" Value="#334155"/>
+                                                                <Style.Triggers>
+                                                                    <DataTrigger Binding="{Binding Kind}" Value="Diagnostic">
+                                                                        <Setter Property="Background" Value="#1D4ED8"/>
+                                                                    </DataTrigger>
+                                                                    <DataTrigger Binding="{Binding Kind}" Value="Preview">
+                                                                        <Setter Property="Background" Value="#D97706"/>
+                                                                    </DataTrigger>
+                                                                    <DataTrigger Binding="{Binding Kind}" Value="Delete">
+                                                                        <Setter Property="Background" Value="#DC2626"/>
+                                                                    </DataTrigger>
+                                                                </Style.Triggers>
+                                                            </Style>
+                                                        </Border.Style>
+                                                        <TextBlock Text="{Binding ModeLabel}" Foreground="White" FontSize="9" FontWeight="SemiBold"/>
+                                                    </Border>
+                                                    <Border DockPanel.Dock="Left" Margin="0,0,6,0" Padding="5,1" CornerRadius="4" Background="#7C2D12"
+                                                            Visibility="{Binding InvalidBadgeVisibility}">
+                                                        <TextBlock Text="{Binding InvalidBadgeText}" Foreground="#FED7AA" FontSize="9" FontWeight="SemiBold"/>
+                                                    </Border>
+                                                    <Border DockPanel.Dock="Left" Margin="0,0,6,0" Padding="5,1" CornerRadius="4" Background="#7F1D1D"
+                                                            Visibility="{Binding ErrorBadgeVisibility}">
+                                                        <TextBlock Text="{Binding ErrorBadgeText}" Foreground="#FECACA" FontSize="9" FontWeight="SemiBold"/>
+                                                    </Border>
+                                                    <TextBlock Text="{Binding SampleFileStatusGlyph}"
+                                                               Foreground="{Binding SampleFileStatusBrush}"
+                                                               Margin="0,0,6,0"
+                                                               VerticalAlignment="Center"
+                                                               FontSize="10"
+                                                               ToolTip="{Binding SampleFileStatusText}"/>
+                                                    <TextBlock Text="{Binding Title}" Foreground="#E5E7EB" TextTrimming="CharacterEllipsis" FontSize="11" FontWeight="SemiBold"/>
+                                                </DockPanel>
+                                                <TextBlock Text="{Binding Summary}" Foreground="#FCD34D" FontSize="10" TextTrimming="CharacterEllipsis"/>
+                                                <TextBlock Text="{Binding MetricsLine}" Foreground="#94A3B8" FontSize="9" Margin="0,2,0,0" TextTrimming="CharacterEllipsis"/>
+                                                <TextBlock Text="{Binding LocationLine}" Foreground="#6B7280" FontSize="9" TextTrimming="CharacterEllipsis"/>
+                                            </StackPanel>
+                                        </Border>
+                                    </DataTemplate>
+                                </ListBox.ItemTemplate>
+                            </ListBox>
+                        </DockPanel>
+                        <DockPanel Grid.Row="6" Margin="8,0,8,4">
                             <Button x:Name="btnResetAudiverisCooldown" DockPanel.Dock="Right"
                                     Content="🔄" FontSize="9" Padding="4,1" Background="Transparent"
                                     Foreground="#6B7280" BorderThickness="0" Cursor="Hand"
@@ -764,8 +1067,8 @@
                                     Click="BtnResetAudiverisCooldown_Click"/>
                             <TextBlock Text="🎼 Audiveris procesados" Foreground="#34D399" FontWeight="SemiBold" VerticalAlignment="Center"/>
                         </DockPanel>
-                        <TextBlock x:Name="txtAudiverisStatus" Grid.Row="5" Foreground="#6B7280" FontSize="9" Margin="8,0,8,2" TextTrimming="CharacterEllipsis"/>
-                        <ListBox x:Name="lstAudiverisLog" Grid.Row="6" Margin="6,0,6,6" BorderThickness="0">
+                        <TextBlock x:Name="txtAudiverisStatus" Grid.Row="7" Foreground="#6B7280" FontSize="9" Margin="8,0,8,2" TextTrimming="CharacterEllipsis"/>
+                        <ListBox x:Name="lstAudiverisLog" Grid.Row="8" Margin="6,0,6,6" BorderThickness="0">
                             <ListBox.ItemTemplate>
                                 <DataTemplate>
                                     <StackPanel Margin="2,2">
@@ -775,7 +1078,7 @@
                                 </DataTemplate>
                             </ListBox.ItemTemplate>
                         </ListBox>
-                        <DockPanel Grid.Row="7" Margin="8,0,8,4">
+                        <DockPanel Grid.Row="9" Margin="8,0,8,4">
                             <Button x:Name="btnResetOemerCooldown" DockPanel.Dock="Right"
                                     Content="🔄" FontSize="9" Padding="4,1" Background="Transparent"
                                     Foreground="#6B7280" BorderThickness="0" Cursor="Hand"
@@ -783,8 +1086,8 @@
                                     Click="BtnResetOemerCooldown_Click"/>
                             <TextBlock Text="🎵 oemer procesados" Foreground="#7DD3FC" FontWeight="SemiBold" VerticalAlignment="Center"/>
                         </DockPanel>
-                        <TextBlock x:Name="txtOemerStatus" Grid.Row="8" Foreground="#6B7280" FontSize="9" Margin="8,0,8,2" TextTrimming="CharacterEllipsis"/>
-                        <ListBox x:Name="lstOemerLog" Grid.Row="9" Margin="6,0,6,6" BorderThickness="0">
+                        <TextBlock x:Name="txtOemerStatus" Grid.Row="10" Foreground="#6B7280" FontSize="9" Margin="8,0,8,2" TextTrimming="CharacterEllipsis"/>
+                        <ListBox x:Name="lstOemerLog" Grid.Row="11" Margin="6,0,6,6" BorderThickness="0">
                             <ListBox.ItemTemplate>
                                 <DataTemplate>
                                     <StackPanel Margin="2,2">

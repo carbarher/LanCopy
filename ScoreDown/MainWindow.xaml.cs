@@ -26,6 +26,11 @@ namespace ScoreDown;
 
 public partial class MainWindow : Window, IAsyncDisposable
 {
+    private static readonly HashSet<string> ScoreImportExtensions = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ".pdf", ".mxl", ".mscz", ".mscx", ".xml", ".musicxml", ".mid", ".midi"
+    };
+
     private sealed class SourceStats
     {
         public DateTime StartedUtc = DateTime.UtcNow;
@@ -44,6 +49,82 @@ public partial class MainWindow : Window, IAsyncDisposable
         public int CancelledFiles;
     }
 
+    private sealed class ValidationHistoryItem
+    {
+        public string Title { get; set; } = string.Empty;
+        public string Summary { get; set; } = string.Empty;
+        public string Detail { get; set; } = string.Empty;
+        public string Kind { get; set; } = string.Empty;
+        public string DestinationFolder { get; set; } = string.Empty;
+        public string SampleFilePath { get; set; } = string.Empty;
+        public string RiskHint { get; set; } = string.Empty;
+        public DateTime CreatedUtc { get; set; }
+        public int TotalPdfs { get; set; }
+        public int InvalidPdfs { get; set; }
+        public int ProcessedPdfs { get; set; }
+        public int DeletedCount { get; set; }
+        public int DeleteErrorsCount { get; set; }
+        public bool HasInvalids => InvalidPdfs > 0;
+        public bool HasErrors => DeleteErrorsCount > 0;
+        public Visibility InvalidBadgeVisibility => HasInvalids ? Visibility.Visible : Visibility.Collapsed;
+        public Visibility ErrorBadgeVisibility => HasErrors ? Visibility.Visible : Visibility.Collapsed;
+        public string InvalidBadgeText => $"Inv {InvalidPdfs}";
+        public string ErrorBadgeText => $"Err {DeleteErrorsCount}";
+        public int InvalidSortRank => -InvalidPdfs;
+        public int ErrorSortRank => -DeleteErrorsCount;
+        public int KindSortRank => Kind switch
+        {
+            "Delete" => 0,
+            "Preview" => 1,
+            "Diagnostic" => 2,
+            _ => 9
+        };
+        public int RiskSortRank => RiskHint.StartsWith("🔴", StringComparison.Ordinal) ? 0
+            : RiskHint.StartsWith("🟡", StringComparison.Ordinal) ? 1
+            : RiskHint.StartsWith("🟢", StringComparison.Ordinal) ? 2
+            : 9;
+        public string ModeLabel => Kind switch
+        {
+            "Diagnostic" => "Diagnóstico",
+            "Preview" => "Vista previa",
+            "Delete" => "Borrado",
+            _ => "Validación"
+        };
+        public string MetricsLine => $"PDF {TotalPdfs} · inv {InvalidPdfs} · proc {ProcessedPdfs} · borr {DeletedCount} · err {DeleteErrorsCount}";
+        public string SampleFileLabel => string.IsNullOrWhiteSpace(SampleFilePath) ? string.Empty : Path.GetFileName(SampleFilePath);
+        public bool SampleFileExists => !string.IsNullOrWhiteSpace(SampleFilePath) && File.Exists(SampleFilePath);
+        public string SampleFileStatusGlyph => string.IsNullOrWhiteSpace(SampleFilePath) ? "•" : SampleFileExists ? "●" : "○";
+        public System.Windows.Media.Brush SampleFileStatusBrush => SampleFileExists ? System.Windows.Media.Brushes.LimeGreen : System.Windows.Media.Brushes.OrangeRed;
+        public string SampleFileStatusText => string.IsNullOrWhiteSpace(SampleFilePath)
+            ? "Sin archivo ejemplo guardado"
+            : SampleFileExists ? "Archivo ejemplo disponible" : "Archivo ejemplo ya no existe";
+        public string LocationLine
+        {
+            get
+            {
+                var parts = new List<string>(3);
+                if (!string.IsNullOrWhiteSpace(DestinationFolder)) parts.Add($"📁 {DestinationFolder}");
+                if (!string.IsNullOrWhiteSpace(SampleFileLabel)) parts.Add($"📄 {SampleFileLabel}");
+                if (!string.IsNullOrWhiteSpace(RiskHint)) parts.Add(RiskHint);
+                return string.Join(" · ", parts);
+            }
+        }
+        public string TooltipText
+        {
+            get
+            {
+                var parts = new List<string>(5);
+                if (!string.IsNullOrWhiteSpace(Title)) parts.Add(Title);
+                if (!string.IsNullOrWhiteSpace(Summary)) parts.Add(Summary);
+                if (!string.IsNullOrWhiteSpace(DestinationFolder)) parts.Add($"Carpeta: {DestinationFolder}");
+                if (!string.IsNullOrWhiteSpace(SampleFilePath)) parts.Add($"Archivo ejemplo: {SampleFilePath}");
+                if (!string.IsNullOrWhiteSpace(RiskHint)) parts.Add(RiskHint);
+                if (!string.IsNullOrWhiteSpace(Detail)) parts.Add(string.Empty + Detail);
+                return string.Join(Environment.NewLine, parts.Where(p => !string.IsNullOrWhiteSpace(p)));
+            }
+        }
+    }
+
     private readonly MutopiaService _mutopia = new();
     private readonly MusopenService _musopen = new();
     private readonly OpenScoreService _openScore = new();
@@ -52,10 +133,12 @@ public partial class MainWindow : Window, IAsyncDisposable
     private readonly ObservableCollection<PartituraItem> _allResults = new();
     private readonly ObservableCollection<DownloadQueueItem> _downloadQueue = [];
     private readonly ObservableCollection<DownloadHistoryItem> _downloadHistory = [];
+    private readonly ObservableCollection<ValidationHistoryItem> _validationHistory = [];
     private readonly ObservableCollection<AudiverisLogItem> _audiverisLog = [];
     private string _currentDestFolder = string.Empty;
     // R8: CollectionViewSource wraps _allResults; ApplyFilter() only refreshes the view.
     private readonly CollectionViewSource _resultsView = new();
+    private readonly CollectionViewSource _validationHistoryView = new();
     private List<PartituraItem> _filtered = new();
     private List<PartituraItem> _offlineLibraryItems = [];
     // R7: thread-safe cache (concurrent searches from Task.WhenAll)
@@ -85,6 +168,9 @@ public partial class MainWindow : Window, IAsyncDisposable
     private readonly string _downloadHistoryPath = Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
         "ScoreDown", "download-history.json");
+    private readonly string _validationHistoryPath = Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+        "ScoreDown", "validation-history.json");
     private readonly string _offlineLibraryPath = Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
         "ScoreDown", "offline-library.json");
@@ -152,6 +238,9 @@ public partial class MainWindow : Window, IAsyncDisposable
     private CancellationTokenSource? _searchCts;
     private CancellationTokenSource? _downloadCts;
     private CancellationTokenSource? _catalogCts;
+    private CancellationTokenSource? _validationCts;
+    private string _lastValidationSummary = string.Empty;
+    private string _lastValidationShortSummary = string.Empty;
     // CPDL removido.
     // Dedup set para catálogo — O(1) lookup vs O(N²) .Any()
     // NOTE: was a field (_catalogSeenKeys) — moved to local variable inside DoFetchCatalogAsync
@@ -343,9 +432,13 @@ public partial class MainWindow : Window, IAsyncDisposable
         _tagFilterDebounce.Tick += OnTagFilterDebounceTick;
 
         LoadUiState();
+        UpdateValidationBudgetStatus();
         // R8: wire CollectionViewSource to _allResults
         _resultsView.Source = _allResults;
         lstResults.ItemsSource = _resultsView.View;
+        _validationHistoryView.Source = _validationHistory;
+        _validationHistoryView.Filter += ValidationHistoryView_Filter;
+        ApplyValidationHistorySort();
 
         // Production features initialization
         _fileLogger = new FileLoggingService();
@@ -363,6 +456,7 @@ public partial class MainWindow : Window, IAsyncDisposable
         LoadSearchHistory();
         LoadTags();
         LoadDownloadHistory();
+        LoadValidationHistory();
         LoadOfflineLibrary();
         LoadAudiverisPageFailures();
         LoadAudiverisTimeoutFamilies();
@@ -376,6 +470,7 @@ public partial class MainWindow : Window, IAsyncDisposable
         UpdateCacheStats();
         lstQueue.ItemsSource = _downloadQueue;
         lstDownloadHistory.ItemsSource = _downloadHistory;
+        lstValidationHistory.ItemsSource = _validationHistoryView.View;
         lstAudiverisLog.ItemsSource = _audiverisLog;
         LoadOemerPageFailures();
         LoadOemerTimeoutFamilies();
@@ -1089,42 +1184,94 @@ public partial class MainWindow : Window, IAsyncDisposable
     }
 
     private async void BtnValidatePdfs_Click(object sender, RoutedEventArgs e)
+        => await RunValidationWorkflowAsync(null);
+
+    private async void BtnValidateOnly_Click(object sender, RoutedEventArgs e)
+        => await RunValidationWorkflowAsync("Diagnostic");
+
+    private async Task RunValidationWorkflowAsync(string? forcedKind)
     {
         var destFolder = txtDestFolder.Text?.Trim();
         if (string.IsNullOrWhiteSpace(destFolder) || !Directory.Exists(destFolder))
         {
-            DarkDialogService.ShowMessage(this, "Selecciona una carpeta de destino válida.", "Comprobar PDF", MessageBoxButton.OK, MessageBoxImage.Warning);
+            DarkDialogService.ShowMessage(this, "Selecciona una carpeta de destino válida.", GetValidationWindowTitle(forcedKind), MessageBoxButton.OK, MessageBoxImage.Warning);
             return;
         }
 
-        // Validar acceso a la carpeta
-        try
+        var diagnosticOnly = string.Equals(forcedKind, "Diagnostic", StringComparison.OrdinalIgnoreCase);
+        if (!diagnosticOnly)
         {
-            var testFile = Path.Combine(destFolder, ".scoredown-write-test");
-            File.WriteAllText(testFile, "test");
-            File.Delete(testFile);
+            try
+            {
+                var testFile = Path.Combine(destFolder, ".scoredown-write-test");
+                File.WriteAllText(testFile, "test");
+                File.Delete(testFile);
+            }
+            catch (UnauthorizedAccessException)
+            {
+                DarkDialogService.ShowMessage(this, "Permisos insuficientes en la carpeta destino.", GetValidationWindowTitle(forcedKind), MessageBoxButton.OK, MessageBoxImage.Error);
+                return;
+            }
+            catch
+            {
+            }
         }
-        catch (UnauthorizedAccessException)
-        {
-            DarkDialogService.ShowMessage(this, "Permisos insuficientes en la carpeta destino.", "Comprobar PDF", MessageBoxButton.OK, MessageBoxImage.Error);
+
+        if (!TryApplyValidationDeleteBudgetOverrides())
             return;
+
+        Log(GetValidationBudgetSummaryLine());
+
+        var estimatedPdfCount = CountPdfFilesSafe(destFolder);
+        var riskLine = BuildValidationRiskHint(estimatedPdfCount);
+        if (estimatedPdfCount > 0)
+            UpdateValidationBudgetStatus($"{riskLine} · autoajuste manual disponible");
+
+        var validationCts = BeginValidationSession();
+        if (validationCts is null)
+            return;
+
+        var dryRun = false;
+        if (!diagnosticOnly)
+        {
+            bool? resolvedDryRun = forcedKind switch
+            {
+                null => ResolveValidationDryRunChoice(riskLine),
+                "Preview" => true,
+                "Delete" => false,
+                _ => ResolveValidationDryRunChoice(riskLine)
+            };
+
+            if (!resolvedDryRun.HasValue)
+            {
+                EndValidationSession();
+                return;
+            }
+
+            dryRun = resolvedDryRun.Value;
+
+            if (!dryRun && riskLine.StartsWith("🔴", StringComparison.Ordinal))
+            {
+                var confirmRed = DarkDialogService.ShowMessage(
+                    this,
+                    $"Riesgo alto detectado. Se recomienda vista previa primero.\n\n{riskLine}\n\n¿Aun así quieres borrar directamente?",
+                    "Confirmación extra",
+                    MessageBoxButton.YesNo,
+                    MessageBoxImage.Warning);
+                if (confirmRed != MessageBoxResult.Yes)
+                {
+                    EndValidationSession();
+                    return;
+                }
+            }
+
+            var modeLabel = dryRun ? "[VISTA PREVIA]" : string.Empty;
+            Log($"🔍 {modeLabel} Comprobando PDFs en {destFolder}...");
         }
-        catch { /* Ignorar otros errores en el test */ }
-
-        btnValidatePdfs.IsEnabled = false;
-
-        // Preguntar si dry-run
-        var dryRunMsg = DarkDialogService.ShowMessage(
-            this,
-            "¿Ver vista previa sin borrar archivos?\n\n✅ Sí = mostrar qué se borraría\n❌ No = borrar directamente",
-            "Comprobar PDF",
-            MessageBoxButton.YesNo,
-            MessageBoxImage.Question);
-
-        var dryRun = dryRunMsg == MessageBoxResult.Yes;
-        var modeLabel = dryRun ? "[VISTA PREVIA]" : string.Empty;
-
-        Log($"🔍 {modeLabel} Comprobando PDFs en {destFolder}...");
+        else
+        {
+            Log($"🔍 Validando PDFs en {destFolder} (solo diagnóstico, sin borrar)...");
+        }
 
         try
         {
@@ -1133,83 +1280,21 @@ public partial class MainWindow : Window, IAsyncDisposable
             {
                 Dispatcher.Invoke(() =>
                 {
+                    UpdateValidationLiveCounter(item.message, item.done, item.total);
                     Log(item.message);
                 });
             });
 
-            var result = await validator.ValidateAndDeletePdfsAsync(destFolder, progress, dryRun, CancellationToken.None).ConfigureAwait(false);
-
-            Dispatcher.Invoke(() =>
+            if (diagnosticOnly)
             {
-                var summary = new System.Text.StringBuilder();
-                summary.AppendLine($"📊 {modeLabel} Resumen de validación:");
-                summary.AppendLine($"  • Total PDFs encontrados: {result.TotalPdfs}");
-                summary.AppendLine($"  • PDFs inválidos: {result.InvalidPdfs}");
-                summary.AppendLine($"  • PDFs ya procesados: {result.ProcessedPdfs}");
-
-                if (!dryRun)
-                {
-                    summary.AppendLine($"  • Borrados inválidos: {result.DeletedInvalid} ✅");
-                    summary.AppendLine($"  • Borrados procesados: {result.DeletedProcessed} ✅");
-                    summary.AppendLine($"  • Espacio liberado: {FormatBytes(result.BytesFreed)}");
-
-                    if (result.DeletionErrors.Count > 0)
-                    {
-                        summary.AppendLine($"\n⚠️ Errores de borrado ({result.DeletionErrors.Count}):");
-                        foreach (var error in result.DeletionErrors.Take(10))
-                        {
-                            summary.AppendLine($"  • {Path.GetFileName(error.FilePath)}: {error.Reason} [{error.DeletionError}]");
-                        }
-                        if (result.DeletionErrors.Count > 10)
-                            summary.AppendLine($"  ... y {result.DeletionErrors.Count - 10} más");
-                    }
-                }
-                else
-                {
-                    summary.AppendLine($"  • Se borrarían inválidos: {result.DeletedInvalid}");
-                    summary.AppendLine($"  • Se borrarían procesados: {result.DeletedProcessed}");
-                    summary.AppendLine($"  • Espacio a liberar: {FormatBytes(result.BytesFreed)}");
-                }
-
-                Log(summary.ToString());
-
-                if (result.InvalidPdfs + result.ProcessedPdfs == 0)
-                {
-                    DarkDialogService.ShowMessage(
-                        this,
-                        "✅ Todos los PDFs son válidos y ninguno está procesado.",
-                        "Validación completada",
-                        MessageBoxButton.OK,
-                        MessageBoxImage.Information);
-                }
-                else if (!dryRun && result.DeletionErrors.Count == 0)
-                {
-                    DarkDialogService.ShowMessage(
-                        this,
-                        summary.ToString(),
-                        "Validación completada",
-                        MessageBoxButton.OK,
-                        MessageBoxImage.Information);
-                }
-                else if (!dryRun && result.DeletionErrors.Count > 0)
-                {
-                    DarkDialogService.ShowMessage(
-                        this,
-                        summary.ToString(),
-                        "Validación con errores",
-                        MessageBoxButton.OK,
-                        MessageBoxImage.Warning);
-                }
-                else
-                {
-                    DarkDialogService.ShowMessage(
-                        this,
-                        summary.ToString(),
-                        "Vista previa de borrado",
-                        MessageBoxButton.OK,
-                        MessageBoxImage.Information);
-                }
-            });
+                var result = await validator.ValidatePdfsAsync(destFolder, progress, normalizeFileNames: false, ct: validationCts.Token).ConfigureAwait(false);
+                Dispatcher.Invoke(() => CompleteDiagnosticValidation(result, destFolder, riskLine));
+            }
+            else
+            {
+                var result = await validator.ValidateAndDeletePdfsAsync(destFolder, progress, dryRun, validationCts.Token).ConfigureAwait(false);
+                Dispatcher.Invoke(() => CompleteDeleteValidation(result, destFolder, riskLine, dryRun));
+            }
         }
         catch (OperationCanceledException)
         {
@@ -1218,113 +1303,854 @@ public partial class MainWindow : Window, IAsyncDisposable
         catch (Exception ex)
         {
             Log($"❌ Error validando PDFs: {ex.Message}");
-            DarkDialogService.ShowMessage(this, $"Error: {ex.Message}", "Comprobar PDF", MessageBoxButton.OK, MessageBoxImage.Error);
+            DarkDialogService.ShowMessage(this, $"Error: {ex.Message}", GetValidationWindowTitle(forcedKind), MessageBoxButton.OK, MessageBoxImage.Error);
         }
         finally
         {
-            btnValidatePdfs.IsEnabled = true;
+            ClearValidationLiveCounter();
+            EndValidationSession();
         }
     }
 
-    private async void BtnValidateOnly_Click(object sender, RoutedEventArgs e)
+    private static string GetValidationWindowTitle(string? forcedKind)
+        => string.Equals(forcedKind, "Diagnostic", StringComparison.OrdinalIgnoreCase) ? "Solo Validar" : "Validar scores";
+
+    private void CompleteDeleteValidation(PdfValidationService.ValidationResult result, string destFolder, string riskLine, bool dryRun)
     {
-        var destFolder = txtDestFolder.Text?.Trim();
-        if (string.IsNullOrWhiteSpace(destFolder) || !Directory.Exists(destFolder))
+        var modeLabel = dryRun ? "[VISTA PREVIA]" : string.Empty;
+        var summary = new StringBuilder();
+        summary.AppendLine($"📊 {modeLabel} Resumen de validación:");
+        summary.AppendLine($"  • Total PDFs encontrados: {result.TotalPdfs}");
+        summary.AppendLine($"  • PDFs inválidos: {result.InvalidPdfs}");
+        summary.AppendLine($"  • PDFs ya procesados: {result.ProcessedPdfs}");
+        summary.AppendLine($"  • Nombres normalizados: {result.RenamedFiles}");
+        summary.AppendLine($"  • Tiempos: scan {result.ScanElapsedMs} ms · validar {result.ValidationElapsedMs} ms · borrar {result.DeleteElapsedMs} ms · total {result.TotalElapsedMs} ms");
+        if (result.DeleteSkippedDueToBudget > 0)
+            summary.AppendLine($"  • Omitidos por presupuesto global: {result.DeleteSkippedDueToBudget}");
+        if (result.DeleteSkippedDueToPerDirBudget > 0)
+            summary.AppendLine($"  • Omitidos por presupuesto por carpeta: {result.DeleteSkippedDueToPerDirBudget}");
+        if (result.DeleteErrorsCount > 0)
+            summary.AppendLine($"  • Errores borrado: {result.DeleteErrorsCount}");
+
+        if (result.InvalidReasons.Count > 0)
         {
-            DarkDialogService.ShowMessage(this, "Selecciona una carpeta de destino válida.", "Solo Validar", MessageBoxButton.OK, MessageBoxImage.Warning);
+            summary.AppendLine("  • Razones invalidez:");
+            foreach (var kv in result.InvalidReasons.OrderByDescending(kv => kv.Value).Take(6))
+                summary.AppendLine($"    - {kv.Key}: {kv.Value}");
+        }
+
+        if (!dryRun)
+        {
+            summary.AppendLine($"  • Borrados inválidos: {result.DeletedInvalid} ✅");
+            summary.AppendLine($"  • Borrados procesados: {result.DeletedProcessed} ✅");
+            summary.AppendLine($"  • Espacio liberado: {FormatBytes(result.BytesFreed)}");
+            if (result.DeletionErrors.Count > 0)
+            {
+                summary.AppendLine($"\n⚠️ Errores de borrado ({result.DeletionErrors.Count}):");
+                foreach (var kv in result.DeletionErrorCounts.OrderByDescending(kv => kv.Value))
+                    summary.AppendLine($"  • {kv.Key}: {kv.Value}");
+            }
+        }
+        else
+        {
+            summary.AppendLine($"  • Se borrarían inválidos: {result.DeletedInvalid}");
+            summary.AppendLine($"  • Se borrarían procesados: {result.DeletedProcessed}");
+            summary.AppendLine($"  • Espacio a liberar: {FormatBytes(result.BytesFreed)}");
+        }
+
+        if (result.SlowestDeleteDirectories.Count > 0)
+        {
+            summary.AppendLine("  • Carpetas más lentas:");
+            foreach (var entry in result.SlowestDeleteDirectories)
+                summary.AppendLine($"    - {entry.DirectoryPath}: {entry.ElapsedMs} ms");
+        }
+
+        _lastValidationSummary = summary.ToString();
+        _lastValidationShortSummary = BuildValidationShortSummary(result, dryRun);
+        Log(_lastValidationSummary);
+        AddValidationHistory(CreateValidationHistoryItem(dryRun ? "Preview" : "Delete", destFolder, riskLine, result, _lastValidationShortSummary, _lastValidationSummary));
+
+        if (result.InvalidPdfs + result.ProcessedPdfs == 0)
+        {
+            DarkDialogService.ShowMessage(this, "✅ Todos los PDFs son válidos y ninguno está procesado.", "Validación completada", MessageBoxButton.OK, MessageBoxImage.Information);
+        }
+        else if (!dryRun && result.DeletionErrors.Count == 0)
+        {
+            DarkDialogService.ShowMessage(this, _lastValidationSummary, "Validación completada", MessageBoxButton.OK, MessageBoxImage.Information);
+        }
+        else if (!dryRun)
+        {
+            DarkDialogService.ShowMessage(this, _lastValidationSummary, "Validación con errores", MessageBoxButton.OK, MessageBoxImage.Warning);
+        }
+        else
+        {
+            DarkDialogService.ShowMessage(this, _lastValidationSummary, "Vista previa de borrado", MessageBoxButton.OK, MessageBoxImage.Information);
+        }
+    }
+
+    private void CompleteDiagnosticValidation(PdfValidationService.ValidationResult result, string destFolder, string riskLine)
+    {
+        var summary = new StringBuilder();
+        summary.AppendLine("📊 Reporte de Validación (diagnóstico):");
+        summary.AppendLine($"  • Total PDFs encontrados: {result.TotalPdfs}");
+        summary.AppendLine($"  • PDFs inválidos: {result.InvalidPdfs}");
+        summary.AppendLine($"  • PDFs ya procesados: {result.ProcessedPdfs}");
+        summary.AppendLine($"  • Nombres normalizados: {result.RenamedFiles}");
+        summary.AppendLine($"  • Tiempos: scan {result.ScanElapsedMs} ms · validar {result.ValidationElapsedMs} ms · total {result.TotalElapsedMs} ms");
+
+        if (result.InvalidReasons.Count > 0)
+        {
+            summary.AppendLine("\n  Razones de invalideación:");
+            foreach (var kvp in result.InvalidReasons.OrderByDescending(x => x.Value))
+                summary.AppendLine($"    • {kvp.Key}: {kvp.Value} archivo(s)");
+        }
+
+        if (result.InvalidFiles.Count > 0)
+        {
+            summary.AppendLine("\n  PDFs inválidos:");
+            foreach (var file in result.InvalidFiles.Take(10))
+                summary.AppendLine($"    • {Path.GetFileName(file)}");
+            if (result.InvalidFiles.Count > 10)
+                summary.AppendLine($"    ... y {result.InvalidFiles.Count - 10} más");
+        }
+
+        if (result.ProcessedFiles.Count > 0)
+        {
+            summary.AppendLine("\n  PDFs ya procesados (se pueden borrar):");
+            foreach (var file in result.ProcessedFiles.Take(10))
+                summary.AppendLine($"    • {Path.GetFileName(file)}");
+            if (result.ProcessedFiles.Count > 10)
+                summary.AppendLine($"    ... y {result.ProcessedFiles.Count - 10} más");
+        }
+
+        _lastValidationSummary = summary.ToString();
+        _lastValidationShortSummary = BuildValidationShortSummary(result, dryRun: true, diagnosticOnly: true);
+        Log(_lastValidationSummary);
+        AddValidationHistory(CreateValidationHistoryItem("Diagnostic", destFolder, riskLine, result, _lastValidationShortSummary, _lastValidationSummary));
+
+        if (result.InvalidPdfs + result.ProcessedPdfs == 0)
+        {
+            DarkDialogService.ShowMessage(this, "✅ Todos los PDFs son válidos y ninguno está procesado.", "Validación completada", MessageBoxButton.OK, MessageBoxImage.Information);
             return;
         }
 
+        DarkDialogService.ShowMessage(this, _lastValidationSummary, "Diagnóstico de PDFs", MessageBoxButton.OK, MessageBoxImage.Information);
+    }
+
+    private ValidationHistoryItem CreateValidationHistoryItem(string kind, string destFolder, string riskLine, PdfValidationService.ValidationResult result, string shortSummary, string detail)
+    {
+        var sampleFile = result.InvalidFiles.FirstOrDefault();
+        if (string.IsNullOrWhiteSpace(sampleFile))
+            sampleFile = result.ProcessedFiles.FirstOrDefault();
+
+        return new ValidationHistoryItem
+        {
+            CreatedUtc = DateTime.UtcNow,
+            Title = $"{DateTime.Now:yyyy-MM-dd HH:mm} {GetValidationTitlePrefix(kind)}".Trim(),
+            Summary = shortSummary,
+            Detail = detail,
+            Kind = kind,
+            DestinationFolder = destFolder,
+            SampleFilePath = sampleFile ?? string.Empty,
+            RiskHint = riskLine,
+            TotalPdfs = result.TotalPdfs,
+            InvalidPdfs = result.InvalidPdfs,
+            ProcessedPdfs = result.ProcessedPdfs,
+            DeletedCount = result.DeletedInvalid + result.DeletedProcessed,
+            DeleteErrorsCount = result.DeleteErrorsCount
+        };
+    }
+
+    private static string GetValidationTitlePrefix(string kind)
+        => kind switch
+        {
+            "Diagnostic" => "[DIAGNÓSTICO]",
+            "Preview" => "[VISTA PREVIA]",
+            "Delete" => "[BORRADO]",
+            _ => "[VALIDACIÓN]"
+        };
+
+    private CancellationTokenSource? BeginValidationSession()
+    {
+        if (_validationCts is not null)
+        {
+            DarkDialogService.ShowMessage(this, "Ya hay una validación en curso.", "Validar scores", MessageBoxButton.OK, MessageBoxImage.Information);
+            return null;
+        }
+
+        _validationCts = new CancellationTokenSource();
+        btnCancelValidation.IsEnabled = true;
+        btnValidatePdfs.IsEnabled = false;
         btnValidateOnly.IsEnabled = false;
-        Log($"🔍 Validando PDFs en {destFolder} (solo diagnóstico, sin borrar)...");
+        return _validationCts;
+    }
+
+    private void EndValidationSession()
+    {
+        _validationCts?.Dispose();
+        _validationCts = null;
+        btnCancelValidation.IsEnabled = false;
+        btnValidatePdfs.IsEnabled = true;
+        btnValidateOnly.IsEnabled = true;
+    }
+
+    private void BtnCancelValidation_Click(object sender, RoutedEventArgs e)
+    {
+        if (_validationCts is null)
+            return;
+
+        _validationCts.Cancel();
+        Log("⏹ Cancelación solicitada para validación en curso...");
+    }
+
+    private void BtnCopyValidationSummary_Click(object sender, RoutedEventArgs e)
+    {
+        if (string.IsNullOrWhiteSpace(_lastValidationSummary))
+        {
+            DarkDialogService.ShowMessage(this, "Aún no hay resumen de validación para copiar.", "Copiar resumen", MessageBoxButton.OK, MessageBoxImage.Information);
+            return;
+        }
 
         try
         {
-            var validator = new PdfValidationService();
-            var progress = new Progress<(string message, int done, int total)>((item) =>
-            {
-                Dispatcher.Invoke(() =>
-                {
-                    Log(item.message);
-                });
-            });
-
-            var result = await validator.ValidatePdfsAsync(destFolder, progress, CancellationToken.None).ConfigureAwait(false);
-
-            Dispatcher.Invoke(() =>
-            {
-                var summary = new System.Text.StringBuilder();
-                summary.AppendLine($"📊 Reporte de Validación (diagnóstico):");
-                summary.AppendLine($"  • Total PDFs encontrados: {result.TotalPdfs}");
-                summary.AppendLine($"  • PDFs inválidos: {result.InvalidPdfs}");
-                summary.AppendLine($"  • PDFs ya procesados: {result.ProcessedPdfs}");
-
-                if (result.InvalidReasons.Count > 0)
-                {
-                    summary.AppendLine($"\n  Razones de invalideación:");
-                    foreach (var kvp in result.InvalidReasons.OrderByDescending(x => x.Value))
-                    {
-                        summary.AppendLine($"    • {kvp.Key}: {kvp.Value} archivo(s)");
-                    }
-                }
-
-                if (result.InvalidFiles.Count > 0)
-                {
-                    summary.AppendLine($"\n  PDFs inválidos:");
-                    foreach (var file in result.InvalidFiles.Take(10))
-                    {
-                        summary.AppendLine($"    • {Path.GetFileName(file)}");
-                    }
-                    if (result.InvalidFiles.Count > 10)
-                        summary.AppendLine($"    ... y {result.InvalidFiles.Count - 10} más");
-                }
-
-                if (result.ProcessedFiles.Count > 0)
-                {
-                    summary.AppendLine($"\n  PDFs ya procesados (se pueden borrar):");
-                    foreach (var file in result.ProcessedFiles.Take(10))
-                    {
-                        summary.AppendLine($"    • {Path.GetFileName(file)}");
-                    }
-                    if (result.ProcessedFiles.Count > 10)
-                        summary.AppendLine($"    ... y {result.ProcessedFiles.Count - 10} más");
-                }
-
-                Log(summary.ToString());
-
-                if (result.InvalidPdfs + result.ProcessedPdfs == 0)
-                {
-                    DarkDialogService.ShowMessage(
-                        this,
-                        "✅ Todos los PDFs son válidos y ninguno está procesado.",
-                        "Validación completada",
-                        MessageBoxButton.OK,
-                        MessageBoxImage.Information);
-                }
-                else
-                {
-                    DarkDialogService.ShowMessage(
-                        this,
-                        summary.ToString(),
-                        "Diagnóstico de PDFs",
-                        MessageBoxButton.OK,
-                        MessageBoxImage.Information);
-                }
-            });
-        }
-        catch (OperationCanceledException)
-        {
-            Log("⏹ Validación cancelada");
+            System.Windows.Clipboard.SetText(_lastValidationSummary);
+            Log("📋 Resumen de validación copiado al portapapeles.");
         }
         catch (Exception ex)
         {
-            Log($"❌ Error validando PDFs: {ex.Message}");
-            DarkDialogService.ShowMessage(this, $"Error: {ex.Message}", "Solo Validar", MessageBoxButton.OK, MessageBoxImage.Error);
+            DarkDialogService.ShowMessage(this, $"No se pudo copiar al portapapeles: {ex.Message}", "Copiar resumen", MessageBoxButton.OK, MessageBoxImage.Warning);
         }
-        finally
+    }
+
+    private void BtnCopyValidationSummaryShort_Click(object sender, RoutedEventArgs e)
+    {
+        if (string.IsNullOrWhiteSpace(_lastValidationShortSummary))
         {
-            btnValidateOnly.IsEnabled = true;
+            DarkDialogService.ShowMessage(this, "Aún no hay resumen corto de validación para copiar.", "Resumen corto", MessageBoxButton.OK, MessageBoxImage.Information);
+            return;
         }
+
+        try
+        {
+            System.Windows.Clipboard.SetText(_lastValidationShortSummary);
+            Log("📋 Resumen corto de validación copiado al portapapeles.");
+        }
+        catch (Exception ex)
+        {
+            DarkDialogService.ShowMessage(this, $"No se pudo copiar al portapapeles: {ex.Message}", "Resumen corto", MessageBoxButton.OK, MessageBoxImage.Warning);
+        }
+    }
+
+    private void ValidationPreference_Changed(object sender, RoutedEventArgs e)
+    {
+        if (!IsInitialized) return;
+        SaveUiState();
+    }
+
+    private bool TryApplyValidationDeleteBudgetOverrides()
+    {
+        try
+        {
+            ApplyOptionalPositiveIntEnv(
+                txtValidateDeleteBudgetMs.Text,
+                "SCOREDOWN_VALIDATION_DELETE_BUDGET_MS",
+                "presupuesto global de borrado");
+
+            ApplyOptionalPositiveIntEnv(
+                txtValidateDeletePerDirBudgetMs.Text,
+                "SCOREDOWN_VALIDATION_DELETE_PER_DIR_BUDGET_MS",
+                "presupuesto de borrado por carpeta");
+
+            return true;
+        }
+        catch (Exception ex)
+        {
+            DarkDialogService.ShowMessage(this, ex.Message, "Validar scores", MessageBoxButton.OK, MessageBoxImage.Warning);
+            return false;
+        }
+    }
+
+    private void ValidationBudgetTextBox_TextChanged(object sender, TextChangedEventArgs e)
+    {
+        if (!IsInitialized) return;
+        SaveUiState();
+        UpdateValidationBudgetStatus();
+    }
+
+    private void ValidationBudgetTextBox_PreviewTextInput(object sender, WinInput.TextCompositionEventArgs e)
+    {
+        e.Handled = e.Text.Any(ch => !char.IsDigit(ch));
+    }
+
+    private void ValidationBudgetTextBox_Pasting(object sender, DataObjectPastingEventArgs e)
+    {
+        if (!e.SourceDataObject.GetDataPresent(WpfDataFormats.Text))
+        {
+            e.CancelCommand();
+            return;
+        }
+
+        var text = e.SourceDataObject.GetData(WpfDataFormats.Text) as string ?? string.Empty;
+        if (text.Any(ch => !char.IsDigit(ch)))
+            e.CancelCommand();
+    }
+
+    private void BtnResetValidationBudgets_Click(object sender, RoutedEventArgs e)
+    {
+        txtValidateDeleteBudgetMs.Text = string.Empty;
+        txtValidateDeletePerDirBudgetMs.Text = string.Empty;
+        SaveUiState();
+        UpdateValidationBudgetStatus();
+        Log("ℹ️ Límites de validación restablecidos (sin límite global ni por carpeta).");
+    }
+
+    private void BtnValidationPresetConservative_Click(object sender, RoutedEventArgs e)
+        => ApplyValidationBudgetPreset(globalMs: 90000, perDirMs: 20000, "Conservador");
+
+    private void BtnValidationPresetBalanced_Click(object sender, RoutedEventArgs e)
+        => ApplyValidationBudgetPreset(globalMs: 30000, perDirMs: 8000, "Balanceado");
+
+    private void BtnValidationPresetAggressive_Click(object sender, RoutedEventArgs e)
+        => ApplyValidationBudgetPreset(globalMs: 12000, perDirMs: 3000, "Agresivo");
+
+    private void BtnValidationAutoFast_Click(object sender, RoutedEventArgs e)
+        => ApplyValidationAutoBudgetProfile(isSafeProfile: false);
+
+    private void BtnValidationAutoSafe_Click(object sender, RoutedEventArgs e)
+        => ApplyValidationAutoBudgetProfile(isSafeProfile: true);
+
+    private void ApplyValidationBudgetPreset(int globalMs, int perDirMs, string presetName)
+    {
+        txtValidateDeleteBudgetMs.Text = globalMs.ToString(CultureInfo.InvariantCulture);
+        txtValidateDeletePerDirBudgetMs.Text = perDirMs.ToString(CultureInfo.InvariantCulture);
+        SaveUiState();
+        UpdateValidationBudgetStatus();
+        Log($"ℹ️ Preset validación aplicado: {presetName} (global={globalMs} ms, carpeta={perDirMs} ms).");
+    }
+
+    private void ApplyValidationAutoBudgetProfile(bool isSafeProfile)
+    {
+        var destFolder = txtDestFolder.Text?.Trim() ?? string.Empty;
+        var pdfCount = string.IsNullOrWhiteSpace(destFolder) || !Directory.Exists(destFolder)
+            ? 0
+            : CountPdfFilesSafe(destFolder);
+
+        var globalMs = isSafeProfile
+            ? Math.Clamp(12000 + (pdfCount * 25), 20000, 180000)
+            : Math.Clamp(5000 + (pdfCount * 8), 8000, 60000);
+        var perDirMs = isSafeProfile
+            ? Math.Clamp(2500 + (pdfCount / 2), 4000, 30000)
+            : Math.Clamp(1200 + (pdfCount / 5), 2000, 12000);
+
+        ApplyValidationBudgetPreset(globalMs, perDirMs, isSafeProfile ? "Auto seguro" : "Auto rápido");
+    }
+
+    private string GetValidationBudgetSummaryLine()
+    {
+        var global = ParseOptionalPositiveIntForUiState(txtValidateDeleteBudgetMs.Text);
+        var perDir = ParseOptionalPositiveIntForUiState(txtValidateDeletePerDirBudgetMs.Text);
+        var globalLabel = global.HasValue ? $"{global.Value} ms" : "sin límite";
+        var perDirLabel = perDir.HasValue ? $"{perDir.Value} ms" : "sin límite";
+        return $"⚙️ Presupuestos activos validación: global={globalLabel}, carpeta={perDirLabel}.";
+    }
+
+    private void UpdateValidationBudgetStatus(string? overrideText = null)
+    {
+        if (txtValidationBudgetStatus is null)
+            return;
+
+        if (!string.IsNullOrWhiteSpace(overrideText))
+        {
+            txtValidationBudgetStatus.Text = overrideText;
+            return;
+        }
+
+        var global = ParseOptionalPositiveIntForUiState(txtValidateDeleteBudgetMs.Text);
+        var perDir = ParseOptionalPositiveIntForUiState(txtValidateDeletePerDirBudgetMs.Text);
+        var globalLabel = global.HasValue ? $"{global.Value} ms" : "∞";
+        var perDirLabel = perDir.HasValue ? $"{perDir.Value} ms" : "∞";
+        txtValidationBudgetStatus.Text = $"Validación límites: global {globalLabel} · carpeta {perDirLabel}";
+    }
+
+    private void UpdateValidationLiveCounter(string message, int done, int total)
+    {
+        if (txtValidationLiveStatus is null)
+            return;
+
+        var omitted = ExtractIntAfterToken(message, "omitidos:");
+        var errors = ExtractIntAfterToken(message, "errores:");
+        if (message.Contains("Validados", StringComparison.OrdinalIgnoreCase))
+        {
+            txtValidationLiveStatus.Text = $"Validación en vivo: procesados {done}/{total} · omitidos {omitted} · errores {errors}";
+            txtValidationLiveStatus.Visibility = Visibility.Visible;
+            UpdatePhaseProgress(pbValidationPhaseProgress, txtValidationPhaseCounter, done, total);
+            if (pbDeletePhaseProgress is not null && pbDeletePhaseProgress.Visibility != Visibility.Visible)
+                pbDeletePhaseProgress.Value = 0;
+            return;
+        }
+
+        if (message.Contains("Progreso borrado", StringComparison.OrdinalIgnoreCase))
+        {
+            txtValidationLiveStatus.Text = $"Borrado en vivo: procesados {done}/{total} · omitidos {omitted} · errores {errors}";
+            txtValidationLiveStatus.Visibility = Visibility.Visible;
+            UpdatePhaseProgress(pbDeletePhaseProgress, txtDeletePhaseCounter, done, total);
+        }
+    }
+
+    private void ClearValidationLiveCounter()
+    {
+        if (txtValidationLiveStatus is null)
+            return;
+
+        txtValidationLiveStatus.Text = string.Empty;
+        txtValidationLiveStatus.Visibility = Visibility.Collapsed;
+        ResetPhaseProgress(pbValidationPhaseProgress, txtValidationPhaseCounter);
+        ResetPhaseProgress(pbDeletePhaseProgress, txtDeletePhaseCounter);
+    }
+
+    private static void UpdatePhaseProgress(System.Windows.Controls.ProgressBar? progressBar, TextBlock? counter, int done, int total)
+    {
+        if (progressBar is null)
+            return;
+
+        progressBar.Visibility = Visibility.Visible;
+        progressBar.Value = total <= 0 ? 0 : Math.Clamp(done * 100.0 / total, 0, 100);
+        if (counter is not null)
+        {
+            counter.Text = $"{done}/{total}";
+            counter.Visibility = Visibility.Visible;
+        }
+    }
+
+    private static void ResetPhaseProgress(System.Windows.Controls.ProgressBar? progressBar, TextBlock? counter)
+    {
+        if (progressBar is null)
+            return;
+
+        progressBar.Value = 0;
+        progressBar.Visibility = Visibility.Collapsed;
+        if (counter is not null)
+        {
+            counter.Text = string.Empty;
+            counter.Visibility = Visibility.Collapsed;
+        }
+    }
+
+    private static int ExtractIntAfterToken(string message, string token)
+    {
+        var idx = message.IndexOf(token, StringComparison.OrdinalIgnoreCase);
+        if (idx < 0)
+            return 0;
+
+        idx += token.Length;
+        while (idx < message.Length && message[idx] == ' ')
+            idx++;
+
+        var start = idx;
+        while (idx < message.Length && char.IsDigit(message[idx]))
+            idx++;
+
+        return idx > start && int.TryParse(message[start..idx], out var parsed) ? parsed : 0;
+    }
+
+    private static int CountPdfFilesSafe(string root)
+    {
+        try
+        {
+            return Directory.EnumerateFiles(root, "*.pdf", SearchOption.AllDirectories).Count();
+        }
+        catch
+        {
+            return 0;
+        }
+    }
+
+    private string BuildValidationRiskHint(int estimatedPdfCount)
+    {
+        var global = ParseOptionalPositiveIntForUiState(txtValidateDeleteBudgetMs.Text);
+        var perDir = ParseOptionalPositiveIntForUiState(txtValidateDeletePerDirBudgetMs.Text);
+
+        var score = 0;
+        if (estimatedPdfCount >= 10000) score += 3;
+        else if (estimatedPdfCount >= 3000) score += 2;
+        else if (estimatedPdfCount >= 1000) score += 1;
+
+        if (global is null) score += 1;
+        else if (global <= 15000) score -= 1;
+
+        if (perDir is null) score += 1;
+        else if (perDir <= 3000) score -= 1;
+
+        if (score <= 0)
+            return $"🟢 Riesgo bajo · PDFs estimados: {estimatedPdfCount}";
+        if (score <= 2)
+            return $"🟡 Riesgo medio · PDFs estimados: {estimatedPdfCount}";
+        return $"🔴 Riesgo alto · PDFs estimados: {estimatedPdfCount}. Recomendado: usar vista previa primero.";
+    }
+
+    private bool? ResolveValidationDryRunChoice(string riskLine)
+    {
+        if (chkSkipValidationDryRunPrompt.IsChecked == true)
+            return chkValidationDefaultDryRun.IsChecked == true;
+
+        var dryRunMsg = DarkDialogService.ShowMessage(
+            this,
+            $"¿Ver vista previa sin borrar archivos?\n\n✅ Sí = mostrar qué se borraría\n❌ No = borrar directamente\n\n{riskLine}",
+            "Validar scores",
+            MessageBoxButton.YesNoCancel,
+            MessageBoxImage.Question);
+
+        if (dryRunMsg == MessageBoxResult.Cancel)
+            return null;
+        return dryRunMsg == MessageBoxResult.Yes;
+    }
+
+    private string BuildValidationShortSummary(PdfValidationService.ValidationResult result, bool dryRun, bool diagnosticOnly = false)
+    {
+        var mode = diagnosticOnly ? "diagnóstico" : dryRun ? "vista previa" : "borrado";
+        return $"{mode}: total={result.TotalPdfs}, inválidos={result.InvalidPdfs}, procesados={result.ProcessedPdfs}, borrados={result.DeletedInvalid + result.DeletedProcessed}, omitidos={result.DeleteSkippedDueToBudget + result.DeleteSkippedDueToPerDirBudget}, errores={result.DeleteErrorsCount}, totalMs={result.TotalElapsedMs}";
+    }
+
+    private void AddValidationHistory(ValidationHistoryItem item)
+    {
+        _validationHistory.Insert(0, NormalizeValidationHistoryItem(item));
+        EnforceValidationHistoryLimit();
+        SaveValidationHistory();
+        _validationHistoryView.View?.Refresh();
+        UpdateValidationHistoryStats();
+    }
+
+    private void LoadValidationHistory()
+    {
+        var entries = JsonStore.Load<List<ValidationHistoryItem>>(_validationHistoryPath, []);
+        _validationHistory.Clear();
+        foreach (var item in entries)
+            _validationHistory.Add(NormalizeValidationHistoryItem(item));
+        EnforceValidationHistoryLimit();
+        ApplyValidationHistorySort();
+        _validationHistoryView.View?.Refresh();
+        UpdateValidationHistoryStats();
+    }
+
+    private void SaveValidationHistory()
+        => JsonStore.Save(_validationHistoryPath, _validationHistory.ToList());
+
+    private void ValidationHistoryFilter_Changed(object sender, RoutedEventArgs e)
+    {
+        if (!IsInitialized)
+            return;
+
+        EnforceValidationHistoryLimit();
+        SaveValidationHistory();
+        SaveUiState();
+        ApplyValidationHistorySort();
+        _validationHistoryView.View?.Refresh();
+        UpdateValidationHistoryStats();
+    }
+
+    private void UpdateValidationHistoryStats()
+    {
+        if (txtValidationHistoryStats is null || _validationHistoryView.View is null)
+            return;
+
+        var visible = _validationHistoryView.View.Cast<object>().Count();
+        txtValidationHistoryStats.Text = $"{visible}/{_validationHistory.Count}";
+    }
+
+    private void ApplyValidationHistorySort()
+    {
+        if (_validationHistoryView.View is null)
+            return;
+
+        using (_validationHistoryView.View.DeferRefresh())
+        {
+            _validationHistoryView.SortDescriptions.Clear();
+            var sort = (cmbValidationHistorySort?.SelectedItem as ComboBoxItem)?.Content?.ToString() ?? "Fecha";
+            if (string.Equals(sort, "Tipo", StringComparison.OrdinalIgnoreCase))
+            {
+                _validationHistoryView.SortDescriptions.Add(new SortDescription(nameof(ValidationHistoryItem.KindSortRank), ListSortDirection.Ascending));
+                _validationHistoryView.SortDescriptions.Add(new SortDescription(nameof(ValidationHistoryItem.CreatedUtc), ListSortDirection.Descending));
+            }
+            else if (string.Equals(sort, "Riesgo", StringComparison.OrdinalIgnoreCase))
+            {
+                _validationHistoryView.SortDescriptions.Add(new SortDescription(nameof(ValidationHistoryItem.RiskSortRank), ListSortDirection.Ascending));
+                _validationHistoryView.SortDescriptions.Add(new SortDescription(nameof(ValidationHistoryItem.CreatedUtc), ListSortDirection.Descending));
+            }
+            else if (string.Equals(sort, "Inválidos", StringComparison.OrdinalIgnoreCase))
+            {
+                _validationHistoryView.SortDescriptions.Add(new SortDescription(nameof(ValidationHistoryItem.InvalidSortRank), ListSortDirection.Ascending));
+                _validationHistoryView.SortDescriptions.Add(new SortDescription(nameof(ValidationHistoryItem.CreatedUtc), ListSortDirection.Descending));
+            }
+            else if (string.Equals(sort, "Errores", StringComparison.OrdinalIgnoreCase))
+            {
+                _validationHistoryView.SortDescriptions.Add(new SortDescription(nameof(ValidationHistoryItem.ErrorSortRank), ListSortDirection.Ascending));
+                _validationHistoryView.SortDescriptions.Add(new SortDescription(nameof(ValidationHistoryItem.CreatedUtc), ListSortDirection.Descending));
+            }
+            else
+            {
+                _validationHistoryView.SortDescriptions.Add(new SortDescription(nameof(ValidationHistoryItem.CreatedUtc), ListSortDirection.Descending));
+            }
+        }
+    }
+
+    private void ValidationHistoryView_Filter(object sender, FilterEventArgs e)
+    {
+        if (e.Item is not ValidationHistoryItem item)
+        {
+            e.Accepted = false;
+            return;
+        }
+
+        var mode = (cmbValidationHistoryMode?.SelectedItem as ComboBoxItem)?.Content?.ToString() ?? "Todos";
+        var risk = (cmbValidationHistoryRisk?.SelectedItem as ComboBoxItem)?.Content?.ToString() ?? "Riesgo";
+        var text = txtValidationHistoryFilter?.Text?.Trim() ?? string.Empty;
+        var onlyErrors = chkValidationHistoryOnlyErrors?.IsChecked == true;
+        var onlyMissingSample = chkValidationHistoryOnlyMissingSample?.IsChecked == true;
+
+        var modeAccepted = mode switch
+        {
+            "Diagnóstico" => string.Equals(item.Kind, "Diagnostic", StringComparison.OrdinalIgnoreCase),
+            "Vista previa" => string.Equals(item.Kind, "Preview", StringComparison.OrdinalIgnoreCase),
+            "Borrado" => string.Equals(item.Kind, "Delete", StringComparison.OrdinalIgnoreCase),
+            _ => true
+        };
+
+        var textAccepted = string.IsNullOrWhiteSpace(text)
+            || item.Title.Contains(text, StringComparison.OrdinalIgnoreCase)
+            || item.Summary.Contains(text, StringComparison.OrdinalIgnoreCase)
+            || item.Detail.Contains(text, StringComparison.OrdinalIgnoreCase)
+            || item.DestinationFolder.Contains(text, StringComparison.OrdinalIgnoreCase);
+
+        var riskAccepted = risk switch
+        {
+            "Rojo" => item.RiskHint.StartsWith("🔴", StringComparison.Ordinal),
+            "Amarillo" => item.RiskHint.StartsWith("🟡", StringComparison.Ordinal),
+            "Verde" => item.RiskHint.StartsWith("🟢", StringComparison.Ordinal),
+            _ => true
+        };
+
+        var errorAccepted = !onlyErrors || item.HasErrors;
+        var missingSampleAccepted = !onlyMissingSample || (!string.IsNullOrWhiteSpace(item.SampleFilePath) && !item.SampleFileExists);
+
+        e.Accepted = modeAccepted && textAccepted && riskAccepted && errorAccepted && missingSampleAccepted;
+    }
+
+    private void LstValidationHistory_MouseDoubleClick(object sender, WinInput.MouseButtonEventArgs e)
+    {
+        if (lstValidationHistory.SelectedItem is not ValidationHistoryItem item)
+            return;
+
+        CopyValidationHistoryToClipboard(item, includeDetail: false, successLog: $"📋 Resumen de validación copiado: {item.Title}");
+    }
+
+    private void ValidationHistoryLimit_PreviewTextInput(object sender, WinInput.TextCompositionEventArgs e)
+        => e.Handled = e.Text.Any(ch => !char.IsDigit(ch));
+
+    private void BtnClearValidationHistory_Click(object sender, RoutedEventArgs e)
+    {
+        if (_validationHistory.Count == 0)
+            return;
+
+        var confirm = DarkDialogService.ShowMessage(this, "¿Vaciar historial de validaciones?", "Historial", MessageBoxButton.YesNo, MessageBoxImage.Question);
+        if (confirm != MessageBoxResult.Yes)
+            return;
+
+        _validationHistory.Clear();
+        SaveValidationHistory();
+        _validationHistoryView.View?.Refresh();
+        UpdateValidationHistoryStats();
+        Log("🧹 Historial de validaciones vaciado.");
+    }
+
+    private void CtxValidationHistoryCopySummary_Click(object sender, RoutedEventArgs e)
+    {
+        if (lstValidationHistory.SelectedItem is ValidationHistoryItem item)
+            CopyValidationHistoryToClipboard(item, includeDetail: false, successLog: $"📋 Resumen copiado: {item.Title}");
+    }
+
+    private void CtxValidationHistoryOpenFolder_Click(object sender, RoutedEventArgs e)
+    {
+        if (lstValidationHistory.SelectedItem is not ValidationHistoryItem item)
+            return;
+
+        var folder = item.DestinationFolder?.Trim();
+        if (!string.IsNullOrWhiteSpace(folder) && Directory.Exists(folder))
+        {
+            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo { FileName = folder, UseShellExecute = true });
+            return;
+        }
+
+        DarkDialogService.ShowMessage(this, "La carpeta validada ya no existe en disco.", "No disponible", MessageBoxButton.OK, MessageBoxImage.Warning);
+    }
+
+    private void CtxValidationHistorySelectFile_Click(object sender, RoutedEventArgs e)
+    {
+        if (lstValidationHistory.SelectedItem is not ValidationHistoryItem item)
+            return;
+
+        var path = item.SampleFilePath?.Trim();
+        if (!string.IsNullOrWhiteSpace(path) && File.Exists(path))
+        {
+            System.Diagnostics.Process.Start("explorer.exe", $"/select,\"{path}\"");
+            return;
+        }
+
+        DarkDialogService.ShowMessage(this, "No hay archivo ejemplo disponible en disco para esta validación.", "No disponible", MessageBoxButton.OK, MessageBoxImage.Warning);
+    }
+
+    private async void CtxValidationHistoryRevalidateSample_Click(object sender, RoutedEventArgs e)
+    {
+        if (lstValidationHistory.SelectedItem is not ValidationHistoryItem item)
+            return;
+
+        var samplePath = item.SampleFilePath?.Trim();
+        if (string.IsNullOrWhiteSpace(samplePath) || !File.Exists(samplePath))
+        {
+            DarkDialogService.ShowMessage(this, "No hay archivo ejemplo disponible en disco para revalidar.", "No disponible", MessageBoxButton.OK, MessageBoxImage.Warning);
+            return;
+        }
+
+        var folder = Path.GetDirectoryName(samplePath);
+        if (string.IsNullOrWhiteSpace(folder) || !Directory.Exists(folder))
+        {
+            DarkDialogService.ShowMessage(this, "La carpeta del archivo ejemplo ya no existe.", "No disponible", MessageBoxButton.OK, MessageBoxImage.Warning);
+            return;
+        }
+
+        txtDestFolder.Text = folder;
+        SaveUiState();
+        Log($"🔁 Revalidando carpeta del archivo ejemplo: {Path.GetFileName(samplePath)}");
+        Log("ℹ️ Revalidación puntual usa carpeta contenedora porque el servicio actual valida por carpeta.");
+        await RunValidationWorkflowAsync("Diagnostic");
+    }
+
+    private void CtxValidationHistoryCopyFolderPath_Click(object sender, RoutedEventArgs e)
+    {
+        if (lstValidationHistory.SelectedItem is ValidationHistoryItem item && !string.IsNullOrWhiteSpace(item.DestinationFolder))
+            CopyValidationHistoryText(item.DestinationFolder, $"📋 Ruta de carpeta copiada: {item.Title}");
+    }
+
+    private void CtxValidationHistoryCopySamplePath_Click(object sender, RoutedEventArgs e)
+    {
+        if (lstValidationHistory.SelectedItem is ValidationHistoryItem item && !string.IsNullOrWhiteSpace(item.SampleFilePath))
+            CopyValidationHistoryText(item.SampleFilePath, $"📋 Ruta de archivo copiada: {item.Title}");
+    }
+
+    private void CtxValidationHistoryShowDetail_Click(object sender, RoutedEventArgs e)
+    {
+        if (lstValidationHistory.SelectedItem is not ValidationHistoryItem item)
+            return;
+
+        var detail = string.IsNullOrWhiteSpace(item.Detail)
+            ? $"{item.Title}{Environment.NewLine}{item.Summary}"
+            : item.Detail;
+
+        _lastValidationSummary = detail;
+        _lastValidationShortSummary = item.Summary;
+        DarkDialogService.ShowMessage(this, detail, item.Title, MessageBoxButton.OK, MessageBoxImage.Information);
+    }
+
+    private void CtxValidationHistoryCopyDetail_Click(object sender, RoutedEventArgs e)
+    {
+        if (lstValidationHistory.SelectedItem is ValidationHistoryItem item)
+            CopyValidationHistoryToClipboard(item, includeDetail: true, successLog: $"📄 Detalle copiado: {item.Title}");
+    }
+
+    private async void CtxValidationHistoryRepeat_Click(object sender, RoutedEventArgs e)
+    {
+        if (lstValidationHistory.SelectedItem is not ValidationHistoryItem item)
+            return;
+
+        if (!string.IsNullOrWhiteSpace(item.DestinationFolder))
+            txtDestFolder.Text = item.DestinationFolder;
+
+        SaveUiState();
+        Log($"↻ Reintentando validación histórica: {item.Title}");
+        await RunValidationWorkflowAsync(item.Kind);
+    }
+
+    private void CopyValidationHistoryToClipboard(ValidationHistoryItem item, bool includeDetail, string successLog)
+    {
+        var text = includeDetail && !string.IsNullOrWhiteSpace(item.Detail)
+            ? item.Detail
+            : $"{item.Title}{Environment.NewLine}{item.Summary}";
+
+        CopyValidationHistoryText(text, successLog, item);
+    }
+
+    private void CopyValidationHistoryText(string text, string successLog, ValidationHistoryItem? item = null)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+            return;
+
+        try
+        {
+            System.Windows.Clipboard.SetText(text);
+            if (item is not null)
+            {
+                _lastValidationSummary = string.IsNullOrWhiteSpace(item.Detail) ? text : item.Detail;
+                _lastValidationShortSummary = item.Summary;
+            }
+            Log(successLog);
+        }
+        catch (Exception ex)
+        {
+            DarkDialogService.ShowMessage(this, $"No se pudo copiar al portapapeles: {ex.Message}", "Historial", MessageBoxButton.OK, MessageBoxImage.Warning);
+        }
+    }
+
+    private void EnforceValidationHistoryLimit()
+    {
+        var limit = GetValidationHistoryLimit();
+        while (_validationHistory.Count > limit)
+            _validationHistory.RemoveAt(_validationHistory.Count - 1);
+    }
+
+    private int GetValidationHistoryLimit()
+    {
+        var parsed = ParseOptionalPositiveIntForUiState(txtValidationHistoryLimit?.Text);
+        return parsed.HasValue ? Math.Clamp(parsed.Value, 5, 200) : 20;
+    }
+
+    private static ValidationHistoryItem NormalizeValidationHistoryItem(ValidationHistoryItem? item)
+    {
+        item ??= new ValidationHistoryItem();
+        item.Kind = NormalizeValidationHistoryKind(item.Kind, item.Title, item.Summary);
+        item.Title ??= string.Empty;
+        item.Summary ??= string.Empty;
+        item.Detail ??= string.Empty;
+        item.DestinationFolder ??= string.Empty;
+        item.SampleFilePath ??= string.Empty;
+        item.RiskHint ??= string.Empty;
+        return item;
+    }
+
+    private static string NormalizeValidationHistoryKind(string? kind, string? title = null, string? summary = null)
+    {
+        if (string.Equals(kind, "Diagnostic", StringComparison.OrdinalIgnoreCase)) return "Diagnostic";
+        if (string.Equals(kind, "Preview", StringComparison.OrdinalIgnoreCase)) return "Preview";
+        if (string.Equals(kind, "Delete", StringComparison.OrdinalIgnoreCase)) return "Delete";
+
+        var haystack = $"{title} {summary}";
+        if (haystack.Contains("diagnóstico", StringComparison.OrdinalIgnoreCase)) return "Diagnostic";
+        if (haystack.Contains("vista previa", StringComparison.OrdinalIgnoreCase)) return "Preview";
+        if (haystack.Contains("borrado", StringComparison.OrdinalIgnoreCase)) return "Delete";
+        return "Delete";
+    }
+
+    private static void ApplyOptionalPositiveIntEnv(string? rawValue, string envName, string label)
+    {
+        var value = (rawValue ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            Environment.SetEnvironmentVariable(envName, null, EnvironmentVariableTarget.Process);
+            return;
+        }
+
+        if (!int.TryParse(value, out var parsed) || parsed <= 0)
+            throw new InvalidOperationException($"Valor inválido para {label}: '{value}'. Usa entero positivo o deja vacío.");
+
+        Environment.SetEnvironmentVariable(envName, parsed.ToString(CultureInfo.InvariantCulture), EnvironmentVariableTarget.Process);
     }
 
 
@@ -2682,6 +3508,477 @@ public partial class MainWindow : Window, IAsyncDisposable
             SaveUiState();
         }
     }
+
+    private async void BtnImportScoresFromFolder_Click(object sender, RoutedEventArgs e)
+    {
+        var destFolder = txtDestFolder.Text?.Trim();
+        if (string.IsNullOrWhiteSpace(destFolder) || !Directory.Exists(destFolder))
+        {
+            DarkDialogService.ShowMessage(this, "Selecciona una carpeta de destino válida.", "Importar carpeta", MessageBoxButton.OK, MessageBoxImage.Warning);
+            return;
+        }
+
+        var sourceFolder = DarkDialogService.PromptFolder(this, "Carpeta origen para importar partituras", destFolder);
+        if (string.IsNullOrWhiteSpace(sourceFolder) || !Directory.Exists(sourceFolder))
+            return;
+
+        var srcFull = Path.GetFullPath(sourceFolder);
+        var dstFull = Path.GetFullPath(destFolder);
+        if (PathsEqual(srcFull, dstFull) || IsSubPathOf(srcFull, dstFull) || IsSubPathOf(dstFull, srcFull))
+        {
+            DarkDialogService.ShowMessage(
+                this,
+                "Origen y destino no pueden ser iguales ni estar anidados.",
+                "Importar carpeta",
+                MessageBoxButton.OK,
+                MessageBoxImage.Warning);
+            return;
+        }
+
+        btnImportScoresFromFolder.IsEnabled = false;
+        var dryRun = chkImportFolderDryRun?.IsChecked == true;
+        txtStatus.Text = "Importando partituras desde carpeta...";
+        Log($"📥 Importación manual iniciada. Origen: {srcFull}{(dryRun ? " [SIMULACION]" : string.Empty)}");
+
+        try
+        {
+            var result = await Task.Run(() => ImportScoresFromFolder(srcFull, dstFull, dryRun)).ConfigureAwait(true);
+            var summary =
+                $"📊 {(dryRun ? "Simulación" : "Importación")} carpeta: escaneados {result.TotalScanned}, válidos {result.MusicCandidates}, {(dryRun ? "se copiarían" : "copiados")} {result.Copied}, " +
+                $"{(dryRun ? "se borrarían origen" : "borrados origen")} {result.SourceDeleted}, {(dryRun ? "no-música a borrar" : "no-música borrados")} {result.NonMusicDeleted}, {(dryRun ? "corruptos a borrar" : "corruptos borrados")} {result.CorruptDeleted}, " +
+                $"normalizados {result.NormalizedNames}, dirs limpiados {result.DeletedDirs}, fallos copia {result.CopyErrors}, fallos borrado {result.DeleteErrors}";
+            if (!string.IsNullOrWhiteSpace(result.NonMusicReasons))
+                summary += $" · motivos no-música: {result.NonMusicReasons}";
+            if (!string.IsNullOrWhiteSpace(result.CorruptReasons))
+                summary += $" · motivos corrupto: {result.CorruptReasons}";
+            Log(summary);
+            txtStatus.Text = summary;
+        }
+        catch (Exception ex)
+        {
+            Log($"❌ Error importando carpeta: {ex.Message}");
+            txtStatus.Text = "Error en importación de carpeta.";
+        }
+        finally
+        {
+            btnImportScoresFromFolder.IsEnabled = true;
+        }
+    }
+
+    private ImportScoresResult ImportScoresFromFolder(string sourceRoot, string destRoot, bool dryRun)
+    {
+        var files = Directory
+            .EnumerateFiles(sourceRoot, "*", SearchOption.AllDirectories)
+            .ToList();
+
+        int musicCandidates = 0;
+        int copied = 0;
+        int sourceDeleted = 0;
+        int nonMusicDeleted = 0;
+        int corruptDeleted = 0;
+        int normalizedNames = 0;
+        int copyErrors = 0;
+        int deleteErrors = 0;
+        var nonMusicReasons = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        var corruptReasons = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        var sourceDirsTouched = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var srcFile in files)
+        {
+            var ext = Path.GetExtension(srcFile);
+            if (!ScoreImportExtensions.Contains(ext))
+            {
+                AddReason(nonMusicReasons, GetNonMusicReason(ext));
+                if (dryRun)
+                {
+                    nonMusicDeleted++;
+                    continue;
+                }
+
+                if (TryDeleteFileSafe(srcFile))
+                {
+                    nonMusicDeleted++;
+                    var nonMusicDir = Path.GetDirectoryName(srcFile);
+                    if (!string.IsNullOrWhiteSpace(nonMusicDir))
+                        sourceDirsTouched.Add(nonMusicDir);
+                }
+                else
+                {
+                    deleteErrors++;
+                }
+                continue;
+            }
+
+            musicCandidates++;
+            if (!IsLikelyNonCorruptMusicOrPdf(srcFile, ext, out var corruptReason))
+            {
+                AddReason(corruptReasons, corruptReason);
+                if (dryRun)
+                {
+                    corruptDeleted++;
+                    continue;
+                }
+
+                if (TryDeleteFileSafe(srcFile))
+                {
+                    corruptDeleted++;
+                    var corruptDir = Path.GetDirectoryName(srcFile);
+                    if (!string.IsNullOrWhiteSpace(corruptDir))
+                        sourceDirsTouched.Add(corruptDir);
+                }
+                else
+                {
+                    deleteErrors++;
+                }
+                continue;
+            }
+
+            try
+            {
+                var originalName = Path.GetFileName(srcFile);
+                var safeName = NormalizeImportFileName(originalName);
+                if (string.IsNullOrWhiteSpace(safeName))
+                {
+                    copyErrors++;
+                    continue;
+                }
+
+                if (!string.Equals(safeName, originalName, StringComparison.Ordinal))
+                    normalizedNames++;
+
+                var destPath = GetUniqueDestinationPath(destRoot, safeName);
+                if (!dryRun)
+                    File.Copy(srcFile, destPath, overwrite: false);
+                copied++;
+
+                if (dryRun)
+                {
+                    sourceDeleted++;
+                    continue;
+                }
+
+                if (TryDeleteFileSafe(srcFile))
+                {
+                    sourceDeleted++;
+                    var dir = Path.GetDirectoryName(srcFile);
+                    if (!string.IsNullOrWhiteSpace(dir))
+                        sourceDirsTouched.Add(dir);
+                }
+                else
+                {
+                    deleteErrors++;
+                }
+            }
+            catch
+            {
+                copyErrors++;
+            }
+        }
+
+        var deletedDirs = dryRun ? 0 : CleanupTouchedDirs(sourceDirsTouched, sourceRoot);
+        return new ImportScoresResult(
+            files.Count,
+            musicCandidates,
+            copied,
+            sourceDeleted,
+            nonMusicDeleted,
+            corruptDeleted,
+            normalizedNames,
+            deletedDirs,
+            copyErrors,
+            deleteErrors,
+            BuildReasonSummary(nonMusicReasons),
+            BuildReasonSummary(corruptReasons));
+    }
+
+    private static string GetNonMusicReason(string ext)
+    {
+        var e = (ext ?? string.Empty).Trim().ToLowerInvariant();
+        return string.IsNullOrWhiteSpace(e) ? "sin_extension" : $"ext:{e}";
+    }
+
+    private static void AddReason(IDictionary<string, int> reasons, string reason)
+    {
+        var key = string.IsNullOrWhiteSpace(reason) ? "desconocido" : reason.Trim();
+        if (reasons.TryGetValue(key, out var cur))
+            reasons[key] = cur + 1;
+        else
+            reasons[key] = 1;
+    }
+
+    private static string BuildReasonSummary(IDictionary<string, int> reasons)
+    {
+        if (reasons.Count == 0)
+            return string.Empty;
+
+        return string.Join(", ", reasons
+            .OrderByDescending(kv => kv.Value)
+            .Take(8)
+            .Select(kv => $"{kv.Key}={kv.Value}"));
+    }
+
+    private static string NormalizeImportFileName(string fileName)
+    {
+        var ext = Path.GetExtension(fileName).ToLowerInvariant();
+        var baseNameRaw = Path.GetFileNameWithoutExtension(fileName)
+            .Replace('_', ' ')
+            .Trim();
+        var baseName = System.Text.RegularExpressions.Regex.Replace(baseNameRaw, @"\s+", " ");
+
+        if (string.IsNullOrWhiteSpace(baseName))
+            baseName = "partitura";
+
+        return FileNameHelper.SanitizeFileName(baseName + ext);
+    }
+
+    private static bool IsLikelyNonCorruptMusicOrPdf(string path, string ext, out string reason)
+    {
+        reason = string.Empty;
+
+        try
+        {
+            var fi = new FileInfo(path);
+            if (!fi.Exists || fi.Length < 16)
+            {
+                reason = "empty_or_too_small";
+                return false;
+            }
+
+            var extNorm = ext.ToLowerInvariant();
+            using var fs = File.Open(path, FileMode.Open, FileAccess.Read, FileShare.Read);
+
+            switch (extNorm)
+            {
+                case ".pdf":
+                    return LooksLikePdf(fs, fi.Length, out reason);
+                case ".mid":
+                case ".midi":
+                    return LooksLikeMidi(fs, out reason);
+                case ".mxl":
+                case ".mscz":
+                    return LooksLikeMusicZip(fs, out reason);
+                case ".xml":
+                case ".musicxml":
+                case ".mscx":
+                    return LooksLikeMusicXml(path, out reason);
+                default:
+                    reason = "unsupported_extension";
+                    return false;
+            }
+        }
+        catch (Exception ex)
+        {
+            reason = ex.GetType().Name;
+            return false;
+        }
+    }
+
+    private static bool LooksLikePdf(FileStream fs, long length, out string reason)
+    {
+        reason = string.Empty;
+        Span<byte> head = stackalloc byte[5];
+        if (fs.Read(head) != head.Length || !head.SequenceEqual("%PDF-"u8))
+        {
+            reason = "pdf_header";
+            return false;
+        }
+
+        var tailLen = (int)Math.Min(2048, length);
+        fs.Seek(-tailLen, SeekOrigin.End);
+        var tail = new byte[tailLen];
+        _ = fs.Read(tail, 0, tail.Length);
+        var tailText = Encoding.ASCII.GetString(tail);
+        if (!tailText.Contains("%%EOF", StringComparison.Ordinal))
+        {
+            reason = "pdf_eof";
+            return false;
+        }
+
+        return true;
+    }
+
+    private static bool LooksLikeMidi(FileStream fs, out string reason)
+    {
+        reason = string.Empty;
+        Span<byte> header = stackalloc byte[4];
+        if (fs.Read(header) != header.Length || !header.SequenceEqual("MThd"u8))
+        {
+            reason = "midi_header";
+            return false;
+        }
+
+        return true;
+    }
+
+    private static bool LooksLikeMusicZip(FileStream fs, out string reason)
+    {
+        try
+        {
+            reason = string.Empty;
+            using var zip = new ZipArchive(fs, ZipArchiveMode.Read, leaveOpen: true);
+            if (zip.Entries.Count == 0)
+            {
+                reason = "zip_empty";
+                return false;
+            }
+
+            var hasMusicPayload = zip.Entries.Any(e =>
+            {
+                var eExt = Path.GetExtension(e.FullName).ToLowerInvariant();
+                return eExt is ".xml" or ".musicxml" or ".mscx" or ".mid" or ".midi";
+            });
+
+            if (!hasMusicPayload)
+            {
+                reason = "zip_no_music_payload";
+                return false;
+            }
+
+            return true;
+        }
+        catch (InvalidDataException)
+        {
+            reason = "zip_invalid";
+            return false;
+        }
+    }
+
+    private static bool LooksLikeMusicXml(string path, out string reason)
+    {
+        reason = string.Empty;
+        var settings = new XmlReaderSettings
+        {
+            DtdProcessing = DtdProcessing.Prohibit,
+            IgnoreComments = true,
+            IgnoreWhitespace = true,
+            CloseInput = true
+        };
+
+        using var fs = File.Open(path, FileMode.Open, FileAccess.Read, FileShare.Read);
+        using var xr = XmlReader.Create(fs, settings);
+        xr.MoveToContent();
+        var root = xr.LocalName;
+        if (string.IsNullOrWhiteSpace(root))
+        {
+            reason = "xml_no_root";
+            return false;
+        }
+
+        if (root.Equals("score-partwise", StringComparison.OrdinalIgnoreCase) ||
+            root.Equals("score-timewise", StringComparison.OrdinalIgnoreCase) ||
+            root.Equals("opus", StringComparison.OrdinalIgnoreCase) ||
+            root.Equals("museScore", StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+
+        reason = "xml_root_not_music";
+        return false;
+    }
+
+    private static string GetUniqueDestinationPath(string destDir, string fileName)
+    {
+        var candidate = Path.Combine(destDir, fileName);
+        if (!File.Exists(candidate))
+            return candidate;
+
+        var baseName = Path.GetFileNameWithoutExtension(fileName);
+        var ext = Path.GetExtension(fileName);
+        for (int i = 1; i <= 9999; i++)
+        {
+            var withSuffix = Path.Combine(destDir, $"{baseName} ({i}){ext}");
+            if (!File.Exists(withSuffix))
+                return withSuffix;
+        }
+
+        return Path.Combine(destDir, $"{baseName}_{Guid.NewGuid():N}{ext}");
+    }
+
+    private static bool TryDeleteFileSafe(string path)
+    {
+        try
+        {
+            if (!File.Exists(path))
+                return false;
+
+            var attrs = File.GetAttributes(path);
+            if ((attrs & FileAttributes.ReadOnly) != 0)
+                File.SetAttributes(path, attrs & ~FileAttributes.ReadOnly);
+
+            File.Delete(path);
+            return !File.Exists(path);
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private static int CleanupTouchedDirs(HashSet<string> touchedDirs, string sourceRoot)
+    {
+        int deleted = 0;
+        var visited = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var ordered = touchedDirs.OrderByDescending(p => p.Length).ToList();
+
+        foreach (var dir in ordered)
+        {
+            deleted += TryDeleteDirIfEmpty(dir, sourceRoot, visited);
+
+            var parent = Directory.GetParent(dir)?.FullName;
+            if (!string.IsNullOrWhiteSpace(parent))
+                deleted += TryDeleteDirIfEmpty(parent, sourceRoot, visited);
+        }
+
+        return deleted;
+    }
+
+    private static int TryDeleteDirIfEmpty(string dir, string sourceRoot, HashSet<string> visited)
+    {
+        var fullDir = Path.GetFullPath(dir);
+        if (!visited.Add(fullDir))
+            return 0;
+        if (!Directory.Exists(fullDir))
+            return 0;
+        if (!PathsEqual(fullDir, sourceRoot) && !IsSubPathOf(fullDir, sourceRoot))
+            return 0;
+
+        try
+        {
+            if (Directory.EnumerateFileSystemEntries(fullDir).Any())
+                return 0;
+
+            Directory.Delete(fullDir, recursive: false);
+            return 1;
+        }
+        catch
+        {
+            return 0;
+        }
+    }
+
+    private static bool PathsEqual(string a, string b)
+        => string.Equals(Path.GetFullPath(a).TrimEnd(Path.DirectorySeparatorChar), Path.GetFullPath(b).TrimEnd(Path.DirectorySeparatorChar), StringComparison.OrdinalIgnoreCase);
+
+    private static bool IsSubPathOf(string candidatePath, string parentPath)
+    {
+        var cand = Path.GetFullPath(candidatePath).TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
+        var parent = Path.GetFullPath(parentPath).TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
+        return cand.StartsWith(parent, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private readonly record struct ImportScoresResult(
+        int TotalScanned,
+        int MusicCandidates,
+        int Copied,
+        int SourceDeleted,
+        int NonMusicDeleted,
+        int CorruptDeleted,
+        int NormalizedNames,
+        int DeletedDirs,
+        int CopyErrors,
+        int DeleteErrors,
+        string NonMusicReasons,
+        string CorruptReasons);
 
     private void BtnCancelDownload_Click(object sender, RoutedEventArgs e)
     {
@@ -11603,7 +12900,7 @@ public partial class MainWindow : Window, IAsyncDisposable
         _audiverisAllVariantsFailed.Clear();
         var cutoff = DateTime.UtcNow - TimeSpan.FromDays(_audiverisQuarantineDays);
         // Try new format first (dated entries), fall back to legacy List<string>
-        var dated = JsonStore.Load<List<AudiverisQuarantineEntry>>(_audiverisAllVariantsFailedPath, null);
+        var dated = JsonStore.Load<List<AudiverisQuarantineEntry>>(_audiverisAllVariantsFailedPath, []);
         if (dated is { Count: > 0 } && dated.Any(e => !string.IsNullOrWhiteSpace(e.Key)))
         {
             int expired = 0;
@@ -12590,6 +13887,21 @@ public partial class MainWindow : Window, IAsyncDisposable
         var state = JsonStore.Load<UiState>(_uiStatePath, new UiState());
         if (!string.IsNullOrWhiteSpace(state.DestinationFolder))
             txtDestFolder.Text = state.DestinationFolder;
+        if (state.ValidateDeleteBudgetMs.HasValue && state.ValidateDeleteBudgetMs.Value > 0)
+            txtValidateDeleteBudgetMs.Text = state.ValidateDeleteBudgetMs.Value.ToString(CultureInfo.InvariantCulture);
+        if (state.ValidateDeletePerDirBudgetMs.HasValue && state.ValidateDeletePerDirBudgetMs.Value > 0)
+            txtValidateDeletePerDirBudgetMs.Text = state.ValidateDeletePerDirBudgetMs.Value.ToString(CultureInfo.InvariantCulture);
+        chkSkipValidationDryRunPrompt.IsChecked = state.SkipValidationDryRunPrompt == true;
+        chkValidationDefaultDryRun.IsChecked = state.ValidationDefaultDryRun != false;
+        txtValidationHistoryFilter.Text = state.ValidationHistoryFilterText ?? string.Empty;
+        SelectComboItemByText(cmbValidationHistoryRisk, state.ValidationHistoryRisk);
+        SelectComboItemByText(cmbValidationHistorySort, state.ValidationHistorySort);
+        chkValidationHistoryOnlyErrors.IsChecked = state.ValidationHistoryOnlyErrors == true;
+        chkValidationHistoryOnlyMissingSample.IsChecked = state.ValidationHistoryOnlyMissingSample == true;
+        if (state.ValidationHistoryLimit.HasValue && state.ValidationHistoryLimit.Value > 0)
+            txtValidationHistoryLimit.Text = state.ValidationHistoryLimit.Value.ToString(CultureInfo.InvariantCulture);
+        SelectComboItemByText(cmbValidationHistoryMode, state.ValidationHistoryMode);
+        UpdateValidationBudgetStatus();
         SelectComboItemByText(cmbSource, state.Source);
         SelectComboItemByText(cmbFilterSource, state.FilterSource);
         if (state.EnableMutopia.HasValue)
@@ -12661,8 +13973,28 @@ public partial class MainWindow : Window, IAsyncDisposable
             AudiverisParallelScale = _audiverisParallelScale,
             OemerParallelScale = _oemerParallelScale,
             OemerTimeoutHeavyStreak = _oemerTimeoutHeavyStreak,
-            AudiverisTimeoutHeavyStreak = _audiverisTimeoutHeavyStreak
+            AudiverisTimeoutHeavyStreak = _audiverisTimeoutHeavyStreak,
+            ValidateDeleteBudgetMs = ParseOptionalPositiveIntForUiState(txtValidateDeleteBudgetMs.Text),
+            ValidateDeletePerDirBudgetMs = ParseOptionalPositiveIntForUiState(txtValidateDeletePerDirBudgetMs.Text),
+            SkipValidationDryRunPrompt = chkSkipValidationDryRunPrompt.IsChecked == true,
+            ValidationDefaultDryRun = chkValidationDefaultDryRun.IsChecked == true,
+            ValidationHistoryFilterText = txtValidationHistoryFilter.Text,
+            ValidationHistoryRisk = (cmbValidationHistoryRisk.SelectedItem as ComboBoxItem)?.Content?.ToString(),
+            ValidationHistorySort = (cmbValidationHistorySort.SelectedItem as ComboBoxItem)?.Content?.ToString(),
+            ValidationHistoryOnlyErrors = chkValidationHistoryOnlyErrors.IsChecked == true,
+            ValidationHistoryOnlyMissingSample = chkValidationHistoryOnlyMissingSample.IsChecked == true,
+            ValidationHistoryMode = (cmbValidationHistoryMode.SelectedItem as ComboBoxItem)?.Content?.ToString(),
+            ValidationHistoryLimit = ParseOptionalPositiveIntForUiState(txtValidationHistoryLimit.Text)
         });
+    }
+
+    private static int? ParseOptionalPositiveIntForUiState(string? rawValue)
+    {
+        var value = (rawValue ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(value))
+            return null;
+
+        return int.TryParse(value, out var parsed) && parsed > 0 ? parsed : null;
     }
 
     private static readonly string[] NonClassicalHints =
