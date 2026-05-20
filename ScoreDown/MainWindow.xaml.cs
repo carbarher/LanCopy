@@ -319,8 +319,13 @@ public partial class MainWindow : Window, IAsyncDisposable
     private readonly int _oemerPdfFailFastMinPages = ReadFeatureFlagInt("SCOREDOWN_OEMER_PDF_FAIL_FAST_MIN_PAGES", 10, 2, 5000);
     private readonly int _oemerPdfFailFastMaxFails = ReadFeatureFlagInt("SCOREDOWN_OEMER_PDF_FAIL_FAST_MAX_FAILS", 6, 2, 5000);
     private readonly int _oemerPdfFailFastFailRatePct = ReadFeatureFlagInt("SCOREDOWN_OEMER_PDF_FAIL_FAST_PCT", 80, 50, 100);
-    // 0 = sin límite; >0 = saltear PDFs con más páginas que el umbral antes de iniciar conversión
-    private readonly int _oemerPdfMaxPagesAbsolute = ReadFeatureFlagInt("SCOREDOWN_OEMER_PDF_MAX_PAGES_ABSOLUTE", 0, 0, 10000);
+    private readonly int _oemerPdfConsecutiveFailCutoff = ReadFeatureFlagInt("SCOREDOWN_OEMER_PDF_CONSEC_FAIL_CUTOFF", 4, 2, 200);
+    private readonly int _oemerPdfSamplePages = ReadFeatureFlagInt("SCOREDOWN_OEMER_PDF_SAMPLE_PAGES", 24, 0, 5000);
+    private readonly int _oemerPngMinBytes = ReadFeatureFlagInt("SCOREDOWN_OEMER_PNG_MIN_BYTES", 12000, 0, 5_000_000);
+    private readonly int _oemerPngMinVariance = ReadFeatureFlagInt("SCOREDOWN_OEMER_PNG_MIN_VAR", 8, 0, 255);
+    private readonly int _oemerFailSignatureCooldownMinutes = ReadFeatureFlagInt("SCOREDOWN_OEMER_FAIL_SIGNATURE_COOLDOWN_MIN", 360, 5, 10080);
+    // 0 = sin límite; >0 = procesa solo primeras N páginas del PDF en fallback oemer.
+    private readonly int _oemerPdfMaxPagesAbsolute = ReadFeatureFlagInt("SCOREDOWN_OEMER_PDF_MAX_PAGES_ABSOLUTE", 120, 0, 10000);
     private readonly int _oemerTimeoutStrikeBoostSeconds = ReadFeatureFlagInt("SCOREDOWN_OEMER_TIMEOUT_STRIKE_BOOST_SEC", 120, 0, 1200);
     private readonly int _oemerTimeoutCooldownMinutes = ReadFeatureFlagInt("SCOREDOWN_OEMER_TIMEOUT_COOLDOWN_MIN", 720, 10, 10080);
     private readonly int _oemerStrikeDecayHours = ReadFeatureFlagInt("SCOREDOWN_OEMER_STRIKE_DECAY_HOURS", 48, 1, 8760);
@@ -329,6 +334,7 @@ public partial class MainWindow : Window, IAsyncDisposable
     private bool _oemerKnownPageFailuresDirty;
     // Contadores acumulados de tipos de fallo de oemer — para diagnóstico al final del lote
     private readonly ConcurrentDictionary<string, int> _oemerFailTypeCounters = new(StringComparer.OrdinalIgnoreCase);
+    private readonly ConcurrentDictionary<string, DateTime> _oemerFailSignatureCooldown = new(StringComparer.OrdinalIgnoreCase);
     private readonly ConcurrentDictionary<string, DateTime> _oemerTimeoutFamilies = new(StringComparer.OrdinalIgnoreCase);
     private readonly ConcurrentDictionary<string, int> _oemerTimeoutStrikes = new(StringComparer.OrdinalIgnoreCase);
     private readonly ConcurrentDictionary<string, DateTime> _oemerStrikeLastUtc = new(StringComparer.OrdinalIgnoreCase);
@@ -5101,6 +5107,13 @@ public partial class MainWindow : Window, IAsyncDisposable
         {
             if (!canUseOemerFallback)
                 return false;
+            var familyKey = NormalizeAudiverisFamilyKey(inputPath);
+            if (TryGetOemerFailSignatureCooldownReason(familyKey, out var cooldownReason))
+            {
+                Interlocked.Increment(ref fallbackBudgetSkips);
+                Log($"⏭️ Audiveris fallback→oemer [{idx}/{total}] {name}: omitido por cooldown de firma ({cooldownReason}).");
+                return false;
+            }
             if (!TryReserveFallbackAttempt())
             {
                 Interlocked.Increment(ref fallbackBudgetSkips);
@@ -6146,76 +6159,107 @@ public partial class MainWindow : Window, IAsyncDisposable
         Directory.CreateDirectory(tempDir);
         try
         {
-            LogDebug($"🎵 oemer PDF ({name}): convirtiendo con {renderer.Value.Kind}…");
-            var pages = await ConvertPdfToPngPagesAsync(pdfPath, tempDir, renderer.Value, 300, ct).ConfigureAwait(true);
+            var renderCap = _oemerPdfMaxPagesAbsolute > 0 ? _oemerPdfMaxPagesAbsolute : 0;
+            LogDebug($"🎵 oemer PDF ({name}): convirtiendo con {renderer.Value.Kind} (cap={renderCap})…");
+            var pages = await ConvertPdfToPngPagesAsync(pdfPath, tempDir, renderer.Value, 300, ct, renderCap).ConfigureAwait(true);
             if (pages.Count == 0)
             {
                 Log($"⚠️ oemer PDF ({name}): {renderer.Value.Kind} no produjo páginas PNG.");
                 return (false, false);
             }
 
-            Log($"🎵 oemer PDF ({name}): {pages.Count} página(s) → ejecutando oemer…");
+            if (_oemerPdfMaxPagesAbsolute > 0 && pages.Count >= _oemerPdfMaxPagesAbsolute)
+                Log($"ℹ️ oemer PDF ({name}): procesando primeras {_oemerPdfMaxPagesAbsolute} página(s) por cap de seguridad.");
 
-            // Cap absoluto: saltar antes de procesar si el PDF supera el límite configurado
-            if (_oemerPdfMaxPagesAbsolute > 0 && pages.Count > _oemerPdfMaxPagesAbsolute)
-            {
-                Log($"⏭️ oemer PDF ({name}): {pages.Count} páginas supera el límite absoluto de {_oemerPdfMaxPagesAbsolute} (SCOREDOWN_OEMER_PDF_MAX_PAGES_ABSOLUTE). Saltando.");
-                return (false, false);
-            }
+            var samplePageIndices = SelectOemerPdfSampleIndices(pages.Count, _oemerPdfSamplePages);
+            var plannedPages = samplePageIndices.Count;
+            if (plannedPages < pages.Count)
+                Log($"🎯 oemer PDF ({name}): muestreo inteligente activo ({plannedPages}/{pages.Count} páginas).");
+
+            Log($"🎵 oemer PDF ({name}): {plannedPages} página(s) planificadas → ejecutando oemer…");
 
             int okPages = 0;
             int failPages = 0;
-            for (int pageIdx = 0; pageIdx < pages.Count; pageIdx++)
+            int skippedPreflight = 0;
+            int consecutiveFails = 0;
+            for (int sampledIdx = 0; sampledIdx < samplePageIndices.Count; sampledIdx++)
             {
                 ct.ThrowIfCancellationRequested();
+                var pageIdx = samplePageIndices[sampledIdx];
                 var pagePng = pages[pageIdx];
                 var pageNum = pageIdx + 1;
-                var result = await RunOemerOnImageAsync(
-                    oemerExe,
-                    prefixArgs,
-                    pagePng,
-                    ct,
-                    isFromPdf: true,
-                    pdfPageCount: pages.Count,
-                    timeoutFamilyKey: pdfFamilyKey,
-                    knownSizeBytes: knownPdfSizeBytes).ConfigureAwait(true);
-                if (result.Success)
+
+                if (!PassesOemerPagePreflight(pagePng, _oemerPngMinBytes, _oemerPngMinVariance, out var preflightReason))
                 {
-                    // Mover MXL al dir del PDF: stem_p0001.mxl
-                    foreach (var ext in AudiverisOutputExtensions)
-                    {
-                        var pageStem = Path.GetFileNameWithoutExtension(pagePng);
-                        var src = Path.Combine(tempDir, pageStem + ext);
-                        if (!File.Exists(src)) continue;
-                        var dst = Path.Combine(pdfDir, $"{pdfStem}_p{pageNum:0000}{ext}");
-                        try { File.Move(src, dst, overwrite: true); okPages++; } catch { }
-                    }
+                    skippedPreflight++;
+                    consecutiveFails++;
+                    LogDebug($"🎵 oemer PDF ({name}) pág {pageNum}: preflight omitida ({preflightReason}).");
                 }
                 else
                 {
-                    failPages++;
-                    LogDebug($"🎵 oemer PDF ({name}) pág {pageNum}: sin salida (permanent={result.PermanentFailure}).");
+                    var result = await RunOemerOnImageAsync(
+                        oemerExe,
+                        prefixArgs,
+                        pagePng,
+                        ct,
+                        isFromPdf: true,
+                        pdfPageCount: pages.Count,
+                        timeoutFamilyKey: pdfFamilyKey,
+                        knownSizeBytes: knownPdfSizeBytes).ConfigureAwait(true);
+                    if (result.Success)
+                    {
+                        consecutiveFails = 0;
+                        // Mover MXL al dir del PDF: stem_p0001.mxl
+                        var pageProducedOutput = false;
+                        foreach (var ext in AudiverisOutputExtensions)
+                        {
+                            var pageStem = Path.GetFileNameWithoutExtension(pagePng);
+                            var src = Path.Combine(tempDir, pageStem + ext);
+                            if (!File.Exists(src)) continue;
+                            var dst = Path.Combine(pdfDir, $"{pdfStem}_p{pageNum:0000}{ext}");
+                            try
+                            {
+                                File.Move(src, dst, overwrite: true);
+                                pageProducedOutput = true;
+                            }
+                            catch { }
+                        }
+                        if (pageProducedOutput) okPages++;
+                    }
+                    else
+                    {
+                        failPages++;
+                        consecutiveFails++;
+                        LogDebug($"🎵 oemer PDF ({name}) pág {pageNum}: sin salida (permanent={result.PermanentFailure}).");
+                    }
                 }
 
-                var processedPages = pageNum;
+                var processedPages = sampledIdx + 1;
                 var failRatePct = processedPages > 0
-                    ? (int)Math.Round(failPages * 100.0 / processedPages)
+                    ? (int)Math.Round((failPages + skippedPreflight) * 100.0 / processedPages)
                     : 0;
                 if (processedPages >= _oemerPdfFailFastMinPages &&
-                    failPages >= _oemerPdfFailFastMaxFails &&
+                    (failPages + skippedPreflight) >= _oemerPdfFailFastMaxFails &&
                     failRatePct >= _oemerPdfFailFastFailRatePct)
                 {
-                    Log($"🛑 oemer PDF ({name}): fail-fast activado en pág {pageNum}/{pages.Count} (ok={okPages}, fail={failPages}, ratio={failRatePct}%).");
+                    Log($"🛑 oemer PDF ({name}): fail-fast activado en pág {pageNum}/{plannedPages} (ok={okPages}, fail={failPages}, preflight={skippedPreflight}, ratio={failRatePct}%).");
+                    break;
+                }
+
+                if (consecutiveFails >= _oemerPdfConsecutiveFailCutoff)
+                {
+                    Log($"🛑 oemer PDF ({name}): corte por fallos consecutivos en pág {pageNum}/{plannedPages} (consec={consecutiveFails}, ok={okPages}).");
                     break;
                 }
             }
 
             if (okPages > 0)
             {
-                Log($"✅ oemer PDF ({name}): {okPages}/{pages.Count} página(s) convertidas.");
+                var preflightPart = skippedPreflight > 0 ? $", preflight={skippedPreflight}" : string.Empty;
+                Log($"✅ oemer PDF ({name}): {okPages}/{plannedPages} página(s) convertidas{preflightPart}.");
                 return (true, false);
             }
-            Log($"⚠️ oemer PDF ({name}): ninguna página produjo MXL.");
+            Log($"⚠️ oemer PDF ({name}): ninguna página produjo MXL (fail={failPages}, preflight={skippedPreflight}).");
             return (false, false);
         }
         finally
@@ -6298,6 +6342,10 @@ public partial class MainWindow : Window, IAsyncDisposable
         // Telemetría de tipos de fallo
         var failType = ClassifyOemerFailType(combined);
         _oemerFailTypeCounters.AddOrUpdate(failType, 1, (_, c) => c + 1);
+        var signatureFamilyKey = string.IsNullOrWhiteSpace(timeoutFamilyKey)
+            ? NormalizeAudiverisFamilyKey(inputPath)
+            : timeoutFamilyKey;
+        RegisterOemerFailSignatureCooldown(signatureFamilyKey, failType, isPermanent);
         var tail = combined.Length > 500 ? "..." + combined[^500..] : combined;
         Log($"⚠️ oemer fallo ({name}): exit={process.ExitCode} {tail}");
         return (false, isPermanent);
@@ -6310,6 +6358,12 @@ public partial class MainWindow : Window, IAsyncDisposable
                output.Contains("no staffs", StringComparison.OrdinalIgnoreCase) ||
                output.Contains("Empty page", StringComparison.OrdinalIgnoreCase) ||
                output.Contains("no notes detected", StringComparison.OrdinalIgnoreCase) ||
+               output.Contains("max() iterable argument is empty", StringComparison.OrdinalIgnoreCase) ||
+               output.Contains("index 0 is out of bounds", StringComparison.OrdinalIgnoreCase) ||
+               output.Contains("division by zero", StringComparison.OrdinalIgnoreCase) ||
+               output.Contains("Found array with 1 sample", StringComparison.OrdinalIgnoreCase) ||
+               output.Contains("too many indices for array", StringComparison.OrdinalIgnoreCase) ||
+               output.Contains("list index out of range", StringComparison.OrdinalIgnoreCase) ||
                // oemer pasó PDF directamente sin conversión previa (UnidentifiedImageError)
                output.Contains("UnidentifiedImageError", StringComparison.OrdinalIgnoreCase);
     }
@@ -6323,6 +6377,12 @@ public partial class MainWindow : Window, IAsyncDisposable
             output.Contains("no staffs", StringComparison.OrdinalIgnoreCase) ||
             output.Contains("staffline", StringComparison.OrdinalIgnoreCase) ||
             output.Contains("Empty staffline", StringComparison.OrdinalIgnoreCase)) return "staffline";
+        if (output.Contains("Found array with 1 sample", StringComparison.OrdinalIgnoreCase)) return "ClusteringSingleSample";
+        if (output.Contains("max() iterable argument is empty", StringComparison.OrdinalIgnoreCase)) return "EmptyIterable";
+        if (output.Contains("index 0 is out of bounds", StringComparison.OrdinalIgnoreCase)) return "IndexOutOfBounds";
+        if (output.Contains("too many indices for array", StringComparison.OrdinalIgnoreCase)) return "ArrayDimMismatch";
+        if (output.Contains("list index out of range", StringComparison.OrdinalIgnoreCase)) return "ListIndexOutOfRange";
+        if (output.Contains("KeyError", StringComparison.OrdinalIgnoreCase)) return "KeyError";
         if (output.Contains("AssertionError", StringComparison.OrdinalIgnoreCase)) return "AssertionError";
         if (output.Contains("ZeroDivisionError", StringComparison.OrdinalIgnoreCase)) return "ZeroDivision";
         if (output.Contains("TypeError", StringComparison.OrdinalIgnoreCase)) return "TypeError";
@@ -6332,6 +6392,159 @@ public partial class MainWindow : Window, IAsyncDisposable
         if (output.Contains("RuntimeError", StringComparison.OrdinalIgnoreCase)) return "RuntimeError";
         if (output.Contains("MemoryError", StringComparison.OrdinalIgnoreCase)) return "MemoryError";
         return "other";
+    }
+
+    private static List<int> SelectOemerPdfSampleIndices(int totalPages, int maxSamples)
+    {
+        if (totalPages <= 0) return [];
+        if (maxSamples <= 0 || maxSamples >= totalPages)
+            return Enumerable.Range(0, totalPages).ToList();
+
+        var set = new SortedSet<int>();
+        set.Add(0);
+        set.Add(totalPages - 1);
+        for (var i = 0; i < Math.Min(4, totalPages); i++)
+            set.Add(i);
+
+        for (var i = 0; i < maxSamples; i++)
+        {
+            var idx = (int)Math.Round(i * (totalPages - 1d) / Math.Max(1, maxSamples - 1d));
+            set.Add(Math.Clamp(idx, 0, totalPages - 1));
+        }
+
+        return set.Take(maxSamples).ToList();
+    }
+
+    private string BuildOemerSignatureCooldownKey(string familyKey, string failType)
+        => $"{familyKey}|{failType}";
+
+    private bool TryGetOemerFailSignatureCooldownReason(string familyKey, out string reason)
+    {
+        reason = string.Empty;
+        if (string.IsNullOrWhiteSpace(familyKey) || _oemerFailSignatureCooldown.IsEmpty)
+            return false;
+
+        var now = DateTime.UtcNow;
+        foreach (var kv in _oemerFailSignatureCooldown)
+        {
+            if (kv.Value <= now)
+            {
+                _oemerFailSignatureCooldown.TryRemove(kv.Key, out _);
+                continue;
+            }
+
+            var sep = kv.Key.IndexOf('|');
+            if (sep <= 0) continue;
+            var keyFamily = kv.Key.Substring(0, sep);
+            if (!string.Equals(keyFamily, familyKey, StringComparison.OrdinalIgnoreCase))
+                continue;
+
+            var failType = kv.Key[(sep + 1)..];
+            var mins = Math.Max(1, (int)Math.Ceiling((kv.Value - now).TotalMinutes));
+            reason = $"{failType} {mins}min";
+            return true;
+        }
+
+        return false;
+    }
+
+    private void RegisterOemerFailSignatureCooldown(string familyKey, string failType, bool permanent)
+    {
+        if (string.IsNullOrWhiteSpace(familyKey) || string.IsNullOrWhiteSpace(failType))
+            return;
+
+        // Enfallas no permanentes: no enfriar por firma para no ocultar recuperaciones.
+        if (!permanent)
+            return;
+
+        var until = DateTime.UtcNow.AddMinutes(_oemerFailSignatureCooldownMinutes);
+        _oemerFailSignatureCooldown[BuildOemerSignatureCooldownKey(familyKey, failType)] = until;
+    }
+
+    private static bool PassesOemerPagePreflight(string pagePath, int minBytes, int minVariance, out string reason)
+    {
+        reason = string.Empty;
+        try
+        {
+            if (!File.Exists(pagePath))
+            {
+                reason = "file-missing";
+                return false;
+            }
+
+            var fi = new FileInfo(pagePath);
+            if (minBytes > 0 && fi.Length < minBytes)
+            {
+                reason = $"tiny-file({fi.Length}b)";
+                return false;
+            }
+
+            using var source = new System.Drawing.Bitmap(pagePath);
+            if (source.Width < 300 || source.Height < 300)
+            {
+                reason = $"tiny-image({source.Width}x{source.Height})";
+                return false;
+            }
+
+            var rect = new System.Drawing.Rectangle(0, 0, source.Width, source.Height);
+            using var bmp = source.Clone(rect, System.Drawing.Imaging.PixelFormat.Format24bppRgb);
+            var data = bmp.LockBits(rect, System.Drawing.Imaging.ImageLockMode.ReadOnly, System.Drawing.Imaging.PixelFormat.Format24bppRgb);
+            try
+            {
+                var strideAbs = Math.Abs(data.Stride);
+                var raw = new byte[strideAbs * data.Height];
+                System.Runtime.InteropServices.Marshal.Copy(data.Scan0, raw, 0, raw.Length);
+
+                var step = 8;
+                var n = 0;
+                var sum = 0.0;
+                var sum2 = 0.0;
+                for (var y = 0; y < bmp.Height; y += step)
+                {
+                    var rowOffset = data.Stride >= 0
+                        ? (y * strideAbs)
+                        : ((bmp.Height - 1 - y) * strideAbs);
+
+                    for (var x = 0; x < bmp.Width; x += step)
+                    {
+                        var px = rowOffset + (x * 3);
+                        if (px + 2 >= raw.Length) continue;
+                        var b = raw[px];
+                        var g = raw[px + 1];
+                        var r = raw[px + 2];
+                        var gray = (0.299 * r) + (0.587 * g) + (0.114 * b);
+                        sum += gray;
+                        sum2 += gray * gray;
+                        n++;
+                    }
+                }
+
+                if (n <= 0)
+                {
+                    reason = "empty-sample";
+                    return false;
+                }
+
+                var mean = sum / n;
+                var variance = Math.Max(0.0, (sum2 / n) - (mean * mean));
+                if (minVariance > 0 && variance < minVariance)
+                {
+                    reason = $"low-variance({variance:0.0})";
+                    return false;
+                }
+
+                return true;
+            }
+            finally
+            {
+                bmp.UnlockBits(data);
+            }
+        }
+        catch (Exception ex)
+        {
+            reason = $"preflight-ex:{ex.GetType().Name}";
+            return false;
+        }
     }
 
     private static string GetDominantFailType(ConcurrentDictionary<string, int> counters)
@@ -6520,39 +6733,54 @@ public partial class MainWindow : Window, IAsyncDisposable
     /// Devuelve la lista de rutas PNG generadas en orden de página, o lista vacía si falla.
     /// </summary>
     private async Task<List<string>> ConvertPdfToPngPagesAsync(
-        string pdfPath, string outDir, (string Kind, string Exe) renderer, int dpi, CancellationToken ct)
+        string pdfPath, string outDir, (string Kind, string Exe) renderer, int dpi, CancellationToken ct, int maxPages = 0)
     {
         var pages = new List<string>();
         var pdfName = Path.GetFileNameWithoutExtension(pdfPath);
+        var hasCap = maxPages > 0;
 
         if (renderer.Kind == "gs")
         {
             var outputPattern = Path.Combine(outDir, "page_%04d.png");
-            var args = new[]
+            var args = new List<string>
             {
                 "-dBATCH", "-dNOPAUSE", "-dQUIET",
-                "-sDEVICE=pnggray", $"-r{dpi}",
-                $"-sOutputFile={outputPattern}",
-                pdfPath
+                "-sDEVICE=pnggray", $"-r{dpi}"
             };
+            if (hasCap)
+            {
+                args.Add("-dFirstPage=1");
+                args.Add($"-dLastPage={maxPages}");
+            }
+            args.Add($"-sOutputFile={outputPattern}");
+            args.Add(pdfPath);
             var ok = await RunProcessAsync(renderer.Exe, args, pdfName, "GS PDF→PNG", TimeSpan.FromMinutes(5), ct).ConfigureAwait(true);
             if (!ok) return pages;
         }
         else if (renderer.Kind == "pdftoppm")
         {
             var prefix = Path.Combine(outDir, "page");
-            var args = new[] { "-r", dpi.ToString(), "-gray", "-png", pdfPath, prefix };
+            var args = new List<string> { "-r", dpi.ToString(), "-gray", "-png" };
+            if (hasCap)
+            {
+                args.Add("-f"); args.Add("1");
+                args.Add("-l"); args.Add(maxPages.ToString());
+            }
+            args.Add(pdfPath);
+            args.Add(prefix);
             var ok = await RunProcessAsync(renderer.Exe, args, pdfName, "pdftoppm PDF→PNG", TimeSpan.FromMinutes(5), ct).ConfigureAwait(true);
             if (!ok) return pages;
         }
         else if (renderer.Kind == "pymupdf")
         {
+            var pageLimitExpr = hasCap ? $"min(len(doc),{maxPages})" : "len(doc)";
             var script =
                 "import fitz,sys,os;" +
                 "doc=fitz.open(sys.argv[1]);" +
                 $"dpi={dpi};" +
+                $"n={pageLimitExpr};" +
                 "[doc[i].get_pixmap(matrix=fitz.Matrix(dpi/72,dpi/72),colorspace=fitz.csGRAY)" +
-                ".save(os.path.join(sys.argv[2],f'page_{{i+1:04d}}.png')) for i in range(len(doc))]";
+                ".save(os.path.join(sys.argv[2],f'page_{{i+1:04d}}.png')) for i in range(n)]";
             var args = new[] { "-c", script, pdfPath, outDir };
             var ok = await RunProcessAsync(renderer.Exe, args, pdfName, "pymupdf PDF→PNG", TimeSpan.FromMinutes(5), ct).ConfigureAwait(true);
             if (!ok) return pages;
