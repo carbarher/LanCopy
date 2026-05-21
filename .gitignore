@@ -20,6 +20,7 @@ Backups/
 # Carpeta local de ebooks fuera del catálogo (no versionar)
 SlskDownAvalonia/_NoEspañol/
 # rust-analyzer / cargo flycheck scratch (no versionar)
+**/target/
 **/target/flycheck*/
 
 # Bundles locales en la raíz del repo
