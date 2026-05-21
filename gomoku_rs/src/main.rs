@@ -30,11 +30,47 @@ fn xor64(s: &mut u64) -> u64 {
     *s
 }
 
-const N: usize = 15;
+const N: usize = 13;
 const WIN: usize = 5;
 const BIG: i64 = 10_000_000_000; // >> max possible eval_board value (~1B)
 
 type Board = [[i8; N]; N];
+
+const fn default_ai_depth() -> u32 {
+    if N <= 13 { 4 } else { 3 }
+}
+
+const fn base_mcts_sims(auto_mode: bool) -> u32 {
+    if N <= 13 {
+        if auto_mode { 1800 } else { 3600 }
+    } else if auto_mode {
+        1500
+    } else {
+        3000
+    }
+}
+
+fn opening_points() -> Vec<(usize, usize)> {
+    let center = (N / 2) as isize;
+    const OFFSETS: &[(isize, isize)] = &[
+        (0, 0),
+        (0, 1), (1, 0), (0, -1), (-1, 0),
+        (1, 1), (-1, 1), (1, -1), (-1, -1),
+        (0, 2), (2, 0), (0, -2), (-2, 0),
+    ];
+
+    OFFSETS.iter()
+        .filter_map(|&(dr, dc)| {
+            let r = center + dr;
+            let c = center + dc;
+            if r >= 0 && r < N as isize && c >= 0 && c < N as isize {
+                Some((r as usize, c as usize))
+            } else {
+                None
+            }
+        })
+        .collect()
+}
 
 const LEARN_FILE: &str = "gomoku_learned.tsv";
 const PREFS_FILE: &str = "gomoku_prefs.tsv";
@@ -73,8 +109,8 @@ struct PersistedPrefs {
 impl Default for PersistedPrefs {
     fn default() -> Self {
         Self {
-            depth_black: 3,
-            depth_white: 3,
+            depth_black: default_ai_depth(),
+            depth_white: default_ai_depth(),
             profile_black: AiProfile::Minimax,
             profile_white: AiProfile::Mcts,
             mcts_threads: 0,
@@ -674,7 +710,7 @@ impl App {
         let learned = Arc::clone(&self.learned);
         let mcts_sims = Arc::clone(&self.mcts_sims);
         let base_hash = self.board_hash;
-        let n_sims: u32 = if self.mode == Mode::Auto { 1500 } else { 3000 };
+        let n_sims: u32 = base_mcts_sims(self.mode == Mode::Auto);
         let delay_ms: u64 = match self.mode {
             Mode::Auto => 0,
             _ => 50,
@@ -1233,6 +1269,12 @@ fn ai_best_move(
     let start = Instant::now();
     let budget_ms: u128 = if disable_opt {
         u128::MAX
+    } else if N <= 13 && depth >= 5 {
+        1600
+    } else if N <= 13 && depth >= 4 {
+        1100
+    } else if N <= 13 {
+        800
     } else if depth >= 5 {
         1300
     } else if depth >= 4 {
@@ -1244,12 +1286,8 @@ fn ai_best_move(
     // First move: pick random centre cell so every game opens differently
     let pieces: usize = board.iter().flatten().filter(|&&v| v != 0).count();
     if pieces == 0 {
-        const OPTS: &[(usize, usize)] = &[
-            (7, 7), (7, 8), (8, 7), (8, 8),
-            (6, 7), (7, 6), (9, 7), (7, 9),
-            (6, 8), (8, 6), (6, 6), (9, 9),
-        ];
-        return Some(OPTS[(xor64(&mut rng) as usize) % OPTS.len()]);
+        let opts = opening_points();
+        return Some(opts[(xor64(&mut rng) as usize) % opts.len()]);
     }
 
     // Early opening shortcut: avoid expensive minimax tree when the board is nearly empty.
@@ -1447,11 +1485,7 @@ fn ai_book_move(board: &Board, player: i8, seed: u64) -> Option<(usize, usize)> 
     let mut rng = if seed == 0 { rng_seed() } else { seed };
     let pieces: usize = board.iter().flatten().filter(|&&v| v != 0).count();
     let center = (N / 2, N / 2);
-    let ring: &[(usize, usize)] = &[
-        (7, 7), (7, 8), (8, 7), (8, 8),
-        (6, 7), (7, 6), (8, 9), (9, 8),
-        (6, 6), (6, 8), (8, 6), (9, 9),
-    ];
+    let ring = opening_points();
 
     if pieces == 0 {
         return Some(ring[(xor64(&mut rng) as usize) % ring.len()]);
@@ -1822,6 +1856,7 @@ impl eframe::App for App {
                     if ui.button(pause_lbl).clicked() { self.paused = !self.paused; }
                 }
                 if ui.button("Reset stats").clicked() { self.reset_stats(); }
+                if ui.button("Reset ranking").clicked() { self.reset_rankings(); }
             });
 
             // ── toolbar row 2: depth sliders + AI kind selector ──
@@ -1927,7 +1962,6 @@ impl eframe::App for App {
                     );
                     ui.separator();
                 }
-                if ui.button("Reset ranking").clicked() { self.reset_rankings(); }
             });
 
             // ── stats bar ──
@@ -2024,18 +2058,23 @@ impl eframe::App for App {
                 let y = oy + i as f32 * CELL;
                 painter.line_segment([Pos2::new(ox, y), Pos2::new(ex, y)], Stroke::new(1.0, line_col));
                 painter.line_segment([Pos2::new(x, oy), Pos2::new(x, ey)], Stroke::new(1.0, line_col));
-                // Column labels (A-O) at top
+                // Column labels at top
                 let col_lbl = (b'A' + i as u8) as char;
                 painter.text(Pos2::new(x, oy - 18.0), egui::Align2::CENTER_CENTER,
                     col_lbl.to_string(), egui::FontId::monospace(11.0), coord_col);
-                // Row labels (1-15) at left
+                // Row labels at left
                 painter.text(Pos2::new(ox - 20.0, y), egui::Align2::CENTER_CENTER,
                     (i + 1).to_string(), egui::FontId::monospace(11.0), coord_col);
             }
 
             // Hoshi (star points)
-            for &hr in &[3usize, 7, 11] {
-                for &hc in &[3usize, 7, 11] {
+            let hoshi_points: &[usize] = match N {
+                13 => &[3, 6, 9],
+                15 => &[3, 7, 11],
+                _ => &[],
+            };
+            for &hr in hoshi_points {
+                for &hc in hoshi_points {
                     let pos = Pos2::new(ox + hc as f32 * CELL, oy + hr as f32 * CELL);
                     painter.circle_filled(pos, 4.5, line_col);
                 }
