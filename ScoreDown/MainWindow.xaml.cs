@@ -3504,7 +3504,7 @@ public partial class MainWindow : Window, IAsyncDisposable
 
     private void BtnChooseFolder_Click(object sender, RoutedEventArgs e)
     {
-        var folder = DarkDialogService.PromptFolder(this, "Carpeta de destino para las partituras", txtDestFolder.Text);
+        var folder = DarkDialogService.PromptFolder(this, "Biblioteca de partituras", txtDestFolder.Text);
         if (!string.IsNullOrWhiteSpace(folder))
         {
             if (!Directory.Exists(folder))
@@ -3520,7 +3520,7 @@ public partial class MainWindow : Window, IAsyncDisposable
         var destFolder = txtDestFolder.Text?.Trim();
         if (string.IsNullOrWhiteSpace(destFolder) || !Directory.Exists(destFolder))
         {
-            DarkDialogService.ShowMessage(this, "Selecciona una carpeta de destino válida.", "Importar carpeta", MessageBoxButton.OK, MessageBoxImage.Warning);
+            DarkDialogService.ShowMessage(this, "Selecciona una biblioteca de partituras válida.", "Importar carpeta", MessageBoxButton.OK, MessageBoxImage.Warning);
             return;
         }
 
@@ -6382,6 +6382,10 @@ public partial class MainWindow : Window, IAsyncDisposable
             output.Contains("no staffs", StringComparison.OrdinalIgnoreCase) ||
             output.Contains("staffline", StringComparison.OrdinalIgnoreCase) ||
             output.Contains("Empty staffline", StringComparison.OrdinalIgnoreCase)) return "staffline";
+        if (output.Contains("max() iterable argument is empty", StringComparison.OrdinalIgnoreCase) &&
+            (output.Contains("align_staffs", StringComparison.OrdinalIgnoreCase) ||
+             output.Contains("staff_extract", StringComparison.OrdinalIgnoreCase) ||
+             output.Contains("staffline_extraction", StringComparison.OrdinalIgnoreCase))) return "staffline";
         if (output.Contains("Found array with 1 sample", StringComparison.OrdinalIgnoreCase)) return "ClusteringSingleSample";
         if (output.Contains("max() iterable argument is empty", StringComparison.OrdinalIgnoreCase)) return "EmptyIterable";
         if (output.Contains("index 0 is out of bounds", StringComparison.OrdinalIgnoreCase)) return "IndexOutOfBounds";
@@ -6403,6 +6407,8 @@ public partial class MainWindow : Window, IAsyncDisposable
     {
         if (string.IsNullOrWhiteSpace(failType)) return false;
         return string.Equals(failType, "staffline", StringComparison.OrdinalIgnoreCase) ||
+               string.Equals(failType, "EmptyIterable", StringComparison.OrdinalIgnoreCase) ||
+               string.Equals(failType, "EmptyPage", StringComparison.OrdinalIgnoreCase) ||
                string.Equals(failType, "IndexOutOfBounds", StringComparison.OrdinalIgnoreCase) ||
                string.Equals(failType, "ArrayDimMismatch", StringComparison.OrdinalIgnoreCase) ||
                string.Equals(failType, "ClusteringSingleSample", StringComparison.OrdinalIgnoreCase) ||
@@ -8764,7 +8770,7 @@ public partial class MainWindow : Window, IAsyncDisposable
         var destFolder = txtDestFolder.Text?.Trim();
         if (string.IsNullOrWhiteSpace(destFolder) || !Directory.Exists(destFolder))
         {
-            DarkDialogService.ShowMessage(this, "Selecciona una carpeta de destino válida.", "Generar vídeo", MessageBoxButton.OK, MessageBoxImage.Warning);
+            DarkDialogService.ShowMessage(this, "Selecciona una biblioteca de partituras válida.", "Generar vídeo", MessageBoxButton.OK, MessageBoxImage.Warning);
             return;
         }
 

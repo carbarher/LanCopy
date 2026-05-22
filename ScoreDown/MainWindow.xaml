@@ -555,19 +555,19 @@
 
         <!-- Controles de descarga -->
         <StackPanel Grid.Row="3" Margin="0,10,0,8">
-            <!-- Fila 1: Destino -->
+            <!-- Fila 1: Biblioteca de partituras -->
             <Grid Margin="0,0,0,6">
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="Auto"/>
                     <ColumnDefinition Width="*"/>
                     <ColumnDefinition Width="Auto"/>
                 </Grid.ColumnDefinitions>
-                <TextBlock Grid.Column="0" Text="📁 Destino:" VerticalAlignment="Center" Margin="0,0,8,0"/>
+                <TextBlock Grid.Column="0" Text="📁 Biblioteca:" VerticalAlignment="Center" Margin="0,0,8,0"/>
                 <TextBox x:Name="txtDestFolder" Grid.Column="1" Text="D:\partituras"
-                         ToolTip="Carpeta donde se guardarán los archivos. También puedes arrastrar una carpeta aquí."
+                     ToolTip="Biblioteca de partituras: aquí se descargan o importan y desde aquí se convierten o generan vídeos. También puedes arrastrar una carpeta aquí."
                          AllowDrop="True" Drop="TxtDestFolder_Drop" DragOver="TxtDestFolder_DragOver"/>
                 <Button Grid.Column="2" Content="📂" Margin="6,0,0,0" Padding="10,7"
-                        Click="BtnChooseFolder_Click" ToolTip="Seleccionar carpeta"/>
+                    Click="BtnChooseFolder_Click" ToolTip="Seleccionar biblioteca de partituras"/>
             </Grid>
             <!-- Fila 2: Acciones -->
             <StackPanel>
