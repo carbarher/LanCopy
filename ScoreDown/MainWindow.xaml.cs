@@ -5916,7 +5916,7 @@ public partial class MainWindow : Window, IAsyncDisposable
                     var computedTimeout = ComputeOemerTimeoutSeconds(correctedInput);
                     Interlocked.Add(ref timeoutSecondsTotal, computedTimeout);
                     var sw = Stopwatch.StartNew();
-                    (bool Success, bool PermanentFailure) result;
+                    (bool Success, bool PermanentFailure, string FailType) result;
                     try
                     {
                         result = await RunOemerConversionAsync(oemerExe, prefixArgs, correctedInput, innerCt).ConfigureAwait(false);
@@ -6118,7 +6118,7 @@ public partial class MainWindow : Window, IAsyncDisposable
         return null;
     }
 
-    private async Task<(bool Success, bool PermanentFailure)> RunOemerConversionAsync(
+    private async Task<(bool Success, bool PermanentFailure, string FailType)> RunOemerConversionAsync(
         string oemerExe,
         string[] prefixArgs,
         string inputPath,
@@ -6136,7 +6136,7 @@ public partial class MainWindow : Window, IAsyncDisposable
     /// luego ejecuta oemer en cada PNG. Los MXL resultantes van al directorio del PDF
     /// renombrados como {stem}_p{n:0000}.mxl.
     /// </summary>
-    private async Task<(bool Success, bool PermanentFailure)> RunOemerOnPdfAsync(
+    private async Task<(bool Success, bool PermanentFailure, string FailType)> RunOemerOnPdfAsync(
         string oemerExe, string[] prefixArgs, string pdfPath, CancellationToken ct)
     {
         var name = Path.GetFileName(pdfPath);
@@ -6151,7 +6151,7 @@ public partial class MainWindow : Window, IAsyncDisposable
         if (renderer is null)
         {
             Log($"⚠️ oemer PDF ({name}): no hay convertidor PDF→PNG. Instala Ghostscript (gswin64c.exe) o Poppler (pdftoppm.exe). Fichero no movido.");
-            return (false, false); // no permanente: puede instalarse después
+            return (false, false, string.Empty); // no permanente: puede instalarse después
         }
 
         var tempDirBase = Path.Combine(Path.GetTempPath(), "scoredown_oemer");
@@ -6165,7 +6165,7 @@ public partial class MainWindow : Window, IAsyncDisposable
             if (pages.Count == 0)
             {
                 Log($"⚠️ oemer PDF ({name}): {renderer.Value.Kind} no produjo páginas PNG.");
-                return (false, false);
+                return (false, false, string.Empty);
             }
 
             if (_oemerPdfMaxPagesAbsolute > 0 && pages.Count >= _oemerPdfMaxPagesAbsolute)
@@ -6231,6 +6231,11 @@ public partial class MainWindow : Window, IAsyncDisposable
                         failPages++;
                         consecutiveFails++;
                         LogDebug($"🎵 oemer PDF ({name}) pág {pageNum}: sin salida (permanent={result.PermanentFailure}).");
+                        if (okPages == 0 && result.PermanentFailure && IsOemerStructuralPdfAbortFailType(result.FailType))
+                        {
+                            Log($"🛑 oemer PDF ({name}): corte por fallo estructural en pág {pageNum}/{plannedPages} ({result.FailType}).");
+                            break;
+                        }
                     }
                 }
 
@@ -6257,10 +6262,10 @@ public partial class MainWindow : Window, IAsyncDisposable
             {
                 var preflightPart = skippedPreflight > 0 ? $", preflight={skippedPreflight}" : string.Empty;
                 Log($"✅ oemer PDF ({name}): {okPages}/{plannedPages} página(s) convertidas{preflightPart}.");
-                return (true, false);
+                return (true, false, string.Empty);
             }
             Log($"⚠️ oemer PDF ({name}): ninguna página produjo MXL (fail={failPages}, preflight={skippedPreflight}).");
-            return (false, false);
+            return (false, false, string.Empty);
         }
         finally
         {
@@ -6275,7 +6280,7 @@ public partial class MainWindow : Window, IAsyncDisposable
     }
 
     /// <summary>Ejecuta oemer sobre un archivo de imagen (no PDF). Lógica original.</summary>
-    private async Task<(bool Success, bool PermanentFailure)> RunOemerOnImageAsync(
+    private async Task<(bool Success, bool PermanentFailure, string FailType)> RunOemerOnImageAsync(
         string oemerExe, string[] prefixArgs, string inputPath, CancellationToken ct, bool isFromPdf = false, int pdfPageCount = 1, string? timeoutFamilyKey = null, long knownSizeBytes = -1)
     {
         var outputDir = Path.GetDirectoryName(inputPath) ?? string.Empty;
@@ -6335,7 +6340,7 @@ public partial class MainWindow : Window, IAsyncDisposable
         LogDebug($"🎵 oemer exit ({name}): code={process.ExitCode}");
 
         if (process.ExitCode == 0 && HasMusicScoreSibling(inputPath))
-            return (true, false);
+            return (true, false, string.Empty);
 
         var combined = (stdout + "\n" + stderr).Trim();
         var isPermanent = IsOemerPermanentFailure(combined);
@@ -6348,7 +6353,7 @@ public partial class MainWindow : Window, IAsyncDisposable
         RegisterOemerFailSignatureCooldown(signatureFamilyKey, failType, isPermanent);
         var tail = combined.Length > 500 ? "..." + combined[^500..] : combined;
         Log($"⚠️ oemer fallo ({name}): exit={process.ExitCode} {tail}");
-        return (false, isPermanent);
+        return (false, isPermanent, failType);
     }
 
     private static bool IsOemerPermanentFailure(string output)
@@ -6392,6 +6397,17 @@ public partial class MainWindow : Window, IAsyncDisposable
         if (output.Contains("RuntimeError", StringComparison.OrdinalIgnoreCase)) return "RuntimeError";
         if (output.Contains("MemoryError", StringComparison.OrdinalIgnoreCase)) return "MemoryError";
         return "other";
+    }
+
+    private static bool IsOemerStructuralPdfAbortFailType(string failType)
+    {
+        if (string.IsNullOrWhiteSpace(failType)) return false;
+        return string.Equals(failType, "staffline", StringComparison.OrdinalIgnoreCase) ||
+               string.Equals(failType, "IndexOutOfBounds", StringComparison.OrdinalIgnoreCase) ||
+               string.Equals(failType, "ArrayDimMismatch", StringComparison.OrdinalIgnoreCase) ||
+               string.Equals(failType, "ClusteringSingleSample", StringComparison.OrdinalIgnoreCase) ||
+               string.Equals(failType, "ListIndexOutOfRange", StringComparison.OrdinalIgnoreCase) ||
+               string.Equals(failType, "ZeroDivision", StringComparison.OrdinalIgnoreCase);
     }
 
     private static List<int> SelectOemerPdfSampleIndices(int totalPages, int maxSamples)
@@ -8686,7 +8702,10 @@ public partial class MainWindow : Window, IAsyncDisposable
 
     private readonly System.Collections.ObjectModel.ObservableCollection<VideoSelectItem> _videoSelectItems = new();
     private sealed class VideoRenderTraceEntry { public required string Trace; public double ElapsedMs; public DateTimeOffset RecordedAt; }
+    private sealed record ExistingVideoProbeCacheEntry(long SizeBytes, DateTime LastWriteUtc, VideoProbeInfo? Probe);
+    private sealed record ExistingVideoScanInfo(bool HasVideo, VideoStatus Status, string ToolTip);
     private readonly ConcurrentDictionary<string, VideoRenderTraceEntry> _videoRenderTrace = new(StringComparer.OrdinalIgnoreCase);
+    private readonly ConcurrentDictionary<string, ExistingVideoProbeCacheEntry> _videoExistingProbeCache = new(StringComparer.OrdinalIgnoreCase);
     private readonly object _videoRenderTraceLru = new();  // protege orden de inserción para LRU
     private readonly LinkedList<string> _videoRenderTraceOrder = new();  // orden FIFO para poda LRU (máx 5000)
     private readonly HashSet<string> _videoRenderTraceSet = new(StringComparer.OrdinalIgnoreCase); // índice O(1) para evitar Contains O(N)
@@ -8823,7 +8842,7 @@ public partial class MainWindow : Window, IAsyncDisposable
                 _videoSelectItems.Where(i => i.IsSelected).Select(i => i.BestFile),
                 StringComparer.OrdinalIgnoreCase);
 
-        List<(string File, string Ext, string Tag, bool HasVideo, string FolderShort, string Mp4ToolTip)> computed;
+        List<(string File, string Ext, string Tag, string? ExistingMp4, bool HasVideo, VideoStatus Status, string FolderShort, string Mp4ToolTip)> computed;
         try
         {
             computed = await Task.Run(() =>
@@ -8836,7 +8855,6 @@ public partial class MainWindow : Window, IAsyncDisposable
                     GetRawFilesFromDir(destFolder)
                         .Where(f => Path.GetExtension(f).Equals(".mp4", StringComparison.OrdinalIgnoreCase)),
                     StringComparer.OrdinalIgnoreCase);
-                bool hasMp4(string f) => VideoSiblingCandidates(f).Any(c => mp4Set.Contains(c));
 
                 return allInputs
                     .GroupBy(f => Path.Combine(
@@ -8852,7 +8870,8 @@ public partial class MainWindow : Window, IAsyncDisposable
                     {
                         localCts.Token.ThrowIfCancellationRequested();
                         var ext = Path.GetExtension(file).ToLowerInvariant();
-                        var hv = hasMp4(file);   // HashSet lookup, sin IO adicional
+                        var existingMp4 = VideoSiblingCandidates(file).FirstOrDefault(c => mp4Set.Contains(c));
+                        var hv = !string.IsNullOrWhiteSpace(existingMp4);   // HashSet lookup, sin IO adicional
                         var dir = Path.GetDirectoryName(file) ?? string.Empty;
                         // Ruta relativa al destFolder para FolderShort (más informativo que truncado de cola)
                         string folderShort;
@@ -8870,7 +8889,9 @@ public partial class MainWindow : Window, IAsyncDisposable
                             File: file,
                             Ext: ext,
                             Tag: ext.TrimStart('.').ToUpperInvariant(),
+                            ExistingMp4: existingMp4,
                             HasVideo: hv,
+                            Status: VideoStatus.None,
                             FolderShort: folderShort,
                             Mp4ToolTip: hv ? ComputeMp4SizeToolTip(file) : string.Empty
                         );
@@ -8882,6 +8903,49 @@ public partial class MainWindow : Window, IAsyncDisposable
             }).ConfigureAwait(true);
         }
         catch (OperationCanceledException) { return; }  // populate más nuevo en camino, ignorar silencioso
+
+        var existingMp4Entries = computed.Where(d => !string.IsNullOrWhiteSpace(d.ExistingMp4)).ToList();
+        if (existingMp4Entries.Count > 0)
+        {
+            txtStatus.Text = "🔎 Validando MP4 existentes...";
+            var validatedStates = new ConcurrentDictionary<string, ExistingVideoScanInfo>(StringComparer.OrdinalIgnoreCase);
+            using var probeGate = new SemaphoreSlim(Math.Clamp(Environment.ProcessorCount / 2, 2, 6));
+            await Task.WhenAll(existingMp4Entries.Select(async entry =>
+            {
+                await probeGate.WaitAsync(localCts.Token).ConfigureAwait(false);
+                try
+                {
+                    if (string.IsNullOrWhiteSpace(entry.ExistingMp4))
+                        return;
+
+                    var state = await GetExistingVideoScanInfoAsync(entry.File, entry.ExistingMp4, localCts.Token).ConfigureAwait(false);
+                    validatedStates[entry.File] = state;
+                }
+                finally
+                {
+                    probeGate.Release();
+                }
+            })).ConfigureAwait(true);
+
+            computed = computed.Select(d =>
+            {
+                if (validatedStates.TryGetValue(d.File, out var state))
+                {
+                    return (
+                        d.File,
+                        d.Ext,
+                        d.Tag,
+                        d.ExistingMp4,
+                        state.HasVideo,
+                        state.Status,
+                        d.FolderShort,
+                        state.ToolTip
+                    );
+                }
+
+                return d;
+            }).ToList();
+        }
 
         // Compactar trazas: conservar solo entradas visibles del lote actual.
         var activeInputs = computed.Select(d => d.File).ToHashSet(StringComparer.OrdinalIgnoreCase);
@@ -8927,6 +8991,7 @@ public partial class MainWindow : Window, IAsyncDisposable
                     ? $"{entry.Trace}  [{entry.ElapsedMs:0.0}ms]"
                     : $"Origen: {d.Tag}",
                 HasVideo = d.HasVideo,
+                Status = d.Status,
                 FolderShort = d.FolderShort,
                 Mp4SizeToolTip = d.Mp4ToolTip,
             };
@@ -9596,14 +9661,13 @@ public partial class MainWindow : Window, IAsyncDisposable
                         }
 
                         var okNow = Interlocked.Increment(ref ok);
-                        long sizeBytes = 0;
-                        try { sizeBytes = new FileInfo(outputMp4).Length; } catch { }
-                        var mb = sizeBytes > 0 ? $", {sizeBytes / (1024.0 * 1024.0):F1} MB" : string.Empty;
-                        Log($"✅ Video OK: {name} en {elapsed.TotalSeconds:F1}s{mb} (ok={okNow}, fail={Volatile.Read(ref fail)})");
-                        VideoLog($"✅ Completado: {elapsed.TotalSeconds:F1}s{mb}");
+                        var probe = await ProbeGeneratedVideoAsync(outputMp4, innerCt).ConfigureAwait(false);
+                        var mediaSummary = BuildVideoProbeSummary(probe);
+                        Log($"✅ Video OK: {name} en {elapsed.TotalSeconds:F1}s · {mediaSummary} (ok={okNow}, fail={Volatile.Read(ref fail)})");
+                        VideoLog($"✅ Completado: {elapsed.TotalSeconds:F1}s · {mediaSummary}");
 
-                        // Calcular tooltip de tamaño en hilo worker (evita FileInfo en UI thread)
-                        var mp4ToolTip = ComputeMp4SizeToolTip(input);
+                        // Calcular tooltip enriquecido fuera del hilo UI.
+                        var mp4ToolTip = BuildMp4ToolTip(input, probe);
 
                         // Refresh badge + HasVideo + ETA
                         await Dispatcher.InvokeAsync(() =>
@@ -9624,12 +9688,31 @@ public partial class MainWindow : Window, IAsyncDisposable
                     {
                         var failNow = Interlocked.Increment(ref fail);
                         Interlocked.Increment(ref _videoEtaFailed);
-                        Log($"⚠️ Sin vídeo generado: {name} tras {elapsed.TotalSeconds:F1}s (ok={Volatile.Read(ref ok)}, fail={failNow})");
-                        VideoLog($"⚠️ Sin vídeo: {name}");
+                        var partialProbe = File.Exists(outputMp4)
+                            ? await ProbeGeneratedVideoAsync(outputMp4, innerCt).ConfigureAwait(false)
+                            : null;
+                        var partialTip = File.Exists(outputMp4)
+                            ? BuildPartialMp4ToolTip(partialProbe)
+                            : string.Empty;
+                        if (File.Exists(outputMp4))
+                        {
+                            Log($"⚠️ MP4 parcial/no sondeable: {name} tras {elapsed.TotalSeconds:F1}s · {BuildVideoProbeSummary(partialProbe)} (ok={Volatile.Read(ref ok)}, fail={failNow})");
+                            VideoLog($"⚠️ MP4 parcial/no sondeable: {name}");
+                        }
+                        else
+                        {
+                            Log($"⚠️ Sin vídeo generado: {name} tras {elapsed.TotalSeconds:F1}s (ok={Volatile.Read(ref ok)}, fail={failNow})");
+                            VideoLog($"⚠️ Sin vídeo: {name}");
+                        }
                         await Dispatcher.InvokeAsync(() =>
                         {
                             if (itemLookup.TryGetValue(input, out var si))
+                            {
                                 si.Status = VideoStatus.Error;
+                                si.HasVideo = false;
+                                if (!string.IsNullOrWhiteSpace(partialTip))
+                                    si.Mp4SizeToolTip = partialTip;
+                            }
                             pbVideoGeneral.Foreground = System.Windows.Media.Brushes.OrangeRed;
                             pbVideoGeneral.Value = Interlocked.Increment(ref _videoEtaCompleted);
                             UpdateVideoEtaLabel();
@@ -10639,6 +10722,89 @@ public partial class MainWindow : Window, IAsyncDisposable
         return normalized;
     }
 
+    private static bool SoundProfileRequiresAudio(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+            return true;
+
+        var normalized = value.Trim();
+        return !normalized.Equals("none", StringComparison.OrdinalIgnoreCase)
+            && !normalized.Equals("off", StringComparison.OrdinalIgnoreCase)
+            && !normalized.Equals("mute", StringComparison.OrdinalIgnoreCase)
+            && !normalized.Equals("muted", StringComparison.OrdinalIgnoreCase)
+            && !normalized.Equals("silent", StringComparison.OrdinalIgnoreCase)
+            && !normalized.Equals("noaudio", StringComparison.OrdinalIgnoreCase)
+            && !normalized.Equals("no-audio", StringComparison.OrdinalIgnoreCase)
+            && !normalized.Equals("disabled", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool TextContainsAudibleNote(string text)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+            return false;
+
+        var matches = System.Text.RegularExpressions.Regex.Matches(
+            text,
+            @"<note\b.*?</note>",
+            System.Text.RegularExpressions.RegexOptions.IgnoreCase | System.Text.RegularExpressions.RegexOptions.Singleline);
+
+        foreach (System.Text.RegularExpressions.Match match in matches)
+        {
+            if (!System.Text.RegularExpressions.Regex.IsMatch(match.Value, @"<rest\b", System.Text.RegularExpressions.RegexOptions.IgnoreCase))
+                return true;
+        }
+
+        return false;
+    }
+
+    private static async Task<bool?> ScoreHasAudibleNotesAsync(string inputPath, CancellationToken ct)
+    {
+        try
+        {
+            var ext = Path.GetExtension(inputPath).ToLowerInvariant();
+            if (ext is ".musicxml" or ".xml" or ".mscx")
+            {
+                var text = await File.ReadAllTextAsync(inputPath, ct).ConfigureAwait(false);
+                return TextContainsAudibleNote(text);
+            }
+
+            if (ext is ".mxl" or ".mscz")
+            {
+                using var zip = ZipFile.OpenRead(inputPath);
+                var entry = zip.Entries.FirstOrDefault(e =>
+                    e.FullName.EndsWith(".musicxml", StringComparison.OrdinalIgnoreCase)
+                    || e.FullName.EndsWith(".xml", StringComparison.OrdinalIgnoreCase)
+                    || e.FullName.EndsWith(".mscx", StringComparison.OrdinalIgnoreCase));
+                if (entry is null)
+                    return null;
+
+                using var stream = entry.Open();
+                using var reader = new StreamReader(stream, Encoding.UTF8, detectEncodingFromByteOrderMarks: true);
+                var text = await reader.ReadToEndAsync().ConfigureAwait(false);
+                ct.ThrowIfCancellationRequested();
+                return TextContainsAudibleNote(text);
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch
+        {
+        }
+
+        return null;
+    }
+
+    private static async Task<bool> ShouldRequireVideoAudioAsync(string inputPath, string? soundProfile, CancellationToken ct)
+    {
+        if (!SoundProfileRequiresAudio(soundProfile))
+            return false;
+
+        var hasAudibleNotes = await ScoreHasAudibleNotesAsync(inputPath, ct).ConfigureAwait(false);
+        return hasAudibleNotes is not false;
+    }
+
     private static string? GetArgValue(IReadOnlyList<string> args, string key)
     {
         for (int i = 0; i < args.Count - 1; i++)
@@ -10766,11 +10932,11 @@ public partial class MainWindow : Window, IAsyncDisposable
 
         var candidates = new[]
         {
+            @"C:\Program Files\MuseScore 4\bin\MuseScore4.exe",
+            @"C:\Program Files\MuseScore 4\bin\MuseScore.exe",
             @"C:\Program Files\MuseScore 4 Testing\bin\MuseScore4.exe",
             @"C:\Program Files\MuseScore Studio Beta\bin\MuseScore4.exe",
             @"C:\Program Files\MuseScore Studio Beta\bin\MuseScore.exe",
-            @"C:\Program Files\MuseScore 4\bin\MuseScore4.exe",
-            @"C:\Program Files\MuseScore 4\bin\MuseScore.exe",
             @"C:\Program Files\MuseScore 3\bin\MuseScore3.exe",
             @"C:\Program Files\MuseScore 3\bin\MuseScore.exe",
             @"C:\ProgramData\chocolatey\bin\musescore.exe"
@@ -10947,11 +11113,176 @@ public partial class MainWindow : Window, IAsyncDisposable
         }
     }
 
+    private static async Task<(int? Width, int? Height)> GetVideoResolutionAsync(string ffprobeExe, string inputPath, CancellationToken ct)
+    {
+        try
+        {
+            var psi = new ProcessStartInfo
+            {
+                FileName = ffprobeExe,
+                UseShellExecute = false,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                CreateNoWindow = true
+            };
+            psi.ArgumentList.Add("-v");
+            psi.ArgumentList.Add("error");
+            psi.ArgumentList.Add("-select_streams");
+            psi.ArgumentList.Add("v:0");
+            psi.ArgumentList.Add("-show_entries");
+            psi.ArgumentList.Add("stream=width,height");
+            psi.ArgumentList.Add("-of");
+            psi.ArgumentList.Add("default=noprint_wrappers=1:nokey=1");
+            psi.ArgumentList.Add(inputPath);
+
+            using var p = new Process { StartInfo = psi };
+            if (!p.Start()) return (null, null);
+
+            var stdoutTask = p.StandardOutput.ReadToEndAsync();
+            var stderrTask = p.StandardError.ReadToEndAsync();
+            await p.WaitForExitAsync(ct).ConfigureAwait(false);
+            var stdout = (await stdoutTask.ConfigureAwait(false)).Trim();
+            _ = await stderrTask.ConfigureAwait(false);
+
+            if (p.ExitCode != 0 || string.IsNullOrWhiteSpace(stdout))
+                return (null, null);
+
+            var parts = stdout
+                .Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+            if (parts.Length < 2)
+                return (null, null);
+
+            return (
+                int.TryParse(parts[0], out var width) ? width : null,
+                int.TryParse(parts[1], out var height) ? height : null);
+        }
+        catch
+        {
+            return (null, null);
+        }
+    }
+
+    private sealed record VideoProbeInfo(long SizeBytes, double? DurationSeconds, bool? HasAudio, int? Width, int? Height, bool UsedFfprobe);
+
+    private async Task<VideoProbeInfo?> ProbeGeneratedVideoAsync(string outputMp4, CancellationToken ct)
+    {
+        try
+        {
+            var info = new FileInfo(outputMp4);
+            if (!info.Exists || info.Length <= 0)
+                return null;
+
+            var ffprobeExe = await ResolveFfprobeExecutableAsync().ConfigureAwait(false);
+            if (string.IsNullOrWhiteSpace(ffprobeExe))
+                return new VideoProbeInfo(info.Length, null, null, null, null, UsedFfprobe: false);
+
+            var duration = await GetMediaDurationSecondsAsync(ffprobeExe, outputMp4, ct).ConfigureAwait(false);
+            var hasAudio = await HasAudioStreamAsync(ffprobeExe, outputMp4, ct).ConfigureAwait(false);
+            var (width, height) = await GetVideoResolutionAsync(ffprobeExe, outputMp4, ct).ConfigureAwait(false);
+            return new VideoProbeInfo(info.Length, duration, hasAudio, width, height, UsedFfprobe: true);
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private async Task<VideoProbeInfo?> GetCachedExistingVideoProbeAsync(string outputMp4, CancellationToken ct)
+    {
+        try
+        {
+            var info = new FileInfo(outputMp4);
+            if (!info.Exists || info.Length <= 0)
+            {
+                _videoExistingProbeCache.TryRemove(outputMp4, out _);
+                return null;
+            }
+
+            var lastWriteUtc = info.LastWriteTimeUtc;
+            if (_videoExistingProbeCache.TryGetValue(outputMp4, out var cached)
+                && cached.SizeBytes == info.Length
+                && cached.LastWriteUtc == lastWriteUtc)
+            {
+                return cached.Probe;
+            }
+
+            var probe = await ProbeGeneratedVideoAsync(outputMp4, ct).ConfigureAwait(false);
+            _videoExistingProbeCache[outputMp4] = new ExistingVideoProbeCacheEntry(info.Length, lastWriteUtc, probe);
+            return probe;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private async Task<ExistingVideoScanInfo> GetExistingVideoScanInfoAsync(string inputPath, string outputMp4, CancellationToken ct)
+    {
+        var probe = await GetCachedExistingVideoProbeAsync(outputMp4, ct).ConfigureAwait(false);
+        if (IsUsableVideoOutput(probe, requireAudio: false))
+            return new ExistingVideoScanInfo(true, VideoStatus.None, BuildMp4ToolTip(inputPath, probe));
+
+        return new ExistingVideoScanInfo(false, VideoStatus.Error, BuildPartialMp4ToolTip(probe));
+    }
+
+    private static bool IsUsableVideoOutput(VideoProbeInfo? probe, bool requireAudio)
+    {
+        if (probe is null || probe.SizeBytes <= 0)
+            return false;
+
+        if (!probe.UsedFfprobe)
+            return true;
+
+        if (probe.DurationSeconds.GetValueOrDefault() <= 0.1
+            || probe.Width.GetValueOrDefault() <= 0
+            || probe.Height.GetValueOrDefault() <= 0)
+            return false;
+
+        if (requireAudio && probe.HasAudio == false)
+            return false;
+
+        return true;
+    }
+
+    private static string BuildVideoProbeSummary(VideoProbeInfo? probe)
+    {
+        if (probe is null)
+            return "MP4 ausente";
+
+        var parts = new List<string>();
+        var mb = probe.SizeBytes / (1024.0 * 1024.0);
+        parts.Add(mb >= 1024 ? $"{mb / 1024:F1} GB" : $"{mb:F1} MB");
+
+        if (probe.Width is > 0 && probe.Height is > 0)
+            parts.Add($"{probe.Width}x{probe.Height}");
+        if (probe.DurationSeconds is > 0)
+            parts.Add($"{probe.DurationSeconds.Value:F1}s");
+        if (probe.HasAudio.HasValue)
+            parts.Add(probe.HasAudio.Value ? "audio sí" : "audio no");
+        if (!probe.UsedFfprobe)
+            parts.Add("sin ffprobe");
+
+        return string.Join(" · ", parts);
+    }
+
+    private static string BuildMp4ToolTip(string inputPath, VideoProbeInfo? probe)
+    {
+        if (probe is null)
+            return ComputeMp4SizeToolTip(inputPath);
+        return $"Ya tiene vídeo MP4 · {BuildVideoProbeSummary(probe)}";
+    }
+
+    private static string BuildPartialMp4ToolTip(VideoProbeInfo? probe)
+    {
+        return probe is null
+            ? "MP4 parcial o no sondeable"
+            : $"MP4 parcial o no sondeable · {BuildVideoProbeSummary(probe)}";
+    }
+
     private static List<string> BuildTrimTranscodeArgs(string inputPath, string targetStr, string outputPath, bool hasAudio)
     {
         var args = new List<string>
         {
-            "-y",
             "-i", inputPath,
         };
 
@@ -12466,11 +12797,13 @@ public partial class MainWindow : Window, IAsyncDisposable
         var primaryResolution = GetArgValue(extraVideoArgs, "--resolution") ?? "2160p";
         var primaryFps = GetArgValue(extraVideoArgs, "--fps") ?? "60";
         var primaryProfile = GetArgValue(extraVideoArgs, "--sound-profile") ?? "MuseSounds";
+        var primaryRequireAudio = await ShouldRequireVideoAudioAsync(renderInputPath, primaryProfile, ct).ConfigureAwait(false);
         Log($"🎛️ Perfil vídeo primario ({inputName}): res={primaryResolution}, fps={primaryFps}, audio={primaryProfile}, timeout={_videoTimeoutSeconds}s");
         if (!string.IsNullOrWhiteSpace(stylePath))
             LogDebug($"🎨 Estilo vídeo ({inputName}): subtítulo {_videoSubtitleFontPt}pt");
         if (!string.IsNullOrWhiteSpace(tempRenderInput))
             LogDebug($"🧹 Título original ocultado ({inputName}) para render.");
+        LogDebug($"🎼 Validación audio ({inputName}): {(primaryRequireAudio ? "obligatoria" : "opcional")}");
 
         int lastPrimaryPct = -1;
         Action<int> primaryProgress = pct =>
@@ -12495,10 +12828,15 @@ public partial class MainWindow : Window, IAsyncDisposable
                 TimeSpan.FromSeconds(_videoTimeoutSeconds),
                 ct,
                 primaryProgress,
-                HandleMuseScoreFailure).ConfigureAwait(true);
+                HandleMuseScoreFailure,
+                acceptNonZeroExit: (exitCode, stderr, stdout) => File.Exists(outputMp4)).ConfigureAwait(true);
+
+            var primaryProbe = await ProbeGeneratedVideoAsync(outputMp4, ct).ConfigureAwait(true);
+            if (primaryOk && IsUsableVideoOutput(primaryProbe, primaryRequireAudio))
+                return true;
 
             if (primaryOk && File.Exists(outputMp4))
-                return true;
+                Log($"⚠️ MuseScore generó MP4 pero la validación posterior no fue concluyente ({inputName}): {BuildVideoProbeSummary(primaryProbe)}");
 
             if (hadStructuralMeasureError)
             {
@@ -12515,7 +12853,9 @@ public partial class MainWindow : Window, IAsyncDisposable
             var retryResolution = GetArgValue(retryArgs, "--resolution") ?? "1080p";
             var retryFps = GetArgValue(retryArgs, "--fps") ?? "30";
             var retryProfile = GetArgValue(retryArgs, "--sound-profile") ?? primaryProfile;
+            var retryRequireAudio = await ShouldRequireVideoAudioAsync(renderInputPath, retryProfile, ct).ConfigureAwait(false);
             Log($"ℹ️ Reintento vídeo modo rápido ({inputName}): res={retryResolution}, fps={retryFps}, audio={retryProfile}, timeout={retryTimeoutSec}s");
+            LogDebug($"🎼 Validación audio retry ({inputName}): {(retryRequireAudio ? "obligatoria" : "opcional")}");
 
             int lastRetryPct = -1;
             Action<int> retryProgress = pct =>
@@ -12539,9 +12879,17 @@ public partial class MainWindow : Window, IAsyncDisposable
                 TimeSpan.FromSeconds(retryTimeoutSec),
                 ct,
                 retryProgress,
-                HandleMuseScoreFailure).ConfigureAwait(true);
+                HandleMuseScoreFailure,
+                acceptNonZeroExit: (exitCode, stderr, stdout) => File.Exists(outputMp4)).ConfigureAwait(true);
 
-            return retryOk && File.Exists(outputMp4);
+            var retryProbe = await ProbeGeneratedVideoAsync(outputMp4, ct).ConfigureAwait(true);
+            if (retryOk && IsUsableVideoOutput(retryProbe, retryRequireAudio))
+                return true;
+
+            if (retryOk && File.Exists(outputMp4))
+                Log($"⚠️ MuseScore retry generó MP4 pero la validación posterior no fue concluyente ({inputName}): {BuildVideoProbeSummary(retryProbe)}");
+
+            return false;
         }
         finally
         {
@@ -12635,7 +12983,7 @@ public partial class MainWindow : Window, IAsyncDisposable
         return false;
     }
 
-    private async Task<bool> RunProcessAsync(string exe, IEnumerable<string> args, string inputName, string stage, TimeSpan? timeout = null, CancellationToken ct = default, Action<int>? onPercent = null, Action<string>? onFail = null)
+    private async Task<bool> RunProcessAsync(string exe, IEnumerable<string> args, string inputName, string stage, TimeSpan? timeout = null, CancellationToken ct = default, Action<int>? onPercent = null, Action<string>? onFail = null, Func<int, string, string, bool>? acceptNonZeroExit = null)
     {
         var startedAt = DateTimeOffset.UtcNow;
         var psi = new System.Diagnostics.ProcessStartInfo
@@ -12720,6 +13068,13 @@ public partial class MainWindow : Window, IAsyncDisposable
 
         var err = stderrSb.ToString().Trim();
         var stdout = stdoutSb.ToString().Trim();
+        if (acceptNonZeroExit?.Invoke(process.ExitCode, err, stdout) == true)
+        {
+            var elapsedAccepted = DateTimeOffset.UtcNow - startedAt;
+            LogDebug($"ℹ️ {stage} non-zero aceptado ({inputName}) exit={process.ExitCode} en {elapsedAccepted.TotalSeconds:F1}s");
+            return true;
+        }
+
         var msg = BuildProcessFailureMessage(process.ExitCode, err, stdout, psi.ArgumentList);
         var elapsedFail = DateTimeOffset.UtcNow - startedAt;
         Log($"⚠️ {stage} fallo ({inputName}) tras {elapsedFail.TotalSeconds:F1}s: {msg}");
