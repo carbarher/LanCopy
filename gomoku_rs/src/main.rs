@@ -30,7 +30,7 @@ fn xor64(s: &mut u64) -> u64 {
     *s
 }
 
-const N: usize = 13;
+const N: usize = 30;
 const WIN: usize = 5;
 const BIG: i64 = 10_000_000_000; // >> max possible eval_board value (~1B)
 
@@ -1825,10 +1825,30 @@ impl eframe::App for App {
         }
 
         egui::CentralPanel::default().show(ctx, |ui| {
-            const CELL: f32 = 38.0;
-            const PAD: f32 = 34.0;   // extra room for coordinates
-            let board_px = PAD * 2.0 + CELL * (N as f32 - 1.0);
-            ui.set_max_width(board_px);
+            let preferred_cell = if N >= 30 {
+                19.0
+            } else if N >= 19 {
+                30.0
+            } else {
+                38.0
+            };
+            let min_cell = if N >= 30 {
+                12.0
+            } else if N >= 19 {
+                20.0
+            } else {
+                28.0
+            };
+            let board_pad = if N >= 30 {
+                20.0
+            } else {
+                34.0
+            };
+            let coord_font = if N >= 30 {
+                8.0
+            } else {
+                11.0
+            };
 
             // ── toolbar row 1: modes + actions ──
             ui.horizontal_wrapped(|ui| {
@@ -2039,92 +2059,106 @@ impl eframe::App for App {
             ui.separator();
 
             // ── board ──
-            let (resp, painter) =
-                ui.allocate_painter(Vec2::splat(board_px), egui::Sense::click());
+            let board_room = ui.available_size_before_wrap();
+            let fit_w = ((board_room.x - board_pad * 2.0) / (N as f32 - 1.0)).floor();
+            let fit_h = ((board_room.y - board_pad * 2.0) / (N as f32 - 1.0)).floor();
+            let fit_cell = fit_w.min(fit_h);
+            let cell = fit_cell.clamp(min_cell, preferred_cell);
+            let board_px = board_pad * 2.0 + cell * (N as f32 - 1.0);
+            let board_size = Vec2::splat(board_px);
+            let star_radius = (cell * 0.18).clamp(2.8, 4.5);
+            let stone_radius = cell * 0.44;
+            let last_move_radius = (cell * 0.16).clamp(2.5, 4.0);
 
-            // Wood background
-            painter.rect_filled(resp.rect, 4.0, Color32::from_rgb(205, 165, 90));
+            egui::ScrollArea::both()
+                .auto_shrink([false, false])
+                .show(ui, |ui| {
+                    ui.vertical_centered(|ui| {
+                        let (resp, painter) =
+                            ui.allocate_painter(board_size, egui::Sense::click());
 
-            let ox = resp.rect.min.x + PAD;
-            let oy = resp.rect.min.y + PAD;
-            let ex = ox + CELL * (N as f32 - 1.0);
-            let ey = oy + CELL * (N as f32 - 1.0);
-            let line_col = Color32::from_rgb(70, 45, 15);
-            let coord_col = Color32::from_rgb(50, 30, 10);
+                        // Wood background
+                        painter.rect_filled(resp.rect, 4.0, Color32::from_rgb(205, 165, 90));
 
-            // Grid
-            for i in 0..N {
-                let x = ox + i as f32 * CELL;
-                let y = oy + i as f32 * CELL;
-                painter.line_segment([Pos2::new(ox, y), Pos2::new(ex, y)], Stroke::new(1.0, line_col));
-                painter.line_segment([Pos2::new(x, oy), Pos2::new(x, ey)], Stroke::new(1.0, line_col));
-                // Column labels at top
-                let col_lbl = (b'A' + i as u8) as char;
-                painter.text(Pos2::new(x, oy - 18.0), egui::Align2::CENTER_CENTER,
-                    col_lbl.to_string(), egui::FontId::monospace(11.0), coord_col);
-                // Row labels at left
-                painter.text(Pos2::new(ox - 20.0, y), egui::Align2::CENTER_CENTER,
-                    (i + 1).to_string(), egui::FontId::monospace(11.0), coord_col);
-            }
+                        let ox = resp.rect.min.x + board_pad;
+                        let oy = resp.rect.min.y + board_pad;
+                        let ex = ox + cell * (N as f32 - 1.0);
+                        let ey = oy + cell * (N as f32 - 1.0);
+                        let line_col = Color32::from_rgb(70, 45, 15);
+                        let coord_col = Color32::from_rgb(50, 30, 10);
 
-            // Hoshi (star points)
-            let hoshi_points: &[usize] = match N {
-                13 => &[3, 6, 9],
-                15 => &[3, 7, 11],
-                _ => &[],
-            };
-            for &hr in hoshi_points {
-                for &hc in hoshi_points {
-                    let pos = Pos2::new(ox + hc as f32 * CELL, oy + hr as f32 * CELL);
-                    painter.circle_filled(pos, 4.5, line_col);
-                }
-            }
+                        // Grid
+                        for i in 0..N {
+                            let x = ox + i as f32 * cell;
+                            let y = oy + i as f32 * cell;
+                            painter.line_segment([Pos2::new(ox, y), Pos2::new(ex, y)], Stroke::new(1.0, line_col));
+                            painter.line_segment([Pos2::new(x, oy), Pos2::new(x, ey)], Stroke::new(1.0, line_col));
+                            let col_lbl = (b'A' + i as u8) as char;
+                            painter.text(Pos2::new(x, oy - board_pad * 0.6), egui::Align2::CENTER_CENTER,
+                                col_lbl.to_string(), egui::FontId::monospace(coord_font), coord_col);
+                            painter.text(Pos2::new(ox - board_pad * 0.7, y), egui::Align2::CENTER_CENTER,
+                                (i + 1).to_string(), egui::FontId::monospace(coord_font), coord_col);
+                        }
 
-            // Stones
-            const R_STONE: f32 = CELL * 0.44;
-            for r in 0..N {
-                for c in 0..N {
-                    let v = self.board[r][c];
-                    if v == 0 { continue; }
-                    let pos = Pos2::new(ox + c as f32 * CELL, oy + r as f32 * CELL);
-                    let (fill, outline) = if v == 1 {
-                        (Color32::from_rgb(25, 25, 25), Color32::from_rgb(100, 100, 100))
-                    } else {
-                        (Color32::from_rgb(245, 238, 215), Color32::from_rgb(130, 130, 130))
-                    };
-                    painter.circle_filled(pos, R_STONE, fill);
-                    painter.circle_stroke(pos, R_STONE, Stroke::new(1.5, outline));
-                    if self.winning_cells.contains(&(r, c)) {
-                        painter.circle_stroke(pos, R_STONE - 3.0,
-                            Stroke::new(3.0, Color32::from_rgb(255, 210, 30)));
-                    }
-                    if self.last_mv == Some((r, c)) {
-                        let dot = if v == 1 { Color32::WHITE } else { Color32::BLACK };
-                        painter.circle_filled(pos, 4.0, dot);
-                    }
-                }
-            }
-
-            // Human click
-            if !self.over && !self.ai_busy.load(Ordering::Relaxed) {
-                let human_turn = match self.mode {
-                    Mode::HumanAI => self.turn == 1,
-                    Mode::AiAi | Mode::Auto => false,
-                };
-                if human_turn && resp.clicked() {
-                    if let Some(pos) = resp.interact_pointer_pos() {
-                        let col = ((pos.x - ox + CELL / 2.0) / CELL).floor() as i32;
-                        let row = ((pos.y - oy + CELL / 2.0) / CELL).floor() as i32;
-                        if (0..N as i32).contains(&row) && (0..N as i32).contains(&col) {
-                            let (r, c) = (row as usize, col as usize);
-                            if self.board[r][c] == 0 {
-                                self.save_snapshot();
-                                self.place(r, c);
+                        // Hoshi (star points)
+                        let hoshi_points: &[usize] = match N {
+                            13 => &[3, 6, 9],
+                            15 => &[3, 7, 11],
+                            _ => &[],
+                        };
+                        for &hr in hoshi_points {
+                            for &hc in hoshi_points {
+                                let pos = Pos2::new(ox + hc as f32 * cell, oy + hr as f32 * cell);
+                                painter.circle_filled(pos, star_radius, line_col);
                             }
                         }
-                    }
-                }
-            }
+
+                        // Stones
+                        for r in 0..N {
+                            for c in 0..N {
+                                let v = self.board[r][c];
+                                if v == 0 { continue; }
+                                let pos = Pos2::new(ox + c as f32 * cell, oy + r as f32 * cell);
+                                let (fill, outline) = if v == 1 {
+                                    (Color32::from_rgb(25, 25, 25), Color32::from_rgb(100, 100, 100))
+                                } else {
+                                    (Color32::from_rgb(245, 238, 215), Color32::from_rgb(130, 130, 130))
+                                };
+                                painter.circle_filled(pos, stone_radius, fill);
+                                painter.circle_stroke(pos, stone_radius, Stroke::new(1.5, outline));
+                                if self.winning_cells.contains(&(r, c)) {
+                                    painter.circle_stroke(pos, (stone_radius - 3.0).max(2.0),
+                                        Stroke::new(3.0, Color32::from_rgb(255, 210, 30)));
+                                }
+                                if self.last_mv == Some((r, c)) {
+                                    let dot = if v == 1 { Color32::WHITE } else { Color32::BLACK };
+                                    painter.circle_filled(pos, last_move_radius, dot);
+                                }
+                            }
+                        }
+
+                        // Human click
+                        if !self.over && !self.ai_busy.load(Ordering::Relaxed) {
+                            let human_turn = match self.mode {
+                                Mode::HumanAI => self.turn == 1,
+                                Mode::AiAi | Mode::Auto => false,
+                            };
+                            if human_turn && resp.clicked() {
+                                if let Some(pos) = resp.interact_pointer_pos() {
+                                    let col = ((pos.x - ox + cell / 2.0) / cell).floor() as i32;
+                                    let row = ((pos.y - oy + cell / 2.0) / cell).floor() as i32;
+                                    if (0..N as i32).contains(&row) && (0..N as i32).contains(&col) {
+                                        let (r, c) = (row as usize, col as usize);
+                                        if self.board[r][c] == 0 {
+                                            self.save_snapshot();
+                                            self.place(r, c);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    });
+                });
         });
     }
 
@@ -2319,7 +2353,7 @@ fn main() -> eframe::Result<()> {
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_title("Gomoku – 5 en Raya")
-            .with_inner_size([700.0, 820.0])
+            .with_inner_size([920.0, 980.0])
             .with_resizable(true),
         ..Default::default()
     };
