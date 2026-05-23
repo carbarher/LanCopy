@@ -267,55 +267,115 @@ internal static class SourceFolderCleaner
             return string.IsNullOrWhiteSpace(author) ? ParsedAuthorResult.Missing : ParsedAuthorResult.Resolved;
         }
 
-        var idx = fileNameNoExt.IndexOf(" - ", StringComparison.Ordinal);
-        if (idx > 0)
+        var segments = SplitNameSegments(fileNameNoExt);
+        if (segments.Count >= 2)
         {
-            var left = fileNameNoExt[..idx].Trim();
-            var right = fileNameNoExt[(idx + 3)..].Trim();
+            if (segments.Count == 2)
+                return ResolveTwoSegmentName(segments[0], segments[1], catalogTokens, out author, out title);
 
-            var leftScore = CountCatalogTokenMatches(left, catalogTokens);
-            var rightScore = CountCatalogTokenMatches(right, catalogTokens);
+            var first = segments[0];
+            var second = segments[1];
+            var firstScore = CountCatalogTokenMatches(first, catalogTokens);
+            var secondScore = CountCatalogTokenMatches(second, catalogTokens);
 
-            if (leftScore > rightScore)
+            if (secondScore > firstScore || (!LooksLikeAuthorPhrase(first) && LooksLikeAuthorPhrase(second)))
             {
-                author = left;
-                title = right;
+                author = second;
+                title = first;
                 return ParsedAuthorResult.Resolved;
             }
 
-            if (rightScore > leftScore)
+            if (firstScore > secondScore || (LooksLikeAuthorPhrase(first) && !LooksLikeAuthorPhrase(second)))
             {
-                author = right;
-                title = left;
+                author = first;
+                title = second;
                 return ParsedAuthorResult.Resolved;
             }
 
-            // Sin señal clara de catálogo, usar heurística conservadora.
-            var leftLooksAuthor = LooksLikeAuthorPhrase(left);
-            var rightLooksAuthor = LooksLikeAuthorPhrase(right);
-
-            if (leftLooksAuthor && !rightLooksAuthor)
-            {
-                author = left;
-                title = right;
-                return ParsedAuthorResult.Resolved;
-            }
-
-            if (rightLooksAuthor && !leftLooksAuthor)
-            {
-                author = right;
-                title = left;
-                return ParsedAuthorResult.Resolved;
-            }
-
-            author = left;
-            title = right;
+            author = second;
+            title = first;
             return ParsedAuthorResult.Ambiguous;
         }
 
         author = string.Empty;
         title = fileNameNoExt.Trim();
         return ParsedAuthorResult.Missing;
+    }
+
+    private static ParsedAuthorResult ResolveTwoSegmentName(
+        string left,
+        string right,
+        HashSet<string> catalogTokens,
+        out string author,
+        out string title)
+    {
+        var leftScore = CountCatalogTokenMatches(left, catalogTokens);
+        var rightScore = CountCatalogTokenMatches(right, catalogTokens);
+
+        if (leftScore > rightScore)
+        {
+            author = left;
+            title = right;
+            return ParsedAuthorResult.Resolved;
+        }
+
+        if (rightScore > leftScore)
+        {
+            author = right;
+            title = left;
+            return ParsedAuthorResult.Resolved;
+        }
+
+        var leftLooksAuthor = LooksLikeAuthorPhrase(left);
+        var rightLooksAuthor = LooksLikeAuthorPhrase(right);
+
+        if (leftLooksAuthor && !rightLooksAuthor)
+        {
+            author = left;
+            title = right;
+            return ParsedAuthorResult.Resolved;
+        }
+
+        if (rightLooksAuthor && !leftLooksAuthor)
+        {
+            author = right;
+            title = right;
+            return ParsedAuthorResult.Resolved;
+        }
+
+        author = left;
+        title = right;
+        return ParsedAuthorResult.Ambiguous;
+    }
+
+    private static List<string> SplitNameSegments(string fileNameNoExt)
+    {
+        var rawParts = fileNameNoExt.Split(new[] { " - ", " – ", "_" }, StringSplitOptions.RemoveEmptyEntries);
+        var segments = new List<string>(rawParts.Length);
+        foreach (var part in rawParts)
+        {
+            var cleaned = part.Trim().Trim('"', '\'', '“', '”');
+            if (!string.IsNullOrWhiteSpace(cleaned))
+                segments.Add(cleaned);
+        }
+
+        while (segments.Count > 2 && IsIgnorableTrailingMetadata(segments[^1]))
+            segments.RemoveAt(segments.Count - 1);
+
+        return segments;
+    }
+
+    private static bool IsIgnorableTrailingMetadata(string value)
+    {
+        var normalized = NormalizeForLookup(value);
+        if (string.IsNullOrWhiteSpace(normalized))
+            return true;
+
+        if (IsAllDigits(normalized.Replace(" ", string.Empty, StringComparison.Ordinal)))
+            return true;
+
+        return normalized is "spa" or "esp" or "es" or "eng" or "en" or "fre" or "fra" or "fr"
+            or "ger" or "deu" or "de" or "ita" or "it" or "por" or "pt" or "rus" or "ru";
     }
 
     private static int CountCatalogTokenMatches(string value, HashSet<string> catalogTokens)

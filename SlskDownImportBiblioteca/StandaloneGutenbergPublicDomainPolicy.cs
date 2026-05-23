@@ -362,6 +362,22 @@ internal static class StandaloneGutenbergPublicDomainPolicy
 
     private static string? TryExtractAuthor(string fileName, string? fullPath)
     {
+        var fn = Path.GetFileNameWithoutExtension(fileName);
+        var segments = SplitNameSegments(fn);
+        if (segments.Count >= 2)
+        {
+            var first = NormalizeAuthor(segments[0]);
+            var second = NormalizeAuthor(segments[1]);
+
+            if (LooksLikeAuthorCandidate(second) && !LooksLikeAuthorCandidate(first))
+                return segments[1];
+
+            if (LooksLikeAuthorCandidate(first) && !LooksLikeAuthorCandidate(second))
+                return segments[0];
+
+            return segments[1];
+        }
+
         if (!string.IsNullOrEmpty(fullPath))
         {
             var dir = Path.GetDirectoryName(fullPath);
@@ -373,7 +389,6 @@ internal static class StandaloneGutenbergPublicDomainPolicy
             }
         }
 
-        var fn = Path.GetFileNameWithoutExtension(fileName);
         var separators = new[] { " - ", "_", " – " };
         foreach (var sep in separators)
         {
@@ -383,6 +398,49 @@ internal static class StandaloneGutenbergPublicDomainPolicy
         }
 
         return null;
+    }
+
+    private static List<string> SplitNameSegments(string fileNameNoExt)
+    {
+        var rawParts = fileNameNoExt.Split(new[] { " - ", " – ", "_" }, StringSplitOptions.RemoveEmptyEntries);
+        var segments = new List<string>(rawParts.Length);
+        foreach (var part in rawParts)
+        {
+            var cleaned = part.Trim().Trim('"', '\'', '“', '”');
+            if (!string.IsNullOrWhiteSpace(cleaned))
+                segments.Add(cleaned);
+        }
+
+        while (segments.Count > 2 && IsIgnorableTrailingMetadata(segments[^1]))
+            segments.RemoveAt(segments.Count - 1);
+
+        return segments;
+    }
+
+    private static bool IsIgnorableTrailingMetadata(string value)
+    {
+        var normalized = NormalizeAuthor(value);
+        if (string.IsNullOrWhiteSpace(normalized))
+            return true;
+
+        var compact = normalized.Replace(" ", string.Empty, StringComparison.Ordinal);
+        if (compact.All(char.IsDigit))
+            return true;
+
+        return normalized is "spa" or "esp" or "es" or "eng" or "en" or "fre" or "fra" or "fr"
+            or "ger" or "deu" or "de" or "ita" or "it" or "por" or "pt" or "rus" or "ru";
+    }
+
+    private static bool LooksLikeAuthorCandidate(string normalized)
+    {
+        if (string.IsNullOrWhiteSpace(normalized))
+            return false;
+
+        var tokens = normalized.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        if (tokens.Length >= 2)
+            return true;
+
+        return normalized.Contains(',', StringComparison.Ordinal);
     }
 
     private static string NormalizeAuthor(string value)
