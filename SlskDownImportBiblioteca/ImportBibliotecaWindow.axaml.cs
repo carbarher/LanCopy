@@ -6,7 +6,6 @@ using SlskDownAvalonia.Models;
 using SlskDownBibliotecaImport;
 using SlskDownBibliotecaImport.Services;
 using System;
-using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Threading;
@@ -213,9 +212,35 @@ public partial class ImportBibliotecaWindow : Window
         var importCheckpointDeltaPath = Path.Combine(dest, ".import_checkpoint.delta");
         var host = new StandaloneImportHost(this, _calibre);
         var ui = new StandaloneImportUi(this);
+        StandaloneGutenbergPublicDomainPolicy.ResetPolicyStats();
 
         try
         {
+            if (cfg.ImportSourceCleanupEnabled)
+            {
+                // ── Limpieza previa de la carpeta de origen ──────────────────
+                TxtStatus!.Text = "Limpiando carpeta de origen…";
+                var catalogPathOverride = Environment.GetEnvironmentVariable("SLSDOWN_GUTENBERG_AUTHORS_PATH");
+                var gutenbergTokens = await Task.Run(() => SourceFolderCleaner.LoadGutenbergTokens(catalogPathOverride, src), ct);
+                var catalogSnapshot = await Task.Run(() => StandaloneGutenbergPublicDomainPolicy.GetCatalogSnapshot(src), ct);
+                var cleanProgress = new Progress<string>(AppendLog); // marshala automáticamente al hilo UI
+                if (catalogSnapshot.AuthorCount > 0)
+                {
+                    AppendLog($"📚 [Gutenberg] Catálogo activo: {catalogSnapshot.AuthorCount:N0} autor(es) desde {catalogSnapshot.SourcePath}");
+                }
+                else
+                {
+                    AppendLog("⚠️ [Gutenberg] No se cargó ningún autor desde catálogo; la política PD rechazará por seguridad.");
+                }
+                await SourceFolderCleaner.CleanAsync(src, gutenbergTokens, cleanProgress, o.DryRun, ct);
+                // ─────────────────────────────────────────────────────────────
+            }
+            else
+            {
+                AppendLog("🧹 [Limpieza] Desactivada por configuración (ImportSourceCleanupEnabled=false).");
+            }
+
+            TxtStatus!.Text = "Importando…";
             await BibliotecaImportEngine.RunAsync(
                 src,
                 dest,
@@ -227,6 +252,13 @@ public partial class ImportBibliotecaWindow : Window
                 ui,
                 retryOnlyDestFileNames: null,
                 ct);
+
+            var policyStats = StandaloneGutenbergPublicDomainPolicy.GetPolicyStatsSnapshot();
+            if (policyStats.Evaluated > 0)
+            {
+                AppendLog($"📚 [PD] Evaluados {policyStats.Evaluated:N0} · aceptados {policyStats.Accepted:N0} · rechazados {policyStats.Rejected:N0}");
+                AppendLog($"   ↳ no literario {policyStats.RejectedNonLiterary:N0} · sin autor {policyStats.RejectedNoAuthor:N0} · sin catálogo {policyStats.RejectedNoCatalog:N0} · autor fuera de Gutenberg {policyStats.RejectedAuthorNotInCatalog:N0}");
+            }
         }
         catch (OperationCanceledException)
         {
@@ -320,77 +352,20 @@ public partial class ImportBibliotecaWindow : Window
         public Task<ConversionResult> EnqueueCalibreTxtAsync(string inputPath, string outputDir, CancellationToken ct = default) =>
             _calibre.EnqueueConversionAsync(inputPath, outputDir, ct);
 
-        // Simplified PD validation for standalone import tool (no heavy dependencies)
-        private static readonly HashSet<string> s_nonLiteraryTokens = new(StringComparer.OrdinalIgnoreCase)
-        {
-            "magazine", "journal", "newspaper", "periodical", "music", "mp3", "flac",
-            "bootleg", "audiobook", "podcast", "video", "film", "movie", "manual",
-            "guide", "catalog", "map", "atlas", "concert", "festival"
-        };
-
         public bool ShouldImportByPublicDomainPolicy(string destFileName, string? sourcePathOrEntry, out string? reason)
         {
             reason = null;
 
-            // PD filtering check (value loaded in constructor from AppConfig)
             if (!_pdFilterEnabled)
                 return true;
 
-            // Quick non-literary check
-            var fn = Path.GetFileNameWithoutExtension(destFileName);
-            foreach (var token in s_nonLiteraryTokens)
+            if (StandaloneGutenbergPublicDomainPolicy.ShouldReject(destFileName, sourcePathOrEntry, out var pdReason))
             {
-                if (fn.Contains(token, StringComparison.OrdinalIgnoreCase))
-                {
-                    reason = $"Token no literario: {token}";
-                    return false;
-                }
-            }
-
-            // Try to extract author from path/filename
-            var author = TryExtractAuthor(destFileName, sourcePathOrEntry);
-            if (string.IsNullOrWhiteSpace(author))
-            {
-                reason = "Autor no identificable";
+                reason = pdReason;
                 return false;
             }
 
-            // In standalone mode: accept if author looks like "Lastname, Firstname" pattern
-            // (simplified validation - full Gutenberg catalog only available in main app)
-            if (author.Contains(',') || author.Contains('_') || author.Contains(" - "))
-            {
-                return true;
-            }
-
-            reason = "Formato de autor no reconocido (se espera 'Apellido, Nombre')";
-            return false;
-        }
-
-        private static string? TryExtractAuthor(string fileName, string? fullPath)
-        {
-            // Try from parent folder name
-            if (!string.IsNullOrEmpty(fullPath))
-            {
-                var dir = Path.GetDirectoryName(fullPath);
-                if (!string.IsNullOrEmpty(dir))
-                {
-                    var parent = Path.GetFileName(dir);
-                    if (!string.IsNullOrWhiteSpace(parent) && parent.Length > 2)
-                        return parent;
-                }
-            }
-
-            // Try from filename: "Author - Title.ext" or "Author_Title.ext"
-            var fn = Path.GetFileNameWithoutExtension(fileName);
-            var separators = new[] { " - ", "_", " – " };
-            foreach (var sep in separators)
-            {
-                var idx = fn.IndexOf(sep, StringComparison.OrdinalIgnoreCase);
-                if (idx > 0)
-                    return fn[..idx].Trim();
-            }
-
-            return null;
+            return true;
         }
 
         /// <summary>App dedicada: sin detector ONNX; aplica solo tamaño y filtros de calidad.</summary>
