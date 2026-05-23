@@ -110,6 +110,8 @@ internal static class SourceFolderCleaner
 
         return await Task.Run(() =>
         {
+            const int MaxDetailedLogEntries = 80;
+            const int ProgressEveryFiles = 500;
             List<string> files;
             try
             {
@@ -122,6 +124,22 @@ internal static class SourceFolderCleaner
             }
 
             log.Report($"🧹 [Limpieza] Iniciando limpieza de {files.Count} archivo(s) en origen…");
+            int scannedBooks = 0;
+            int detailedLogs = 0;
+            int suppressedLogs = 0;
+
+            void ReportDetail(string message)
+            {
+                if (detailedLogs < MaxDetailedLogEntries)
+                {
+                    detailedLogs++;
+                    log.Report(message);
+                }
+                else
+                {
+                    suppressedLogs++;
+                }
+            }
 
             foreach (var filePath in files)
             {
@@ -130,12 +148,16 @@ internal static class SourceFolderCleaner
                 var ext = Path.GetExtension(filePath);
                 if (!IsBookExtension(ext)) continue;
 
+                scannedBooks++;
+                if (scannedBooks % ProgressEveryFiles == 0)
+                    log.Report($"🧹 [Limpieza] Progreso: {scannedBooks:N0}/{files.Count:N0} archivo(s) de libro revisados…");
+
                 var fileName = Path.GetFileNameWithoutExtension(filePath);
                 var parsed = TryResolveAuthorTitle(fileName, gutenbergTokens, out var author, out var title);
 
                 if (string.IsNullOrWhiteSpace(author))
                 {
-                    log.Report($"  ⚠️ Sin autor legible, omitido: {Path.GetFileName(filePath)}");
+                    ReportDetail($"  ⚠️ Sin autor legible, omitido: {Path.GetFileName(filePath)}");
                     result.Skipped++;
                     continue;
                 }
@@ -144,7 +166,7 @@ internal static class SourceFolderCleaner
                 {
                     if (parsed == ParsedAuthorResult.Ambiguous)
                     {
-                        log.Report($"  ⚠️ Autor ambiguo (no se borra por seguridad): {Path.GetFileName(filePath)}");
+                        ReportDetail($"  ⚠️ Autor ambiguo (no se borra por seguridad): {Path.GetFileName(filePath)}");
                         result.Skipped++;
                         continue;
                     }
@@ -153,18 +175,18 @@ internal static class SourceFolderCleaner
                     {
                         if (dryRun)
                         {
-                            log.Report($"  🧪 DRY-RUN eliminaría (autor no en Gutenberg): {Path.GetFileName(filePath)}");
+                            ReportDetail($"  🧪 DRY-RUN eliminaría (autor no en Gutenberg): {Path.GetFileName(filePath)}");
                         }
                         else
                         {
                             File.Delete(filePath);
-                            log.Report($"  🗑️ Eliminado (autor no en Gutenberg): {Path.GetFileName(filePath)}");
+                            ReportDetail($"  🗑️ Eliminado (autor no en Gutenberg): {Path.GetFileName(filePath)}");
                         }
                         result.Deleted++;
                     }
                     catch (Exception ex)
                     {
-                        log.Report($"  ⚠️ No se pudo eliminar {Path.GetFileName(filePath)}: {ex.Message}");
+                        ReportDetail($"  ⚠️ No se pudo eliminar {Path.GetFileName(filePath)}: {ex.Message}");
                     }
                     continue;
                 }
@@ -180,26 +202,29 @@ internal static class SourceFolderCleaner
                         {
                             if (dryRun)
                             {
-                                log.Report($"  🧪 DRY-RUN renombraría: {Path.GetFileName(filePath)} → {normalizedName}");
+                                ReportDetail($"  🧪 DRY-RUN renombraría: {Path.GetFileName(filePath)} → {normalizedName}");
                             }
                             else
                             {
                                 File.Move(filePath, newPath);
-                                log.Report($"  ✏️ Renombrado: {Path.GetFileName(filePath)} → {normalizedName}");
+                                ReportDetail($"  ✏️ Renombrado: {Path.GetFileName(filePath)} → {normalizedName}");
                             }
                             result.Renamed++;
                         }
                         else
                         {
-                            log.Report($"  ⚠️ Colisión al renombrar {Path.GetFileName(filePath)}, se mantiene nombre original.");
+                            ReportDetail($"  ⚠️ Colisión al renombrar {Path.GetFileName(filePath)}, se mantiene nombre original.");
                         }
                     }
                     catch (Exception ex)
                     {
-                        log.Report($"  ⚠️ No se pudo renombrar {Path.GetFileName(filePath)}: {ex.Message}");
+                        ReportDetail($"  ⚠️ No se pudo renombrar {Path.GetFileName(filePath)}: {ex.Message}");
                     }
                 }
             }
+
+            if (suppressedLogs > 0)
+                log.Report($"ℹ️ [Limpieza] {suppressedLogs:N0} evento(s) detallados se omitieron del log para mantener la UI fluida.");
 
             log.Report($"🧹 [Limpieza] Completa: {result.Renamed} renombrado(s), {result.Deleted} eliminado(s), {result.Skipped} omitido(s).");
             return result;

@@ -8,6 +8,7 @@ using SlskDownBibliotecaImport.Services;
 using System;
 using System.IO;
 using System.Linq;
+using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -17,6 +18,9 @@ public partial class ImportBibliotecaWindow : Window
 {
     private CancellationTokenSource? _importCts;
     private readonly CalibreConverterService _calibre = new();
+    private readonly object _logLock = new();
+    private readonly StringBuilder _pendingLog = new();
+    private int _logFlushScheduled;
 
     public ImportBibliotecaWindow()
     {
@@ -198,7 +202,7 @@ public partial class ImportBibliotecaWindow : Window
 
         await ImportAppConfigStore.SaveImportFieldsAsync(cfg);
 
-        if (TxtLog != null) TxtLog.Text = "";
+        ClearLog();
         AppendLog($"📂 Origen: {src}");
         AppendLog($"📂 Destino: {dest}");
         AppendLog("⚙️ Motor SlskDownBibliotecaImport (sin app principal)…");
@@ -286,8 +290,45 @@ public partial class ImportBibliotecaWindow : Window
 
     internal void AppendLog(string line)
     {
-        if (TxtLog == null) return;
-        TxtLog.Text += line + Environment.NewLine;
+        lock (_logLock)
+        {
+            _pendingLog.Append(line).Append(Environment.NewLine);
+        }
+
+        if (Interlocked.CompareExchange(ref _logFlushScheduled, 1, 0) == 0)
+            Dispatcher.UIThread.Post(FlushPendingLog, DispatcherPriority.Background);
+    }
+
+    internal void ClearLog()
+    {
+        lock (_logLock)
+        {
+            _pendingLog.Clear();
+        }
+
+        if (TxtLog != null)
+            TxtLog.Text = string.Empty;
+    }
+
+    private void FlushPendingLog()
+    {
+        string chunk;
+        lock (_logLock)
+        {
+            chunk = _pendingLog.ToString();
+            _pendingLog.Clear();
+        }
+
+        if (TxtLog != null && chunk.Length > 0)
+            TxtLog.Text += chunk;
+
+        Interlocked.Exchange(ref _logFlushScheduled, 0);
+
+        lock (_logLock)
+        {
+            if (_pendingLog.Length > 0 && Interlocked.CompareExchange(ref _logFlushScheduled, 1, 0) == 0)
+                Dispatcher.UIThread.Post(FlushPendingLog, DispatcherPriority.Background);
+        }
     }
 
     private sealed class StandaloneImportHost : IBibliotecaImportHost
@@ -331,7 +372,7 @@ public partial class ImportBibliotecaWindow : Window
             }
         }
 
-        public void LogClear() => Dispatcher.UIThread.Post(() => { if (_w.TxtLog != null) _w.TxtLog.Text = ""; });
+        public void LogClear() => Dispatcher.UIThread.Post(_w.ClearLog);
         public void Log(string line) => Dispatcher.UIThread.Post(() => _w.AppendLog(line));
         public void Status(string line) => Dispatcher.UIThread.Post(() => { if (_w.TxtStatus != null) _w.TxtStatus.Text = line; });
         public void PipelineQueue(string text, bool persistSnapshot = false) =>
