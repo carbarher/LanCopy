@@ -2,6 +2,12 @@
 setlocal EnableExtensions
 cd /d "%~dp0"
 
+set "WAIT_MODE=0"
+if /i "%~1"=="--wait" (
+    set "WAIT_MODE=1"
+    shift
+)
+
 set "IMP_PROJ=%~dp0SlskDownImportBiblioteca\SlskDownImportBiblioteca.csproj"
 set "IMP_OUT=%~dp0SlskDownImportBiblioteca\bin\Release\net9.0"
 set "IMP_EXE=%IMP_OUT%\SlskDownImportBiblioteca.exe"
@@ -29,10 +35,24 @@ if not exist "%IMP_EXE%" (
 echo.
 echo Iniciando importador desde la carpeta de salida...
 pushd "%IMP_OUT%"
-REM start /wait: espera al WinExe y copia bien el ERRORLEVEL; dotnet run a veces enmascara fallos.
-start "" /wait "%IMP_EXE%" %*
+if "%WAIT_MODE%"=="1" (
+    REM Modo diagnostico: espera al WinExe y conserva ERRORLEVEL.
+    start "" /wait "%IMP_EXE%" %*
+) else (
+    REM Por defecto no bloquear terminal; la app abre en su propia ventana.
+    start "" "%IMP_EXE%" %*
+)
 set "RC=%ERRORLEVEL%"
 popd
+
+if not "%WAIT_MODE%"=="1" (
+    if "%RC%"=="0" (
+        echo Ventana lanzada sin bloquear terminal.
+    ) else (
+        echo No se pudo lanzar el importador. Codigo de salida: %RC%
+    )
+    exit /b %RC%
+)
 
 if "%RC%"=="0" exit /b 0
 

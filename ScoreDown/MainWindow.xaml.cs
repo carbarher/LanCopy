@@ -272,9 +272,12 @@ public partial class MainWindow : Window, IAsyncDisposable
     private readonly bool _omrAbortOnHighFail = ReadFeatureFlag("SCOREDOWN_OMR_ABORT_ON_HIGH_FAIL", true);
     private readonly int _omrAbortFailRatePercent = ReadFeatureFlagInt("SCOREDOWN_OMR_ABORT_FAIL_RATE_PCT", 80, 50, 100);
     private readonly int _omrAbortMinSamples = ReadFeatureFlagInt("SCOREDOWN_OMR_ABORT_MIN_SAMPLES", 12, 5, 500);
+    private readonly int _omrAbortRecentWindow = ReadFeatureFlagInt("SCOREDOWN_OMR_ABORT_RECENT_WINDOW", 24, 5, 500);
+    private readonly int _omrAbortRecentFailRatePercent = ReadFeatureFlagInt("SCOREDOWN_OMR_ABORT_RECENT_FAIL_RATE_PCT", 70, 50, 100);
+    private readonly int _omrAbortConsecutiveFails = ReadFeatureFlagInt("SCOREDOWN_OMR_ABORT_CONSEC_FAILS", 10, 3, 200);
     private readonly int _audiverisTimeoutSeconds = ReadFeatureFlagInt("SCOREDOWN_AUDIVERIS_TIMEOUT_SEC", 300, 30, 7200);
     private readonly int _audiverisParallel = ReadFeatureFlagInt("SCOREDOWN_AUDIVERIS_PARALLEL", 3, 1, 8);
-    private readonly int _audiverisPdfTimeoutMinSeconds = ReadFeatureFlagInt("SCOREDOWN_AUDIVERIS_TIMEOUT_PDF_MIN_SEC", 420, 60, 7200);
+    private readonly int _audiverisPdfTimeoutMinSeconds = ReadFeatureFlagInt("SCOREDOWN_AUDIVERIS_TIMEOUT_PDF_MIN_SEC", 300, 60, 7200);
     private readonly int _audiverisPdfTimeoutPerMbSeconds = ReadFeatureFlagInt("SCOREDOWN_AUDIVERIS_TIMEOUT_PDF_PER_MB_SEC", 12, 0, 300);
     private readonly int _audiverisPdfTimeoutPerPageSeconds = ReadFeatureFlagInt("SCOREDOWN_AUDIVERIS_TIMEOUT_PDF_PER_PAGE_SEC", 10, 0, 300);
     private readonly int _audiverisPdfTimeoutMaxSeconds = ReadFeatureFlagInt("SCOREDOWN_AUDIVERIS_TIMEOUT_PDF_MAX_SEC", 1800, 120, 10800);
@@ -5041,6 +5044,49 @@ public partial class MainWindow : Window, IAsyncDisposable
         using var failStopCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
         var abortByHighFail = 0;
         var guardrailGraceUsed = 0;
+        var recentFailureWindow = new Queue<bool>();
+        var recentFailureCount = 0;
+        var consecutiveFailureStreak = 0;
+        var guardrailWindowLock = new object();
+
+        void RecordGuardrailSuccess()
+        {
+            lock (guardrailWindowLock)
+            {
+                consecutiveFailureStreak = 0;
+                recentFailureWindow.Enqueue(false);
+                while (recentFailureWindow.Count > _omrAbortRecentWindow)
+                {
+                    if (recentFailureWindow.Dequeue())
+                        recentFailureCount--;
+                }
+            }
+        }
+
+        string? RecordGuardrailFailure()
+        {
+            lock (guardrailWindowLock)
+            {
+                consecutiveFailureStreak++;
+                recentFailureWindow.Enqueue(true);
+                recentFailureCount++;
+                while (recentFailureWindow.Count > _omrAbortRecentWindow)
+                {
+                    if (recentFailureWindow.Dequeue())
+                        recentFailureCount--;
+                }
+
+                if (consecutiveFailureStreak >= _omrAbortConsecutiveFails)
+                    return $"racha local de {consecutiveFailureStreak} fallos consecutivos";
+
+                var recentSamples = recentFailureWindow.Count;
+                var recentMinSamples = Math.Min(_omrAbortMinSamples, _omrAbortRecentWindow);
+                if (recentSamples >= recentMinSamples && (recentFailureCount * 100) >= (_omrAbortRecentFailRatePercent * recentSamples))
+                    return $"ventana reciente tóxica ({recentFailureCount}/{recentSamples}, {_omrAbortRecentFailRatePercent}%+)";
+
+                return null;
+            }
+        }
 
         bool TryReserveFallbackAttempt()
         {
@@ -5072,33 +5118,36 @@ public partial class MainWindow : Window, IAsyncDisposable
             }
         }
 
-        bool TryTriggerHighFailAbort(string lastFileName)
+        bool TryTriggerHighFailAbort(string lastFileName, string? localTriggerReason = null)
         {
-            if (!_omrAbortOnHighFail || maxFallbackAttempts <= 0)
-                return false;
-
-            var attemptsUsed = Volatile.Read(ref fallbackAttempts);
-            if (attemptsUsed < maxFallbackAttempts)
+            if (!_omrAbortOnHighFail)
                 return false;
 
             var processedNow = Volatile.Read(ref processed);
-            if (processedNow < _omrAbortMinSamples)
+            var failNow = Volatile.Read(ref fail);
+            var attemptsUsed = Volatile.Read(ref fallbackAttempts);
+            var hasGlobalTrigger = maxFallbackAttempts > 0
+                && attemptsUsed >= maxFallbackAttempts
+                && processedNow >= _omrAbortMinSamples
+                && (failNow * 100) >= (_omrAbortFailRatePercent * processedNow);
+
+            if (!hasGlobalTrigger && string.IsNullOrWhiteSpace(localTriggerReason))
                 return false;
 
-            var failNow = Volatile.Read(ref fail);
-            if ((failNow * 100) < (_omrAbortFailRatePercent * processedNow))
-                return false;
+            var reasonText = hasGlobalTrigger
+                ? $"fail-rate global alto ({failNow}/{processedNow}, {_omrAbortFailRatePercent}%+) con presupuesto fallback agotado"
+                : localTriggerReason!;
 
             if (_enableOmrAdaptiveParallel && effectiveParallel > 1 && Interlocked.CompareExchange(ref guardrailGraceUsed, 1, 0) == 0)
             {
-                Log($"⚠️ {label}: guardrail fase 1 ({failNow}/{processedNow}, {_omrAbortFailRatePercent}%+). Se mantiene corrida actual y se degradará paralelo en próxima ejecución.");
+                Log($"⚠️ {label}: guardrail fase 1 por {reasonText}. Se mantiene corrida actual y se degradará paralelo en próxima ejecución.");
                 return false;
             }
 
             if (Interlocked.CompareExchange(ref abortByHighFail, 1, 0) != 0)
                 return true;
 
-            Log($"🛑 {label}: corte temprano por fail-rate alto ({failNow}/{processedNow}, {_omrAbortFailRatePercent}%+) con presupuesto fallback agotado. Último: {lastFileName}");
+            Log($"🛑 {label}: corte temprano por {reasonText}. Snapshot global={failNow}/{processedNow}. Último: {lastFileName}");
             try { failStopCts.Cancel(); } catch { }
             return true;
         }
@@ -5129,6 +5178,7 @@ public partial class MainWindow : Window, IAsyncDisposable
 
                 Interlocked.Increment(ref partial);
                 Interlocked.Increment(ref fallbackOemerOk);
+                RecordGuardrailSuccess();
                 RegisterOmrFamilyOutcome(NormalizeAudiverisFamilyKey(inputPath), "oemer", timedOut: false, failed: false, filePath: inputPath);
                 var snapOk = Volatile.Read(ref ok); var snapPart = Volatile.Read(ref partial); var snapFail = Volatile.Read(ref fail);
                 Log($"✅ Fallback oemer OK [{idx}/{total}]: {name} (ok={snapOk}, parcial={snapPart}, fail={snapFail})");
@@ -5186,6 +5236,7 @@ public partial class MainWindow : Window, IAsyncDisposable
                         {
                             ResetAudiverisSuccessStreak(familyKey);
                             Interlocked.Increment(ref fail);
+                            _ = TryTriggerHighFailAbort(name, RecordGuardrailFailure());
                             Log($"⏭️ {label} [{idx}/{total}] {name}: cuarentena fase1 (ambas variantes fallaron). Usa Reset Cooldown para reintentar.");
                             await Dispatcher.InvokeAsync(() =>
                                 _audiverisLog.Add(new AudiverisLogItem { FileName = name, Status = "⏭️ Cuarentena F1" }));
@@ -5199,6 +5250,7 @@ public partial class MainWindow : Window, IAsyncDisposable
                                 Interlocked.Increment(ref quarantinePhase2BudgetSkips);
                                 ResetAudiverisSuccessStreak(familyKey);
                                 Interlocked.Increment(ref fail);
+                                _ = TryTriggerHighFailAbort(name, RecordGuardrailFailure());
                                 Log($"⏭️ {label} [{idx}/{total}] {name}: cuarentena fase2 sin presupuesto (oemer-only omitido).");
                                 await Dispatcher.InvokeAsync(() =>
                                     _audiverisLog.Add(new AudiverisLogItem { FileName = name, Status = "⏭️ Cuarentena F2 bdg" }));
@@ -5210,6 +5262,7 @@ public partial class MainWindow : Window, IAsyncDisposable
 
                             ResetAudiverisSuccessStreak(familyKey);
                             Interlocked.Increment(ref fail);
+                            _ = TryTriggerHighFailAbort(name, RecordGuardrailFailure());
                             Log($"⏭️ {label} [{idx}/{total}] {name}: cuarentena fase2 (solo oemer permitido; fallback no disponible/falló).");
                             await Dispatcher.InvokeAsync(() =>
                                 _audiverisLog.Add(new AudiverisLogItem { FileName = name, Status = "⏭️ Cuarentena F2" }));
@@ -5234,6 +5287,7 @@ public partial class MainWindow : Window, IAsyncDisposable
                     {
                         ResetAudiverisSuccessStreak(familyKey);
                         Interlocked.Increment(ref fail);
+                        _ = TryTriggerHighFailAbort(name, RecordGuardrailFailure());
                         Log($"🧬 {label} [{idx}/{total}] {name}: cuarentena evolutiva por genoma '{genomeKey}' (nivel={genomePressure}).");
                         await Dispatcher.InvokeAsync(() =>
                             _audiverisLog.Add(new AudiverisLogItem { FileName = name, Status = "🧬 Quarantine" }));
@@ -5263,7 +5317,7 @@ public partial class MainWindow : Window, IAsyncDisposable
                         _ = Task.Run(() => AppendTelemetry(_audiverisTelemetryPath, new TimeoutTelemetryEntry { FamilyKey = familyKey, ComputedTimeoutSeconds = computedTimeout, ActualElapsedSeconds = sw.Elapsed.TotalSeconds, TimedOut = true, DateUtc = DateTime.UtcNow }));
 
                         Interlocked.Increment(ref fail);
-                        _ = TryTriggerHighFailAbort(name);
+                        _ = TryTriggerHighFailAbort(name, RecordGuardrailFailure());
                         var snapOk = Volatile.Read(ref ok); var snapPart = Volatile.Read(ref partial); var snapFail = Volatile.Read(ref fail);
                         Log($"❌ {label} timeout [{idx}/{total}] {name}: {tex.Message} (ok={snapOk}, parcial={snapPart}, fail={snapFail})");
                         if (idx % 5 == 0)
@@ -5283,7 +5337,7 @@ public partial class MainWindow : Window, IAsyncDisposable
                             return;
 
                         Interlocked.Increment(ref fail);
-                        _ = TryTriggerHighFailAbort(name);
+                        _ = TryTriggerHighFailAbort(name, RecordGuardrailFailure());
                         var snapOk = Volatile.Read(ref ok); var snapFail = Volatile.Read(ref fail);
                         Log($"❌ {label} error inesperado [{idx}/{total}] {name}: {ex.GetType().Name}: {ex.Message} (ok={snapOk}, fail={snapFail})");
                         await Dispatcher.InvokeAsync(() =>
@@ -5298,6 +5352,7 @@ public partial class MainWindow : Window, IAsyncDisposable
                         if (_audiverisTimeoutFamilies.TryRemove(familyKey, out _))
                             _audiverisTimeoutFamiliesDirty = true;
                         RegisterAudiverisSuccess(familyKey);
+                        RecordGuardrailSuccess();
                         RegisterOmrFamilyOutcome(familyKey, "audiveris", timedOut: false, failed: false, filePath: input);
                         RegisterOmrFamilyOutcome(familyKey, "audiveris", timedOut: false, failed: false, filePath: correctedInput);
                         Interlocked.Increment(ref ok);
@@ -5314,7 +5369,7 @@ public partial class MainWindow : Window, IAsyncDisposable
                             return;
 
                         Interlocked.Increment(ref fail);
-                        _ = TryTriggerHighFailAbort(name);
+                        _ = TryTriggerHighFailAbort(name, RecordGuardrailFailure());
                         var movedPath = MoveToAudiverisFailedFolder(input);
                         await Dispatcher.InvokeAsync(() =>
                         {
@@ -5804,6 +5859,49 @@ public partial class MainWindow : Window, IAsyncDisposable
         using var failStopCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
         var abortByHighFail = 0;
         var guardrailGraceUsed = 0;
+        var recentFailureWindow = new Queue<bool>();
+        var recentFailureCount = 0;
+        var consecutiveFailureStreak = 0;
+        var guardrailWindowLock = new object();
+
+        void RecordGuardrailSuccess()
+        {
+            lock (guardrailWindowLock)
+            {
+                consecutiveFailureStreak = 0;
+                recentFailureWindow.Enqueue(false);
+                while (recentFailureWindow.Count > _omrAbortRecentWindow)
+                {
+                    if (recentFailureWindow.Dequeue())
+                        recentFailureCount--;
+                }
+            }
+        }
+
+        string? RecordGuardrailFailure()
+        {
+            lock (guardrailWindowLock)
+            {
+                consecutiveFailureStreak++;
+                recentFailureWindow.Enqueue(true);
+                recentFailureCount++;
+                while (recentFailureWindow.Count > _omrAbortRecentWindow)
+                {
+                    if (recentFailureWindow.Dequeue())
+                        recentFailureCount--;
+                }
+
+                if (consecutiveFailureStreak >= _omrAbortConsecutiveFails)
+                    return $"racha local de {consecutiveFailureStreak} fallos consecutivos";
+
+                var recentSamples = recentFailureWindow.Count;
+                var recentMinSamples = Math.Min(_omrAbortMinSamples, _omrAbortRecentWindow);
+                if (recentSamples >= recentMinSamples && (recentFailureCount * 100) >= (_omrAbortRecentFailRatePercent * recentSamples))
+                    return $"ventana reciente tóxica ({recentFailureCount}/{recentSamples}, {_omrAbortRecentFailRatePercent}%+)";
+
+                return null;
+            }
+        }
 
         bool TryReserveFallbackAttempt()
         {
@@ -5820,33 +5918,36 @@ public partial class MainWindow : Window, IAsyncDisposable
             }
         }
 
-        bool TryTriggerHighFailAbort(string lastFileName)
+        bool TryTriggerHighFailAbort(string lastFileName, string? localTriggerReason = null)
         {
-            if (!_omrAbortOnHighFail || maxFallbackAttempts <= 0)
-                return false;
-
-            var attemptsUsed = Volatile.Read(ref fallbackAttempts);
-            if (attemptsUsed < maxFallbackAttempts)
+            if (!_omrAbortOnHighFail)
                 return false;
 
             var processedNow = Volatile.Read(ref processed);
-            if (processedNow < _omrAbortMinSamples)
+            var failNow = Volatile.Read(ref fail);
+            var attemptsUsed = Volatile.Read(ref fallbackAttempts);
+            var hasGlobalTrigger = maxFallbackAttempts > 0
+                && attemptsUsed >= maxFallbackAttempts
+                && processedNow >= _omrAbortMinSamples
+                && (failNow * 100) >= (_omrAbortFailRatePercent * processedNow);
+
+            if (!hasGlobalTrigger && string.IsNullOrWhiteSpace(localTriggerReason))
                 return false;
 
-            var failNow = Volatile.Read(ref fail);
-            if ((failNow * 100) < (_omrAbortFailRatePercent * processedNow))
-                return false;
+            var reasonText = hasGlobalTrigger
+                ? $"fail-rate global alto ({failNow}/{processedNow}, {_omrAbortFailRatePercent}%+) con presupuesto fallback agotado"
+                : localTriggerReason!;
 
             if (_enableOmrAdaptiveParallel && effectiveParallel > 1 && Interlocked.CompareExchange(ref guardrailGraceUsed, 1, 0) == 0)
             {
-                Log($"⚠️ {label}: guardrail fase 1 ({failNow}/{processedNow}, {_omrAbortFailRatePercent}%+). Se mantiene corrida actual y se degradará paralelo en próxima ejecución.");
+                Log($"⚠️ {label}: guardrail fase 1 por {reasonText}. Se mantiene corrida actual y se degradará paralelo en próxima ejecución.");
                 return false;
             }
 
             if (Interlocked.CompareExchange(ref abortByHighFail, 1, 0) != 0)
                 return true;
 
-            Log($"🛑 {label}: corte temprano por fail-rate alto ({failNow}/{processedNow}, {_omrAbortFailRatePercent}%+) con presupuesto fallback agotado. Último: {lastFileName}");
+            Log($"🛑 {label}: corte temprano por {reasonText}. Snapshot global={failNow}/{processedNow}. Último: {lastFileName}");
             try { failStopCts.Cancel(); } catch { }
             return true;
         }
@@ -5870,6 +5971,7 @@ public partial class MainWindow : Window, IAsyncDisposable
 
                 Interlocked.Increment(ref ok);
                 Interlocked.Increment(ref fallbackAudiverisOk);
+                RecordGuardrailSuccess();
                 RegisterOmrFamilyOutcome(NormalizeAudiverisFamilyKey(inputPath), "audiveris", timedOut: false, failed: false, filePath: inputPath);
                 var snapOk = Volatile.Read(ref ok); var snapFail = Volatile.Read(ref fail);
                 Log($"✅ Fallback Audiveris OK [{idx}/{total}]: {name} (ok={snapOk}, fail={snapFail})");
@@ -5945,7 +6047,7 @@ public partial class MainWindow : Window, IAsyncDisposable
                         _ = Task.Run(() => AppendTelemetry(_oemerTelemetryPath, new TimeoutTelemetryEntry { FamilyKey = familyKey, ComputedTimeoutSeconds = computedTimeout, ActualElapsedSeconds = sw.Elapsed.TotalSeconds, TimedOut = true, DateUtc = DateTime.UtcNow }));
 
                         Interlocked.Increment(ref fail);
-                        _ = TryTriggerHighFailAbort(name);
+                        _ = TryTriggerHighFailAbort(name, RecordGuardrailFailure());
                         var snapOk = Volatile.Read(ref ok); var snapFail = Volatile.Read(ref fail);
                         Log($"❌ {label} timeout [{idx}/{total}] {name}: {tex.Message} (ok={snapOk}, fail={snapFail})");
                         await Dispatcher.InvokeAsync(() =>
@@ -5960,7 +6062,7 @@ public partial class MainWindow : Window, IAsyncDisposable
                             return;
 
                         Interlocked.Increment(ref fail);
-                        _ = TryTriggerHighFailAbort(name);
+                        _ = TryTriggerHighFailAbort(name, RecordGuardrailFailure());
                         Log($"❌ {label} error [{idx}/{total}] {name}: {ex.GetType().Name}: {ex.Message}");
                         await Dispatcher.InvokeAsync(() =>
                             _oemerLog.Add(new AudiverisLogItem { FileName = name, Status = "❌ Error" }));
@@ -5977,6 +6079,7 @@ public partial class MainWindow : Window, IAsyncDisposable
                             _oemerTimeoutStrikesDirty = true;
                         if (_oemerStrikeLastUtc.TryRemove(familyKey, out _))
                             _oemerTimeoutStrikesDirty = true;
+                        RecordGuardrailSuccess();
                         RegisterOmrFamilyOutcome(familyKey, "oemer", timedOut: false, failed: false, filePath: correctedInput);
                         Interlocked.Increment(ref ok);
                         var snapOk2 = Volatile.Read(ref ok); var snapFail2 = Volatile.Read(ref fail);
@@ -5991,7 +6094,7 @@ public partial class MainWindow : Window, IAsyncDisposable
                             return;
 
                         Interlocked.Increment(ref fail);
-                        _ = TryTriggerHighFailAbort(name);
+                        _ = TryTriggerHighFailAbort(name, RecordGuardrailFailure());
                         if (result.PermanentFailure)
                         {
                             Log($"🚫 oemer fallo permanente [{idx}/{total}]: {name}");

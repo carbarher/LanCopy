@@ -110,10 +110,10 @@ internal static class SourceFolderCleaner
 
         return await Task.Run(() =>
         {
-            string[] files;
+            List<string> files;
             try
             {
-                files = Directory.GetFiles(srcDir, "*.*", SearchOption.TopDirectoryOnly);
+                files = EnumerateFilesRecursive(srcDir);
             }
             catch (Exception ex)
             {
@@ -121,7 +121,7 @@ internal static class SourceFolderCleaner
                 return result;
             }
 
-            log.Report($"🧹 [Limpieza] Iniciando limpieza de {files.Length} archivo(s) en origen…");
+            log.Report($"🧹 [Limpieza] Iniciando limpieza de {files.Count} archivo(s) en origen…");
 
             foreach (var filePath in files)
             {
@@ -172,7 +172,8 @@ internal static class SourceFolderCleaner
                 var normalizedName = BuildNormalizedFileName(author, title, ext);
                 if (!string.Equals(normalizedName, Path.GetFileName(filePath), StringComparison.OrdinalIgnoreCase))
                 {
-                    var newPath = Path.Combine(srcDir, normalizedName);
+                    var fileDir = Path.GetDirectoryName(filePath) ?? srcDir;
+                    var newPath = Path.Combine(fileDir, normalizedName);
                     try
                     {
                         if (!File.Exists(newPath) || string.Equals(newPath, filePath, StringComparison.OrdinalIgnoreCase))
@@ -212,6 +213,36 @@ internal static class SourceFolderCleaner
         Resolved,
         Ambiguous,
         Missing
+    }
+
+    private static List<string> EnumerateFilesRecursive(string srcDir)
+    {
+        var files = new List<string>(4096);
+        var stack = new Stack<string>();
+        stack.Push(srcDir);
+
+        while (stack.Count > 0)
+        {
+            var dir = stack.Pop();
+            try
+            {
+                foreach (var sub in Directory.EnumerateDirectories(dir))
+                    stack.Push(sub);
+            }
+            catch
+            {
+            }
+
+            try
+            {
+                files.AddRange(Directory.EnumerateFiles(dir));
+            }
+            catch
+            {
+            }
+        }
+
+        return files;
     }
 
     private static bool IsBookExtension(string ext)

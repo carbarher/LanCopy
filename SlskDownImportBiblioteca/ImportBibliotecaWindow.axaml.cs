@@ -34,6 +34,9 @@ public partial class ImportBibliotecaWindow : Window
             {
                 if (TxtSource != null) TxtSource.Text = cfg.ImportSourceDir ?? "";
                 if (TxtDest != null) TxtDest.Text = cfg.DownloadDirectory ?? "";
+                if (ChkDryRun != null) ChkDryRun.IsChecked = cfg.ImportDryRun;
+                if (ChkPipelineVerify != null) ChkPipelineVerify.IsChecked = cfg.ImportPipelineFullVerify;
+                if (ChkPipelineTxt != null) ChkPipelineTxt.IsChecked = cfg.ImportPipelineMissingTxt;
             });
         }
         catch { /* rutas vacías */ }
