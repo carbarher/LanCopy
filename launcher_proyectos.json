@@ -1,0 +1,112 @@
+{
+  "projects": [
+    {
+      "name": "ScoreDown (pami)",
+      "path": "C:/p2p/pami.bat",
+      "cwd": "C:/p2p",
+      "category": "Partituras",
+      "favorite": true,
+      "icon": "SD",
+      "description": "Compila y abre ScoreDown"
+    },
+    {
+      "name": "SlskDown Avalonia",
+      "path": "C:/p2p/lanza.bat",
+      "cwd": "C:/p2p",
+      "category": "Descargas",
+      "favorite": false,
+      "icon": "AVA",
+      "description": "UI Avalonia de SlskDown"
+    },
+    {
+      "name": "SlskDown Avalonia (Debug)",
+      "path": "C:/p2p/run_avalonia_debug.bat",
+      "cwd": "C:/p2p",
+      "category": "Descargas",
+      "favorite": false,
+      "icon": "AVD",
+      "description": "Compila y ejecuta Avalonia en modo debug"
+    },
+    {
+      "name": "Biblio GUI",
+      "path": "C:/p2p/biblio.bat",
+      "cwd": "C:/p2p",
+      "category": "Biblioteca",
+      "favorite": true,
+      "icon": "BIB",
+      "description": "Gestion de biblioteca musical"
+    },
+    {
+      "name": "Convertidor a MusicXML",
+      "path": "C:/p2p/convertir_musicxml.bat",
+      "cwd": "C:/p2p/SlskDownAvalonia/scrap scores",
+      "category": "Herramientas",
+      "favorite": false,
+      "icon": "MXL",
+      "description": "Convierte carpetas de PDF/MSCZ/MID a MusicXML (Audiveris, hOMR)"
+    },
+    {
+      "name": "Scraper Rust",
+      "path": "C:/p2p/scrap.bat",
+      "cwd": "C:/p2p",
+      "category": "Herramientas",
+      "favorite": false,
+      "icon": "RUST",
+      "description": "Scraper de partituras en Rust"
+    },
+    {
+      "name": "Sincronizar Partituras",
+      "path": "C:/p2p/sincronizar_partituras.bat",
+      "cwd": "C:/p2p",
+      "category": "Biblioteca",
+      "favorite": false,
+      "icon": "SYNC",
+      "description": "Sincroniza SlskDown con Sonata"
+    },
+    {
+      "name": "Gomoku (Rust)",
+      "path": "C:/p2p/go.bat",
+      "cwd": "C:/p2p",
+      "category": "Herramientas",
+      "favorite": false,
+      "icon": "GO",
+      "description": "Juego Gomoku desde proyecto Rust"
+    },
+    {
+      "name": "Logs Avalonia (tail)",
+      "path": "C:/p2p/ver_logs.bat",
+      "cwd": "C:/p2p",
+      "category": "Utilidades",
+      "favorite": false,
+      "icon": "LOG",
+      "description": "Monitoriza en vivo los logs de SlskDownAvalonia"
+    },
+    {
+      "name": "Ollama Query (modelo pequeno)",
+      "path": "C:/p2p/query_ollama_small.bat",
+      "cwd": "C:/p2p",
+      "category": "Utilidades",
+      "favorite": false,
+      "icon": "AI",
+      "description": "Consulta a Ollama con fallback de modelo"
+    },
+    {
+      "name": "Chequeo Memoria RAM",
+      "path": "C:/p2p/check_memory.bat",
+      "cwd": "C:/p2p",
+      "category": "Utilidades",
+      "favorite": false,
+      "icon": "RAM",
+      "description": "Muestra RAM total, libre y usada"
+    },
+    {
+      "name": "Sonata Studio",
+      "path": "C:/p2p/Lanzar_SonataStudio.bat",
+      "cwd": "C:/p2p",
+      "category": "Partituras",
+      "favorite": true,
+      "icon": "SON",
+      "description": "Lanza Sonata Studio"
+    }
+  ]
+}
