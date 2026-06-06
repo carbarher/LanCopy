@@ -1,27 +1,41 @@
 @echo off
 setlocal EnableExtensions
+chcp 65001 > nul
 cd /d "%~dp0"
 
 set "WAIT_MODE=0"
+set "REBUILD_MODE=0"
+
+:parse_args
 if /i "%~1"=="--wait" (
     set "WAIT_MODE=1"
     shift
+    goto :parse_args
+)
+if /i "%~1"=="--rebuild" (
+    set "REBUILD_MODE=1"
+    shift
+    goto :parse_args
 )
 
 set "IMP_PROJ=%~dp0SlskDownImportBiblioteca\SlskDownImportBiblioteca.csproj"
 set "IMP_OUT=%~dp0SlskDownImportBiblioteca\bin\Release\net9.0"
 set "IMP_EXE=%IMP_OUT%\SlskDownImportBiblioteca.exe"
 
-echo Compilando importador (Release)...
-REM No copiar DLLs a SlskDownAvalonia: si la app principal esta abierta, bloquea SlskDownBibliotecaImport.dll y falla el build.
-dotnet build "%IMP_PROJ%" -c Release --nologo /p:SkipCopyImportToolToMainApp=true
-if errorlevel 1 (
-    echo.
-    echo Fallo al compilar. Revisa los mensajes anteriores.
-    echo Si ves MSB3027 sobre SlskDownAvalonia: cierra SlskDownAvalonia o compila con carga.bat ^(omitir copia a la app principal^).
-    echo Si no es eso: necesitas el SDK de .NET 9 ^(o superior compatible^) instalado.
-    pause
-    exit /b 1
+if "%REBUILD_MODE%"=="1" (
+    echo Compilando importador ^(Release^)...
+    REM No copiar DLLs a SlskDownAvalonia: si la app principal esta abierta, bloquea SlskDownBibliotecaImport.dll y falla el build.
+    dotnet build "%IMP_PROJ%" -c Release --nologo /p:SkipCopyImportToolToMainApp=true
+    if errorlevel 1 (
+        echo.
+        echo Fallo al compilar. Revisa los mensajes anteriores.
+        echo Si ves MSB3027 sobre SlskDownAvalonia: cierra SlskDownAvalonia o compila con carga.bat ^(omitir copia a la app principal^).
+        echo Si no es eso: necesitas el SDK de .NET 9 ^(o superior compatible^) instalado.
+        pause
+        exit /b 1
+    )
+) else (
+    echo Omitiendo compilacion automatica. Usa --rebuild para forzar build.
 )
 
 if not exist "%IMP_EXE%" (

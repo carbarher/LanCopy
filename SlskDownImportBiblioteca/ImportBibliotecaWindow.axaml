@@ -16,7 +16,7 @@
 
       <Border Grid.Row="1" Grid.ColumnSpan="2" Margin="0,0,0,10" Padding="10,8" CornerRadius="6" Background="#16261C" BorderBrush="#2E7D32" BorderThickness="1">
         <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Spacing="10">
-          <TextBlock VerticalAlignment="Center" Text="Importación de partituras:" Foreground="#B7E4C7" FontWeight="SemiBold" />
+          <TextBlock VerticalAlignment="Center" Text="Importación de libros:" Foreground="#B7E4C7" FontWeight="SemiBold" />
           <Button Name="BtnImport" Content="📥 Importar" Click="BtnImport_Click" Background="#2E7D32" Foreground="White" Padding="18,8" FontWeight="Bold" MinWidth="150" />
         </StackPanel>
       </Border>
