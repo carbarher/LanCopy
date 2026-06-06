@@ -1,2 +1,0 @@
-=== CONSTRUCTOR INICIADO === 21:41:19.362
-Modo portátil determinado: False

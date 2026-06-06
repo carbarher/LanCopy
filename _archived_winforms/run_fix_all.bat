@@ -1,6 +1,0 @@
-@echo off
-echo Ejecutando script de arreglo...
-python fix_all_commented_errors.py
-echo.
-echo Script completado. Presiona cualquier tecla para continuar...
-pause > nul
