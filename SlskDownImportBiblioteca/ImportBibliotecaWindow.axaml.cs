@@ -1,11 +1,13 @@
+using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Interactivity;
+using Avalonia.Layout;
 using Avalonia.Platform.Storage;
 using Avalonia.Threading;
-using SlskDownAvalonia.Models;
 using SlskDownBibliotecaImport;
 using SlskDownBibliotecaImport.Services;
 using System;
+using System.ComponentModel;
 using System.IO;
 using System.Linq;
 using System.Text;
@@ -16,17 +18,69 @@ namespace SlskDownImportBiblioteca;
 
 public partial class ImportBibliotecaWindow : Window
 {
+    private const string DiagnosticEnvVar = "SLSDOWN_IMPORT_DIAGNOSTIC";
     private CancellationTokenSource? _importCts;
     private readonly CalibreConverterService _calibre = new();
     private readonly object _logLock = new();
     private readonly StringBuilder _pendingLog = new();
     private int _logFlushScheduled;
+    private bool _closeRequestedAfterCancel;
+    private bool _allowImmediateClose;
+
+    private readonly string _logDirectory;
+    private readonly string _logFilePath;
 
     public ImportBibliotecaWindow()
     {
         InitializeComponent();
-        Closed += (_, _) => _calibre.Dispose();
+
+        _logDirectory = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "SlskDownImportBiblioteca", "logs");
+        _logFilePath = Path.Combine(_logDirectory, "import_biblioteca.log");
+        try
+        {
+            if (!Directory.Exists(_logDirectory))
+                Directory.CreateDirectory(_logDirectory);
+        }
+        catch (Exception ex)
+        {
+            TryAppendDiagnosticToFile($"[{DateTime.Now:yyyy-MM-dd HH:mm:ss}] No se pudo crear carpeta de logs: {ex.Message}{Environment.NewLine}");
+        }
+
+        Closing += OnClosing;
+        Closed += OnClosed;
         Opened += (_, _) => _ = LoadPathsFromConfigAsync();
+    }
+
+    private void OnClosing(object? sender, CancelEventArgs e)
+    {
+        if (_allowImmediateClose)
+            return;
+
+        if (_importCts == null)
+            return;
+
+        _importCts.Cancel();
+        _closeRequestedAfterCancel = true;
+        e.Cancel = true;
+
+        if (TxtStatus != null)
+            TxtStatus.Text = "Cancelando importacion... cerrando al terminar";
+        AppendLog("⏹ Cierre solicitado: cancelando importación para evitar borrados durante salida.");
+    }
+
+    private void OnClosed(object? sender, EventArgs e)
+    {
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                await _calibre.DisposeAsync().ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                TryAppendDiagnosticToFile($"[{DateTime.Now:yyyy-MM-dd HH:mm:ss}] DisposeAsync Calibre falló: {ex}{Environment.NewLine}");
+            }
+        });
     }
 
     private async Task LoadPathsFromConfigAsync()
@@ -39,11 +93,44 @@ public partial class ImportBibliotecaWindow : Window
                 if (TxtSource != null) TxtSource.Text = cfg.ImportSourceDir ?? "";
                 if (TxtDest != null) TxtDest.Text = cfg.DownloadDirectory ?? "";
                 if (ChkDryRun != null) ChkDryRun.IsChecked = cfg.ImportDryRun;
-                if (ChkPipelineVerify != null) ChkPipelineVerify.IsChecked = cfg.ImportPipelineFullVerify;
                 if (ChkPipelineTxt != null) ChkPipelineTxt.IsChecked = cfg.ImportPipelineMissingTxt;
+                if (ChkSourceCleanup != null) ChkSourceCleanup.IsChecked = cfg.ImportSourceCleanupEnabled;
+                if (ChkDeleteUnknownOnCleanup != null) ChkDeleteUnknownOnCleanup.IsChecked = cfg.ImportDeleteUnknownOnCleanup;
+                if (ChkPurgeSource != null) ChkPurgeSource.IsChecked = cfg.PurgeSourceAfterImport;
             });
         }
-        catch { /* rutas vacías */ }
+        catch (Exception ex)
+        {
+            AppendDiagnostic($"Carga de configuración: {ex}");
+        }
+    }
+
+    private static bool IsDiagnosticEnabled()
+    {
+        var value = Environment.GetEnvironmentVariable(DiagnosticEnvVar);
+        if (string.IsNullOrWhiteSpace(value)) return false;
+        return value == "1"
+            || value.Equals("true", StringComparison.OrdinalIgnoreCase)
+            || value.Equals("yes", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private void AppendDiagnostic(string message, bool mirrorToUi = true)
+    {
+        TryAppendDiagnosticToFile($"[{DateTime.Now:yyyy-MM-dd HH:mm:ss}] {message}{Environment.NewLine}");
+        if (mirrorToUi && IsDiagnosticEnabled())
+            AppendLog($"[diag] {message}");
+    }
+
+    private void TryAppendDiagnosticToFile(string text)
+    {
+        try
+        {
+            var directory = Path.GetDirectoryName(_logFilePath);
+            if (!string.IsNullOrWhiteSpace(directory) && !Directory.Exists(directory))
+                Directory.CreateDirectory(directory);
+            File.AppendAllText(_logFilePath, text);
+        }
+        catch { }
     }
 
     /// <summary>Siempre usa el modo completo (sin presets, sin modo noche).</summary>
@@ -121,7 +208,7 @@ public partial class ImportBibliotecaWindow : Window
             cfg.ImportEpub, cfg.ImportMobi, cfg.ImportPdf, cfg.ImportFb2, cfg.ImportAzw3, cfg.ImportDjvu, cfg.ImportTxt);
         if (allowed.Count == 0)
         {
-            AppendLog("⚠️ En config no hay formatos de importación — marca al menos uno en la app principal (Configuración / import).");
+            AppendLog("⚠️ En la configuración de IMP no hay formatos de importación habilitados.");
             return;
         }
 
@@ -133,6 +220,7 @@ public partial class ImportBibliotecaWindow : Window
             SkipDup = cfg.ImportSkipDup,
             DryRun = ChkDryRun?.IsChecked == true,
             HashDedup = cfg.ImportHashDedup,
+            HashDedupForce = cfg.ImportHashDedupForce, // Cargado correctamente de la configuración
             FastMode = cfg.ImportFastMode,
             QuickSig = cfg.ImportQuickSignatureDedup,
             MinimalLog = cfg.ImportMinimalLog,
@@ -146,16 +234,17 @@ public partial class ImportBibliotecaWindow : Window
             NightStart = cfg.ImportNightStartHour,
             NightEnd = cfg.ImportNightEndHour,
             MinBytes = cfg.ImportMinKB * 1024L,
-            PipelineVerify = ChkPipelineVerify?.IsChecked == true,
             PipelineTxt = ChkPipelineTxt?.IsChecked == true,
         };
 
-        // Siempre usa modo completo (sin presets)
-        ApplyImportPreset(o);
+        // Omitimos ApplyImportPreset(o) para respetar la configuración cargada del usuario
+        // ApplyImportPreset(o);
         o.DryRun = ChkDryRun?.IsChecked == true;
-        o.PipelineVerify = ChkPipelineVerify?.IsChecked == true;
         o.PipelineTxt = ChkPipelineTxt?.IsChecked == true;
         o.GenTxtRequested = o.GenTxt;
+        cfg.ImportSourceCleanupEnabled = ChkSourceCleanup?.IsChecked == true;
+        cfg.ImportDeleteUnknownOnCleanup = ChkDeleteUnknownOnCleanup?.IsChecked == true;
+        cfg.PurgeSourceAfterImport = ChkPurgeSource?.IsChecked == true;
 
         cfg.ImportSourceDir = src;
         cfg.DownloadDirectory = dest;
@@ -178,34 +267,19 @@ public partial class ImportBibliotecaWindow : Window
         cfg.ImportNightModeAuto = o.NightAuto;
         cfg.ImportNightStartHour = o.NightStart;
         cfg.ImportNightEndHour = o.NightEnd;
-        cfg.ImportPipelineFullVerify = o.PipelineVerify;
         cfg.ImportPipelineMissingTxt = o.PipelineTxt;
 
-        try
-        {
-            var di = new DriveInfo(Path.GetPathRoot(Path.GetFullPath(dest))!);
-            var freeGb = di.AvailableFreeSpace / (1024.0 * 1024.0 * 1024.0);
-            if (freeGb < 2.0)
-            {
-                AppendLog($"❌ Espacio libre crítico ({freeGb:F1} GB).");
-                return;
-            }
-            if (freeGb < 8.0)
-            {
-                o.MinimalLog = true;
-                o.FastMode = true;
-                if (!o.HashDedupForce) o.HashDedup = false;
-                AppendLog($"⚠️ Poco espacio ({freeGb:F1} GB): modo rápido de seguridad{(o.HashDedupForce ? " (hash forzado se mantiene)" : "")}.");
-            }
-        }
-        catch { }
-
-        await ImportAppConfigStore.SaveImportFieldsAsync(cfg);
+        var saveResult = await ImportAppConfigStore.SaveAsync(cfg);
 
         ClearLog();
         AppendLog($"📂 Origen: {src}");
         AppendLog($"📂 Destino: {dest}");
         AppendLog("⚙️ Motor SlskDownBibliotecaImport (sin app principal)…");
+        if (!saveResult.Success)
+        {
+            AppendLog($"⚠️ No se pudo guardar la configuración de importación: {saveResult.ErrorMessage}");
+            AppendDiagnostic($"Guardado de configuración falló: {saveResult.ErrorMessage}", mirrorToUi: false);
+        }
 
         BtnImport!.IsEnabled = false;
         if (Pb != null) { Pb.IsVisible = true; Pb.Value = 0; }
@@ -215,14 +289,49 @@ public partial class ImportBibliotecaWindow : Window
         _importCts = new CancellationTokenSource();
         var ct = _importCts.Token;
 
+        if (!o.DryRun && (cfg.ImportSourceCleanupEnabled || cfg.PurgeSourceAfterImport))
+        {
+            var confirmed = await ConfirmDestructiveSourceOpsAsync(src, cfg.ImportSourceCleanupEnabled, cfg.PurgeSourceAfterImport);
+            if (!confirmed)
+            {
+                AppendLog("⏹ Operación cancelada por el usuario antes de borrar en origen.");
+                return;
+            }
+        }
+
         var importCheckpointPath = Path.Combine(dest, ".import_checkpoint.json");
         var importCheckpointDeltaPath = Path.Combine(dest, ".import_checkpoint.delta");
-        var host = new StandaloneImportHost(this, _calibre);
+        var host = new StandaloneImportHost(this, _calibre, cfg.DownloadOnlyPublicDomain);
         var ui = new StandaloneImportUi(this);
         StandaloneGutenbergPublicDomainPolicy.ResetPolicyStats();
 
         try
         {
+            // ── Verificación asíncrona de espacio en disco (Evita congelamiento de UI) ──
+            double freeGb = 999.0;
+            try
+            {
+                freeGb = await Task.Run(() =>
+                {
+                    var di = new DriveInfo(Path.GetPathRoot(Path.GetFullPath(dest))!);
+                    return di.AvailableFreeSpace / (1024.0 * 1024.0 * 1024.0);
+                }, ct);
+            }
+            catch { }
+
+            if (freeGb < 2.0)
+            {
+                AppendLog($"❌ Espacio libre crítico ({freeGb:F1} GB). Importación cancelada.");
+                return;
+            }
+            if (freeGb < 8.0)
+            {
+                o.MinimalLog = true;
+                o.FastMode = true;
+                if (!o.HashDedupForce) o.HashDedup = false;
+                AppendLog($"⚠️ Poco espacio ({freeGb:F1} GB): modo rápido de seguridad{(o.HashDedupForce ? " (hash forzado se mantiene)" : "")}.");
+            }
+            // ────────────────────────────────────────────────────────────────────────────
             if (cfg.ImportSourceCleanupEnabled)
             {
                 // ── Limpieza previa de la carpeta de origen ──────────────────
@@ -239,12 +348,12 @@ public partial class ImportBibliotecaWindow : Window
                 {
                     AppendLog("⚠️ [Gutenberg] No se cargó ningún autor desde catálogo; la política PD rechazará por seguridad.");
                 }
-                await SourceFolderCleaner.CleanAsync(src, gutenbergTokens, cleanProgress, o.DryRun, ct);
+                await SourceFolderCleaner.CleanAsync(src, gutenbergTokens, cleanProgress, o.DryRun, cfg.ImportDeleteUnknownOnCleanup, ct);
                 // ─────────────────────────────────────────────────────────────
             }
             else
             {
-                AppendLog("🧹 [Limpieza] Desactivada por configuración (ImportSourceCleanupEnabled=false).");
+                AppendLog("🧹 [Limpieza] Desactivada (opción local de IMP).");
             }
 
             TxtStatus!.Text = "Importando…";
@@ -260,6 +369,15 @@ public partial class ImportBibliotecaWindow : Window
                 retryOnlyDestFileNames: null,
                 ct);
 
+            if (cfg.PurgeSourceAfterImport)
+            {
+                await SourceFolderCleaner.PurgeRemainingBooksAndEmptyDirsAsync(src, new Progress<string>(AppendLog), o.DryRun, ct);
+            }
+            else
+            {
+                AppendLog("🧾 [Purge origen] Omitido (Borrar remanentes en origen está desactivado).");
+            }
+
             var policyStats = StandaloneGutenbergPublicDomainPolicy.GetPolicyStatsSnapshot();
             if (policyStats.Evaluated > 0)
             {
@@ -274,6 +392,7 @@ public partial class ImportBibliotecaWindow : Window
         catch (Exception ex)
         {
             AppendLog($"❌ {ex.Message}");
+            AppendDiagnostic($"Importación falló: {ex}", mirrorToUi: false);
         }
         finally
         {
@@ -285,7 +404,81 @@ public partial class ImportBibliotecaWindow : Window
                 _importCts?.Dispose();
                 _importCts = null;
             });
+
+            if (_closeRequestedAfterCancel)
+            {
+                _allowImmediateClose = true;
+                await Dispatcher.UIThread.InvokeAsync(Close);
+            }
         }
+    }
+
+    private async Task<bool> ConfirmDestructiveSourceOpsAsync(string srcDir, bool sourceCleanupEnabled, bool purgeEnabled)
+    {
+        var message = sourceCleanupEnabled && purgeEnabled
+            ? $"Se van a ejecutar operaciones de borrado en origen.\n\nCarpeta: {srcDir}\n\n- Limpieza previa puede borrar archivos por reglas Gutenberg\n- Purge final puede borrar remanentes\n\n¿Continuar?"
+            : sourceCleanupEnabled
+                ? $"Se va a ejecutar limpieza de origen (puede borrar archivos por reglas Gutenberg).\n\nCarpeta: {srcDir}\n\n¿Continuar?"
+                : $"Se va a borrar remanente en origen al finalizar.\n\nCarpeta: {srcDir}\n\n¿Continuar?";
+
+        var tcs = new TaskCompletionSource<bool>();
+        var dlg = new Window
+        {
+            Title = "Confirmar operaciones destructivas",
+            Width = 620,
+            Height = 260,
+            CanResize = false,
+            WindowStartupLocation = WindowStartupLocation.CenterOwner,
+            Content = new DockPanel
+            {
+                Margin = new Thickness(14),
+                Children =
+                {
+                    new StackPanel
+                    {
+                        Orientation = Orientation.Vertical,
+                        Spacing = 12,
+                        Children =
+                        {
+                            new TextBlock
+                            {
+                                Text = "Atencion: esta operacion puede borrar archivos en la carpeta de origen.",
+                                FontWeight = Avalonia.Media.FontWeight.SemiBold,
+                                TextWrapping = Avalonia.Media.TextWrapping.Wrap
+                            },
+                            new TextBlock
+                            {
+                                Text = message,
+                                TextWrapping = Avalonia.Media.TextWrapping.Wrap
+                            },
+                            new StackPanel
+                            {
+                                Orientation = Orientation.Horizontal,
+                                HorizontalAlignment = HorizontalAlignment.Right,
+                                Spacing = 10,
+                                Children =
+                                {
+                                    new Button { Content = "Cancelar", MinWidth = 110 },
+                                    new Button { Content = "Continuar", MinWidth = 110 }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        };
+
+        var panel = (StackPanel)((DockPanel)dlg.Content!).Children[0]!;
+        var actions = (StackPanel)panel.Children[2]!;
+        var btnCancel = (Button)actions.Children[0]!;
+        var btnContinue = (Button)actions.Children[1]!;
+
+        btnCancel.Click += (_, _) => { tcs.TrySetResult(false); dlg.Close(); };
+        btnContinue.Click += (_, _) => { tcs.TrySetResult(true); dlg.Close(); };
+        dlg.Closed += (_, _) => tcs.TrySetResult(false);
+
+        await dlg.ShowDialog(this);
+        return await tcs.Task;
     }
 
     internal void AppendLog(string line)
@@ -319,8 +512,45 @@ public partial class ImportBibliotecaWindow : Window
             _pendingLog.Clear();
         }
 
-        if (TxtLog != null && chunk.Length > 0)
-            TxtLog.Text += chunk;
+        if (chunk.Length > 0)
+        {
+            // Escribir en segundo plano asincrónico al archivo físico
+            var fileChunk = chunk;
+            Task.Run(() =>
+            {
+                try
+                {
+                    File.AppendAllText(_logFilePath, fileChunk);
+                }
+                catch (Exception ex)
+                {
+                    TryAppendDiagnosticToFile($"[{DateTime.Now:yyyy-MM-dd HH:mm:ss}] Flush de log falló: {ex.Message}{Environment.NewLine}");
+                }
+            });
+
+            if (TxtLog != null)
+            {
+                var newText = (TxtLog.Text ?? string.Empty) + chunk;
+                if (newText.Length > 80000)
+                {
+                    // Truncar para no ahogar la renderización de Avalonia (guardando los últimos 50 KB)
+                    int keepIndex = newText.Length - 50000;
+                    int nextNewLine = newText.IndexOf('\n', keepIndex);
+                    if (nextNewLine != -1 && nextNewLine < newText.Length - 100)
+                    {
+                        newText = "[... logs antiguos guardados en logs\\import_biblioteca.log ...]\n" + newText.Substring(nextNewLine + 1);
+                    }
+                    else
+                    {
+                        newText = "[... logs antiguos guardados en logs\\import_biblioteca.log ...]\n" + newText.Substring(keepIndex);
+                    }
+                }
+                TxtLog.Text = newText;
+
+                // Hacer auto-scroll al final del TextBox
+                TxtLog.CaretIndex = TxtLog.Text.Length;
+            }
+        }
 
         Interlocked.Exchange(ref _logFlushScheduled, 0);
 
@@ -337,39 +567,11 @@ public partial class ImportBibliotecaWindow : Window
         private readonly CalibreConverterService _calibre;
         private readonly bool _pdFilterEnabled;
 
-        public StandaloneImportHost(ImportBibliotecaWindow w, CalibreConverterService calibre)
+        public StandaloneImportHost(ImportBibliotecaWindow w, CalibreConverterService calibre, bool pdFilterEnabled)
         {
             _w = w;
             _calibre = calibre;
-            // Load PD setting synchronously (default to true if config unavailable)
-            try
-            {
-                var cfg = LoadConfigSync();
-                _pdFilterEnabled = cfg.DownloadOnlyPublicDomain;
-            }
-            catch
-            {
-                _pdFilterEnabled = true; // Default to enabled
-            }
-        }
-
-        private static SlskDownAvalonia.Models.AppConfig LoadConfigSync()
-        {
-            var path = Path.Combine(
-                Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
-                "SlskDownAvalonia", "config.json");
-            if (!File.Exists(path))
-                return new SlskDownAvalonia.Models.AppConfig();
-            try
-            {
-                var json = File.ReadAllText(path);
-                return System.Text.Json.JsonSerializer.Deserialize<SlskDownAvalonia.Models.AppConfig>(json)
-                    ?? new SlskDownAvalonia.Models.AppConfig();
-            }
-            catch
-            {
-                return new SlskDownAvalonia.Models.AppConfig();
-            }
+            _pdFilterEnabled = pdFilterEnabled;
         }
 
         public void LogClear() => Dispatcher.UIThread.Post(_w.ClearLog);
@@ -390,8 +592,6 @@ public partial class ImportBibliotecaWindow : Window
         }
 
         public bool CalibreAvailable => _calibre.IsAvailable;
-
-        public bool SupportsPipelineFullVerify => false;
 
         public Task<ConversionResult> EnqueueCalibreTxtAsync(string inputPath, string outputDir, CancellationToken ct = default) =>
             _calibre.EnqueueConversionAsync(inputPath, outputDir, ct);
@@ -428,13 +628,6 @@ public partial class ImportBibliotecaWindow : Window
         public void NotifyImportCompleted(int copied) { }
 
         public Task RebuildLibraryIndexIfNeededAsync(string importDest, CancellationToken ct) => Task.CompletedTask;
-
-        public Task RunPipelineFullVerifyAsync(string importDest, CancellationToken ct)
-        {
-            // No debería llamarse si SupportsPipelineFullVerify es false; el motor omite esta ruta.
-            Log("⚠️ Verificación completa post-import: usa la app principal (Mantenimiento → pestaña correspondiente).");
-            return Task.CompletedTask;
-        }
 
         public async Task RunPipelineMissingTxtAsync(string importDest, CancellationToken ct)
         {

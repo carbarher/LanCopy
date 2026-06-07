@@ -462,6 +462,619 @@ public static class BibliotecaImportFilesystem
         catch { }
     }
 
+    public static string ValidateAndCorrectExtension(string filePath)
+    {
+        try
+        {
+            if (!File.Exists(filePath)) return filePath;
+            var ext = Path.GetExtension(filePath).ToLowerInvariant();
+            var filename = Path.GetFileName(filePath);
+            
+            bool hasDoubleExt = false;
+            var baseNoExt = Path.GetFileNameWithoutExtension(filename);
+            var prevExt = Path.GetExtension(baseNoExt).ToLowerInvariant();
+            if (prevExt == ".epub" || prevExt == ".mobi" || prevExt == ".pdf" || prevExt == ".azw3" || prevExt == ".fb2")
+            {
+                hasDoubleExt = true;
+            }
+
+            if (hasDoubleExt || ext == ".zip" || ext == ".rar")
+            {
+                Span<byte> header = stackalloc byte[8];
+                using (var fs = new FileStream(filePath, FileMode.Open, FileAccess.Read, FileShare.Read, 8, false))
+                {
+                    int read = fs.Read(header);
+                    if (read < 4) return filePath;
+                }
+
+                if (header[0] == 0x50 && header[1] == 0x4B && header[2] == 0x03 && header[3] == 0x04)
+                {
+                    try
+                    {
+                        using var fs = File.OpenRead(filePath);
+                        using var zip = new ZipArchive(fs, ZipArchiveMode.Read);
+                        var mt = zip.GetEntry("mimetype");
+                        if (mt != null)
+                        {
+                            using var s = mt.Open();
+                            using var sr = new StreamReader(s, Encoding.ASCII);
+                            var content = sr.ReadToEnd().Trim();
+                            if (content == "application/epub+zip")
+                            {
+                                return Path.ChangeExtension(filePath, ".epub");
+                            }
+                        }
+                    }
+                    catch {}
+                    return Path.ChangeExtension(filePath, ".zip");
+                }
+
+                if (header[0] == 0x25 && header[1] == 0x50 && header[2] == 0x44 && header[3] == 0x46)
+                    return Path.ChangeExtension(filePath, ".pdf");
+
+                try
+                {
+                    using var fs = new FileStream(filePath, FileMode.Open, FileAccess.Read, FileShare.Read);
+                    if (fs.Length >= 68)
+                    {
+                        fs.Seek(60, SeekOrigin.Begin);
+                        byte[] mobi = new byte[8];
+                        if (fs.Read(mobi, 0, 8) == 8 &&
+                            mobi[0] == 'B' && mobi[1] == 'O' && mobi[2] == 'O' && mobi[3] == 'K' &&
+                            mobi[4] == 'M' && mobi[5] == 'O' && mobi[6] == 'B' && mobi[7] == 'I')
+                            return Path.ChangeExtension(filePath, ".mobi");
+                    }
+                }
+                catch {}
+            }
+        }
+        catch {}
+        return filePath;
+    }
+
+    public static string TryRenameFileWithCorrectedExtension(string filePath)
+    {
+        var correctedPath = ValidateAndCorrectExtension(filePath);
+        if (!string.Equals(filePath, correctedPath, StringComparison.OrdinalIgnoreCase))
+        {
+            try
+            {
+                if (File.Exists(correctedPath))
+                {
+                    File.Delete(filePath);
+                    return correctedPath;
+                }
+                File.Move(filePath, correctedPath);
+                return correctedPath;
+            }
+            catch { }
+        }
+        return filePath;
+    }
+
+    private static void EnumerateArchiveRecursively(
+        string rootArchivePath,
+        string currentEntryPath,
+        Stream archiveStream,
+        int depth,
+        ConcurrentBag<ImportCandidate> results,
+        HashSet<string> allowedExts,
+        long minBytes,
+        ref int belowMin,
+        ref int zipCorrupted,
+        ref int rarMultiVol)
+    {
+        if (depth > 3) return;
+
+        try
+        {
+            using var ms = new MemoryStream();
+            archiveStream.CopyTo(ms);
+            ms.Position = 0;
+
+            if (ms.Length < 4) return;
+            byte[] header = new byte[4];
+            ms.Read(header, 0, 4);
+            ms.Position = 0;
+
+            bool isZip = header[0] == 0x50 && header[1] == 0x4B && header[2] == 0x03 && header[3] == 0x04;
+            bool isRar = header[0] == 0x52 && header[1] == 0x61 && header[2] == 0x72 && header[3] == 0x21;
+
+            if (isZip)
+            {
+                using var zip = new ZipArchive(ms, ZipArchiveMode.Read, leaveOpen: true);
+                foreach (var entry in zip.Entries)
+                {
+                    if (entry.Length == 0) continue;
+                    var entryExt = Path.GetExtension(entry.Name).ToLowerInvariant();
+                    var combinedEntryPath = string.IsNullOrEmpty(currentEntryPath)
+                        ? entry.FullName
+                        : currentEntryPath + "::" + entry.FullName;
+
+                    if (entryExt == ".zip" || entryExt == ".rar")
+                    {
+                        using var entryStream = entry.Open();
+                        EnumerateArchiveRecursively(rootArchivePath, combinedEntryPath, entryStream, depth + 1, results, allowedExts, minBytes, ref belowMin, ref zipCorrupted, ref rarMultiVol);
+                        continue;
+                    }
+
+                    if (allowedExts.Contains(entryExt))
+                    {
+                        if (minBytes > 0 && entry.Length < minBytes)
+                        {
+                            Interlocked.Increment(ref belowMin);
+                            continue;
+                        }
+                        var destName = NormalizeImportAuthorName(BuildArchiveDestName(rootArchivePath, entry.Name, entryExt));
+                        results.Add(new ImportCandidate
+                        {
+                            ArchivePath = rootArchivePath,
+                            EntryName = combinedEntryPath,
+                            DestFileName = destName,
+                            SizeBytes = entry.Length
+                        });
+                    }
+                }
+            }
+            else if (isRar)
+            {
+                using var reader = ReaderFactory.OpenReader(ms);
+                while (reader.MoveToNextEntry())
+                {
+                    var entry = reader.Entry;
+                    if (entry.IsDirectory || entry.Key == null || entry.Size == 0) continue;
+
+                    var entryExt = Path.GetExtension(entry.Key).ToLowerInvariant();
+                    var combinedEntryPath = string.IsNullOrEmpty(currentEntryPath)
+                        ? entry.Key
+                        : currentEntryPath + "::" + entry.Key;
+
+                    if (entryExt == ".zip" || entryExt == ".rar")
+                    {
+                        using var entryStream = reader.OpenEntryStream();
+                        EnumerateArchiveRecursively(rootArchivePath, combinedEntryPath, entryStream, depth + 1, results, allowedExts, minBytes, ref belowMin, ref zipCorrupted, ref rarMultiVol);
+                        continue;
+                    }
+
+                    if (allowedExts.Contains(entryExt))
+                    {
+                        if (minBytes > 0 && entry.Size < minBytes)
+                        {
+                            Interlocked.Increment(ref belowMin);
+                            continue;
+                        }
+                        var destName = NormalizeImportAuthorName(BuildArchiveDestName(rootArchivePath, entry.Key, entryExt));
+                        results.Add(new ImportCandidate
+                        {
+                            ArchivePath = rootArchivePath,
+                            EntryName = combinedEntryPath,
+                            DestFileName = destName,
+                            SizeBytes = entry.Size
+                        });
+                    }
+                }
+            }
+        }
+        catch
+        {
+            Interlocked.Increment(ref zipCorrupted);
+        }
+    }
+
+    public static void ExtractFromArchiveRecursive(ImportCandidate candidate, string destFile)
+    {
+        if (!candidate.EntryName.Contains("::"))
+        {
+            ExtractFromArchive(candidate, destFile);
+            return;
+        }
+
+        var parts = candidate.EntryName.Split(new[] { "::" }, StringSplitOptions.RemoveEmptyEntries);
+        var currentArchive = candidate.ArchivePath;
+
+        using var rootFs = File.OpenRead(currentArchive);
+        var currentStream = (Stream)rootFs;
+        MemoryStream? msTemp = null;
+
+        try
+        {
+            for (int i = 0; i < parts.Length; i++)
+            {
+                var part = parts[i];
+                var nextMs = new MemoryStream();
+                
+                byte[] header = new byte[4];
+                if (currentStream.Read(header, 0, 4) < 4)
+                    throw new InvalidOperationException("Fallo al leer cabecera de archivo anidado.");
+                
+                using var seekableStream = new MemoryStream();
+                seekableStream.Write(header, 0, 4);
+                currentStream.CopyTo(seekableStream);
+                seekableStream.Position = 0;
+
+                bool isZip = header[0] == 0x50 && header[1] == 0x4B && header[2] == 0x03 && header[3] == 0x04;
+
+                if (isZip)
+                {
+                    using var zip = new ZipArchive(seekableStream, ZipArchiveMode.Read);
+                    var entry = zip.Entries.FirstOrDefault(e => string.Equals(e.FullName, part, StringComparison.OrdinalIgnoreCase));
+                    if (entry == null) throw new InvalidOperationException($"No se encontró la entrada anidada: {part}");
+                    using var entryStream = entry.Open();
+                    entryStream.CopyTo(nextMs);
+                }
+                else
+                {
+                    using var reader = ReaderFactory.OpenReader(seekableStream);
+                    bool found = false;
+                    while (reader.MoveToNextEntry())
+                    {
+                        if (!reader.Entry.IsDirectory && string.Equals(reader.Entry.Key, part, StringComparison.OrdinalIgnoreCase))
+                        {
+                            using var entryStream = reader.OpenEntryStream();
+                            entryStream.CopyTo(nextMs);
+                            found = true;
+                            break;
+                        }
+                    }
+                    if (!found) throw new InvalidOperationException($"No se encontró la entrada anidada: {part}");
+                }
+
+                nextMs.Position = 0;
+                if (msTemp != null) msTemp.Dispose();
+                msTemp = nextMs;
+                currentStream = msTemp;
+            }
+
+            using var dst = File.Create(destFile);
+            currentStream.Position = 0;
+            currentStream.CopyTo(dst);
+        }
+        finally
+        {
+            msTemp?.Dispose();
+        }
+    }
+
+    public static string? GetEpubTextSample(string filePath)
+    {
+        try
+        {
+            using var fs = File.OpenRead(filePath);
+            using var zip = new ZipArchive(fs, ZipArchiveMode.Read);
+            var entry = zip.Entries.FirstOrDefault(e => e.FullName.EndsWith(".xhtml", StringComparison.OrdinalIgnoreCase) ||
+                                                        e.FullName.EndsWith(".html", StringComparison.OrdinalIgnoreCase) ||
+                                                        e.FullName.EndsWith(".htm", StringComparison.OrdinalIgnoreCase));
+            if (entry != null)
+            {
+                using var s = entry.Open();
+                using var sr = new StreamReader(s, Encoding.UTF8);
+                var html = sr.ReadToEnd();
+                return Regex.Replace(html, "<.*?>", string.Empty);
+            }
+        }
+        catch {}
+        return null;
+    }
+
+    public static string GetBinaryWordsSample(string filePath)
+    {
+        try
+        {
+            using var fs = new FileStream(filePath, FileMode.Open, FileAccess.Read, FileShare.Read);
+            var sb = new StringBuilder();
+            byte[] buf = new byte[65536];
+            int read = fs.Read(buf, 0, buf.Length);
+            int wordLen = 0;
+            var wordBuf = new char[50];
+            for (int i = 0; i < read; i++)
+            {
+                byte b = buf[i];
+                if ((b >= 'a' && b <= 'z') || (b >= 'A' && b <= 'Z') || b == 0xC3 || b == 0xC2)
+                {
+                    if (wordLen < 45)
+                    {
+                        wordBuf[wordLen++] = (char)b;
+                    }
+                }
+                else
+                {
+                    if (wordLen >= 2)
+                    {
+                        sb.Append(wordBuf, 0, wordLen).Append(' ');
+                    }
+                    wordLen = 0;
+                }
+            }
+            return sb.ToString();
+        }
+        catch { return string.Empty; }
+    }
+
+    public static string? ExtractTextSample(string filePath)
+    {
+        var ext = Path.GetExtension(filePath).ToLowerInvariant();
+        if (ext == ".txt" || ext == ".text")
+        {
+            try
+            {
+                using var fs = new FileStream(filePath, FileMode.Open, FileAccess.Read, FileShare.Read);
+                using var sr = new StreamReader(fs, Encoding.UTF8);
+                char[] buffer = new char[4000];
+                int read = sr.Read(buffer, 0, 4000);
+                return new string(buffer, 0, read);
+            }
+            catch { return null; }
+        }
+        if (ext == ".epub")
+        {
+            var txt = GetEpubTextSample(filePath);
+            if (!string.IsNullOrWhiteSpace(txt)) return txt;
+        }
+        if (ext == ".pdf")
+        {
+            try
+            {
+                using var pdf = UglyToad.PdfPig.PdfDocument.Open(filePath);
+                if (pdf.NumberOfPages > 0)
+                {
+                    var page = pdf.GetPage(1);
+                    return page.Text;
+                }
+            }
+            catch {}
+        }
+        return GetBinaryWordsSample(filePath);
+    }
+
+    public static bool IsSpanishText(string? text)
+    {
+        if (string.IsNullOrWhiteSpace(text)) return true;
+
+        var words = text.Split(new[] { ' ', '.', ',', ';', ':', '!', '?', '\r', '\n', '-', '_', '"', '\'', '(', ')', '[', ']' }, StringSplitOptions.RemoveEmptyEntries);
+        if (words.Length < 5) return true;
+
+        int esCount = 0;
+        int enCount = 0;
+        int frCount = 0;
+
+        var esStop = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "de", "la", "el", "en", "y", "que", "un", "una", "los", "las", "con", "para", "por", "se", "del", "lo", "es", "su", "al", "como", "mas", "o", "sus", "pero" };
+        var enStop = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "the", "of", "and", "to", "a", "in", "is", "that", "it", "he", "was", "for", "on", "are", "as", "with", "his", "they", "i", "at", "be", "this", "had", "have" };
+        var frStop = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "de", "la", "le", "et", "les", "des", "en", "un", "une", "que", "est", "dans", "pour", "qui", "sur", "avec", "ce", "se", "il", "au", "par", "mais" };
+
+        int limit = Math.Min(words.Length, 500);
+        for (int i = 0; i < limit; i++)
+        {
+            var w = words[i];
+            if (esStop.Contains(w)) esCount++;
+            if (enStop.Contains(w)) enCount++;
+            if (frStop.Contains(w)) frCount++;
+        }
+
+        if (esCount == 0 && enCount == 0 && frCount == 0) return true;
+        return esCount >= enCount && esCount >= frCount;
+    }
+
+    public static bool TryEnrichEpubMetadata(string epubPath, string author, string title, string? seriesName = null, string? seriesIndex = null)
+    {
+        try
+        {
+            using (var fs = new FileStream(epubPath, FileMode.Open, FileAccess.ReadWrite))
+            using (var zip = new ZipArchive(fs, ZipArchiveMode.Update))
+            {
+                var opfEntry = zip.Entries.FirstOrDefault(e => e.FullName.EndsWith(".opf", StringComparison.OrdinalIgnoreCase));
+                if (opfEntry != null)
+                {
+                    string opfContent;
+                    using (var s = opfEntry.Open())
+                    using (var sr = new StreamReader(s, Encoding.UTF8))
+                    {
+                        opfContent = sr.ReadToEnd();
+                    }
+
+                    var doc = new System.Xml.XmlDocument();
+                    doc.LoadXml(opfContent);
+
+                    var nsmgr = new System.Xml.XmlNamespaceManager(doc.NameTable);
+                    nsmgr.AddNamespace("opf", doc.DocumentElement?.NamespaceURI ?? string.Empty);
+                    nsmgr.AddNamespace("dc", "http://purl.org/dc/elements/1.1/");
+
+                    var creatorNode = doc.SelectSingleNode("//dc:creator", nsmgr);
+                    if (creatorNode != null)
+                    {
+                        creatorNode.InnerText = author;
+                    }
+                    else
+                    {
+                        var metadataNode = doc.SelectSingleNode("//opf:metadata", nsmgr) ?? doc.SelectSingleNode("//metadata", nsmgr);
+                        if (metadataNode != null)
+                        {
+                            var creator = doc.CreateElement("dc", "creator", "http://purl.org/dc/elements/1.1/");
+                            creator.InnerText = author;
+                            metadataNode.AppendChild(creator);
+                        }
+                    }
+
+                    var titleNode = doc.SelectSingleNode("//dc:title", nsmgr);
+                    if (titleNode != null)
+                    {
+                        titleNode.InnerText = title;
+                    }
+                    else
+                    {
+                        var metadataNode = doc.SelectSingleNode("//opf:metadata", nsmgr) ?? doc.SelectSingleNode("//metadata", nsmgr);
+                        if (metadataNode != null)
+                        {
+                            var tNode = doc.CreateElement("dc", "title", "http://purl.org/dc/elements/1.1/");
+                            tNode.InnerText = title;
+                            metadataNode.AppendChild(tNode);
+                        }
+                    }
+
+                    // Series metadata
+                    if (!string.IsNullOrWhiteSpace(seriesName))
+                    {
+                        var existingSeriesNodes = doc.SelectNodes("//opf:meta[@name='calibre:series']", nsmgr) ?? doc.SelectNodes("//meta[@name='calibre:series']", nsmgr);
+                        if (existingSeriesNodes != null)
+                        {
+                            foreach (System.Xml.XmlNode n in existingSeriesNodes)
+                                n.ParentNode?.RemoveChild(n);
+                        }
+
+                        var existingSeriesIdxNodes = doc.SelectNodes("//opf:meta[@name='calibre:series_index']", nsmgr) ?? doc.SelectNodes("//meta[@name='calibre:series_index']", nsmgr);
+                        if (existingSeriesIdxNodes != null)
+                        {
+                            foreach (System.Xml.XmlNode n in existingSeriesIdxNodes)
+                                n.ParentNode?.RemoveChild(n);
+                        }
+
+                        var metadataNode = doc.SelectSingleNode("//opf:metadata", nsmgr) ?? doc.SelectSingleNode("//metadata", nsmgr);
+                        if (metadataNode != null)
+                        {
+                            var seriesMeta = doc.CreateElement("meta");
+                            seriesMeta.SetAttribute("name", "calibre:series");
+                            seriesMeta.SetAttribute("content", seriesName);
+                            metadataNode.AppendChild(seriesMeta);
+
+                            if (!string.IsNullOrWhiteSpace(seriesIndex))
+                            {
+                                var indexMeta = doc.CreateElement("meta");
+                                indexMeta.SetAttribute("name", "calibre:series_index");
+                                indexMeta.SetAttribute("content", seriesIndex);
+                                metadataNode.AppendChild(indexMeta);
+                            }
+                        }
+                    }
+
+                    opfEntry.Delete();
+                    var newOpf = zip.CreateEntry(opfEntry.FullName, CompressionLevel.Optimal);
+                    using (var s = newOpf.Open())
+                    using (var sw = new StreamWriter(s, new UTF8Encoding(false)))
+                    {
+                        doc.Save(sw);
+                    }
+                    return true;
+                }
+            }
+        }
+        catch {}
+        return false;
+    }
+
+    public static bool IsEpubValidAndNotCorrupt(string epubPath)
+    {
+        try
+        {
+            using var fs = new FileStream(epubPath, FileMode.Open, FileAccess.Read, FileShare.Read);
+            if (fs.Length < 100) return false;
+            
+            using var zip = new ZipArchive(fs, ZipArchiveMode.Read);
+            var entries = zip.Entries;
+            if (entries.Count == 0) return false;
+
+            bool hasMimetype = zip.GetEntry("mimetype") != null;
+            bool hasOpf = zip.Entries.Any(e => e.FullName.EndsWith(".opf", StringComparison.OrdinalIgnoreCase));
+            
+            return hasMimetype || hasOpf;
+        }
+        catch { return false; }
+    }
+
+    public static void ExtractSeriesAndTitle(string title, out string cleanTitle, out string? seriesName, out string? seriesIndex)
+    {
+        cleanTitle = title;
+        seriesName = null;
+        seriesIndex = null;
+
+        var rxStart = new Regex(@"^(.*?)\s+(\d+)\s*-\s*(.*)$", RegexOptions.Compiled);
+        var mStart = rxStart.Match(title);
+        if (mStart.Success)
+        {
+            var sName = mStart.Groups[1].Value.Trim();
+            var sIndex = mStart.Groups[2].Value.Trim();
+            var tName = mStart.Groups[3].Value.Trim();
+            if (sName.Length >= 3 && !sName.Equals("vol", StringComparison.OrdinalIgnoreCase) && !sName.Equals("part", StringComparison.OrdinalIgnoreCase))
+            {
+                seriesName = sName;
+                seriesIndex = sIndex;
+                cleanTitle = tName;
+                return;
+            }
+        }
+
+        var rxBrackets = new Regex(@"[\(\[](.*?)\s*[-#]?\s*(\d+)\s*[\)\]]", RegexOptions.Compiled);
+        var mBrackets = rxBrackets.Match(title);
+        if (mBrackets.Success)
+        {
+            var sName = mBrackets.Groups[1].Value.Trim();
+            var sIndex = mBrackets.Groups[2].Value.Trim();
+            if (sName.Length >= 3 && !sName.Equals("vol", StringComparison.OrdinalIgnoreCase) && !sName.Equals("part", StringComparison.OrdinalIgnoreCase))
+            {
+                seriesName = sName;
+                seriesIndex = sIndex;
+                cleanTitle = title.Replace(mBrackets.Value, string.Empty).Trim();
+                return;
+            }
+        }
+    }
+
+    public static bool TryConvertEpubToTxtDirect(string epubPath, string txtPath)
+    {
+        try
+        {
+            using var fs = File.OpenRead(epubPath);
+            using var zip = new ZipArchive(fs, ZipArchiveMode.Read);
+            
+            var entries = zip.Entries
+                .Where(e => e.FullName.EndsWith(".xhtml", StringComparison.OrdinalIgnoreCase) ||
+                            e.FullName.EndsWith(".html", StringComparison.OrdinalIgnoreCase) ||
+                            e.FullName.EndsWith(".htm", StringComparison.OrdinalIgnoreCase))
+                .OrderBy(e => e.FullName)
+                .ToList();
+
+            if (entries.Count == 0) return false;
+
+            using var outFs = new FileStream(txtPath, FileMode.Create, FileAccess.Write, FileShare.None);
+            using var sw = new StreamWriter(outFs, Encoding.UTF8);
+
+            foreach (var entry in entries)
+            {
+                using var s = entry.Open();
+                using var sr = new StreamReader(s, Encoding.UTF8);
+                var html = sr.ReadToEnd();
+                
+                var text = Regex.Replace(html, "<.*?>", string.Empty);
+                text = System.Net.WebUtility.HtmlDecode(text);
+                
+                sw.WriteLine(text);
+                sw.WriteLine();
+            }
+            return true;
+        }
+        catch { return false; }
+    }
+
+    public static bool TryConvertPdfToTxtDirect(string pdfPath, string txtPath)
+    {
+        try
+        {
+            using var pdf = UglyToad.PdfPig.PdfDocument.Open(pdfPath);
+            using var outFs = new FileStream(txtPath, FileMode.Create, FileAccess.Write, FileShare.None);
+            using var sw = new StreamWriter(outFs, Encoding.UTF8);
+
+            for (int i = 1; i <= pdf.NumberOfPages; i++)
+            {
+                var page = pdf.GetPage(i);
+                var text = page.Text;
+                if (!string.IsNullOrWhiteSpace(text))
+                {
+                    sw.WriteLine(text);
+                }
+            }
+            return true;
+        }
+        catch { return false; }
+    }
+
     public static ImportScanResult CollectImportCandidates(
         string srcDir,
         HashSet<string> allowedExts,
@@ -476,24 +1089,39 @@ public static class BibliotecaImportFilesystem
         var directFiles = new List<string>(1024);
         var archiveFiles = new List<string>(512);
 
-        var stack = new Stack<string>();
-        stack.Push(srcDir);
+        var stack = new Stack<(string Path, int Depth)>();
+        var visited = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        stack.Push((srcDir, 0));
+        visited.Add(srcDir);
+
         while (stack.Count > 0)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            var dir = stack.Pop();
-            try { foreach (var sub in Directory.EnumerateDirectories(dir)) { if (!skipDirNames.Contains(Path.GetFileName(sub))) stack.Push(sub); } }
+            var (dir, depth) = stack.Pop();
+            
+            if (depth > 16) continue;
+
+            try 
+            { 
+                foreach (var sub in Directory.EnumerateDirectories(dir)) 
+                { 
+                    var subFull = Path.GetFullPath(sub);
+                    if (!skipDirNames.Contains(Path.GetFileName(subFull)) && visited.Add(subFull)) 
+                        stack.Push((subFull, depth + 1)); 
+                } 
+            }
             catch { }
             try
             {
                 foreach (var file in Directory.EnumerateFiles(dir))
                 {
-                    var ext = Path.GetExtension(file);
-                    if (allowedExts.Contains(ext)) { directFiles.Add(file); continue; }
+                    var actualFile = TryRenameFileWithCorrectedExtension(file);
+                    var ext = Path.GetExtension(actualFile);
+                    if (allowedExts.Contains(ext)) { directFiles.Add(actualFile); continue; }
                     if (extractArchives &&
                         (ext.Equals(".zip", StringComparison.OrdinalIgnoreCase) ||
                          ext.Equals(".rar", StringComparison.OrdinalIgnoreCase)))
-                        archiveFiles.Add(file);
+                        archiveFiles.Add(actualFile);
                 }
             }
             catch { }
@@ -534,56 +1162,15 @@ public static class BibliotecaImportFilesystem
         {
             try
             {
-                var ext = Path.GetExtension(file);
-                if (ext.Equals(".zip", StringComparison.OrdinalIgnoreCase))
-                {
-                    try
-                    {
-                        using var zip = ZipFile.OpenRead(file);
-                        foreach (var entry in zip.Entries)
-                        {
-                            if (entry.Length == 0) continue;
-                            var entryExt = Path.GetExtension(entry.Name);
-                            if (!allowedExts.Contains(entryExt)) continue;
-                            if (minBytes > 0 && entry.Length < minBytes) { Interlocked.Increment(ref belowMin); continue; }
-                            var destName = NormalizeImportAuthorName(BuildArchiveDestName(file, entry.Name, entryExt));
-                            archiveCandidates.Add(new ImportCandidate { ArchivePath = file, EntryName = entry.FullName, DestFileName = destName, SizeBytes = entry.Length });
-                            Interlocked.Increment(ref archiveAdded);
-                        }
-                    }
-                    catch { Interlocked.Increment(ref zipCorrupted); }
-                }
-                else
-                {
-                    try
-                    {
-                        var rarName = Path.GetFileName(file);
-                        if (s_rxRarMultiVol.IsMatch(rarName))
-                        { Interlocked.Increment(ref rarMultiVol); return; }
-                        using (var stream = File.OpenRead(file))
-                        using (var reader = ReaderFactory.OpenReader(stream))
-                        {
-                            while (reader.MoveToNextEntry())
-                            {
-                                var entry = reader.Entry;
-                                if (entry.IsDirectory || entry.Key == null) continue;
-                                if (entry.Size == 0) continue;
-                                var entryExt = Path.GetExtension(entry.Key);
-                                if (!allowedExts.Contains(entryExt)) continue;
-                                if (minBytes > 0 && entry.Size < minBytes) { Interlocked.Increment(ref belowMin); continue; }
-                                var destName = NormalizeImportAuthorName(BuildArchiveDestName(file, entry.Key, entryExt));
-                                archiveCandidates.Add(new ImportCandidate { ArchivePath = file, EntryName = entry.Key, DestFileName = destName, SizeBytes = entry.Size });
-                                Interlocked.Increment(ref archiveAdded);
-                            }
-                        }
-                    }
-                    catch (MultiVolumeExtractionException)
-                    { Interlocked.Increment(ref rarMultiVol); }
-                    catch { Interlocked.Increment(ref zipCorrupted); }
-                }
+                using var fs = File.OpenRead(file);
+                EnumerateArchiveRecursively(file, "", fs, 1, archiveCandidates, allowedExts, minBytes, ref belowMin, ref zipCorrupted, ref rarMultiVol);
             }
-            catch { Interlocked.Increment(ref zipCorrupted); }
+            catch
+            {
+                Interlocked.Increment(ref zipCorrupted);
+            }
         });
+        archiveAdded = archiveCandidates.Count;
 
         var all = new List<ImportCandidate>(directAdded + archiveAdded);
         all.AddRange(directCandidates);
@@ -667,7 +1254,9 @@ public static class BibliotecaImportFilesystem
         foreach (var c in name)
             sb.Append(Array.IndexOf(s_invalidFileNameChars, c) >= 0 ? '_' : c);
         var s = sb.ToString().Trim('.', ' ');
-        return s.Length == 0 ? "_" : s[..Math.Min(s.Length, 180)];
+        if (s.Length == 0) return "_";
+        var res = s[..Math.Min(s.Length, 180)];
+        return res.Normalize(NormalizationForm.FormC);
     }
 
     public static string ResolveNameConflict(string dir, string fileName)
@@ -679,5 +1268,128 @@ public static class BibliotecaImportFilesystem
         do { candidate = Path.Combine(dir, $"{nameNoExt} ({n}){ext}"); n++; }
         while (File.Exists(candidate) && n < 1000);
         return candidate;
+    }
+
+    // ─── SimHash y BK-Tree para Deduplicación Difusa (Offline/Cero dependencias) ───
+
+    private static ulong Fnv1a64(string s)
+    {
+        ulong hash = 14695981039346656037UL;
+        foreach (char c in s)
+        {
+            hash ^= (ushort)c;
+            hash *= 1099511628211UL;
+        }
+        return hash;
+    }
+
+    public static ulong ComputeSimHash(string text)
+    {
+        if (string.IsNullOrWhiteSpace(text)) return 0;
+
+        var weights = new int[64];
+        var tokens = text.Split(new[] { ' ', '-', '_', '.', ',', '(', ')', '[', ']' }, StringSplitOptions.RemoveEmptyEntries);
+
+        foreach (var token in tokens)
+        {
+            if (token.Length < 2) continue;
+            ulong tokenHash = Fnv1a64(token.ToLowerInvariant());
+
+            for (int i = 0; i < 64; i++)
+            {
+                if (((tokenHash >> i) & 1) == 1)
+                    weights[i]++;
+                else
+                    weights[i]--;
+            }
+        }
+
+        ulong simhash = 0;
+        for (int i = 0; i < 64; i++)
+        {
+            if (weights[i] > 0)
+                simhash |= (1UL << i);
+        }
+
+        return simhash;
+    }
+
+    public static int HammingDistance(ulong x, ulong y)
+    {
+        ulong val = x ^ y;
+        int dist = 0;
+        while (val > 0)
+        {
+            val &= val - 1;
+            dist++;
+        }
+        return dist;
+    }
+
+    public sealed class BKNode
+    {
+        public ulong Hash { get; }
+        public Dictionary<int, BKNode> Children { get; } = new();
+
+        public BKNode(ulong hash)
+        {
+            Hash = hash;
+        }
+    }
+
+    public sealed class BKTree
+    {
+        private BKNode? _root;
+
+        public void Add(ulong hash)
+        {
+            if (_root == null)
+            {
+                _root = new BKNode(hash);
+                return;
+            }
+
+            var curr = _root;
+            while (true)
+            {
+                int dist = HammingDistance(curr.Hash, hash);
+                if (dist == 0) return;
+
+                if (curr.Children.TryGetValue(dist, out var next))
+                {
+                    curr = next;
+                }
+                else
+                {
+                    curr.Children[dist] = new BKNode(hash);
+                    break;
+                }
+            }
+        }
+
+        public bool FindNearDuplicate(ulong hash, int maxDistance)
+        {
+            if (_root == null) return false;
+            return FindNearDuplicate(_root, hash, maxDistance);
+        }
+
+        private bool FindNearDuplicate(BKNode node, ulong hash, int maxDistance)
+        {
+            int dist = HammingDistance(node.Hash, hash);
+            if (dist <= maxDistance) return true;
+
+            int minDist = dist - maxDistance;
+            int maxDist = dist + maxDistance;
+
+            foreach (var kv in node.Children)
+            {
+                if (kv.Key >= minDist && kv.Key <= maxDist)
+                {
+                    if (FindNearDuplicate(kv.Value, hash, maxDistance))
+                        return true;
+                }
+            }
+            return false;
+        }
     }
 }

@@ -11,8 +11,8 @@
     </StackPanel>
 
     <Grid RowDefinitions="Auto,Auto,Auto,Auto,Auto,Auto,Auto,*,Auto,Auto" ColumnDefinitions="*,Auto">
-      <TextBlock Grid.Row="0" Grid.ColumnSpan="2" TextWrapping="Wrap" Margin="0,0,0,10"
-                 Text="Herramienta independiente (sin Soulseek): motor SlskDownBibliotecaImport + Calibre. Usa el mismo config.json que la app principal (%AppData%\SlskDownAvalonia). La verificación completa post-import solo está en la app principal." />
+            <TextBlock Grid.Row="0" Grid.ColumnSpan="2" TextWrapping="Wrap" Margin="0,0,0,10"
+              Text="Herramienta independiente (sin Soulseek): motor SlskDownBibliotecaImport + Calibre. Usa su propia configuración en %AppData%\SlskDownImportBiblioteca." />
 
       <Border Grid.Row="1" Grid.ColumnSpan="2" Margin="0,0,0,10" Padding="10,8" CornerRadius="6" Background="#16261C" BorderBrush="#2E7D32" BorderThickness="1">
         <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Spacing="10">
@@ -31,11 +31,17 @@
 
       <TextBox Grid.Row="5" Grid.ColumnSpan="2" Name="TxtDest" Watermark="Carpeta de descargas" Margin="0,4,0,8" />
 
-      <StackPanel Grid.Row="6" Grid.ColumnSpan="2" Orientation="Horizontal" Spacing="16" Margin="0,4,0,8">
-        <TextBlock VerticalAlignment="Center" Text="Modo: Completo (hash dedup + validación PD)" FontWeight="SemiBold" />
-        <CheckBox Name="ChkDryRun" Content="Simulación (dry-run)" />
-        <CheckBox Name="ChkPipelineVerify" Content="Post: verificación completa" />
-        <CheckBox Name="ChkPipelineTxt" Content="Post: TXTs faltantes" />
+      <StackPanel Grid.Row="6" Grid.ColumnSpan="2" Orientation="Vertical" Spacing="8" Margin="0,4,0,8">
+        <StackPanel Orientation="Horizontal" Spacing="16">
+          <TextBlock VerticalAlignment="Center" Text="Modo: Completo (hash dedup + validación PD)" FontWeight="SemiBold" />
+          <CheckBox Name="ChkDryRun" Content="Simulación (dry-run)" />
+          <CheckBox Name="ChkPipelineTxt" Content="Post: TXTs faltantes" />
+        </StackPanel>
+        <StackPanel Orientation="Horizontal" Spacing="16">
+          <CheckBox Name="ChkSourceCleanup" Content="Limpieza origen antes de importar" IsChecked="True" />
+          <CheckBox Name="ChkDeleteUnknownOnCleanup" Content="Limpieza agresiva: borrar extensiones desconocidas" IsChecked="False" />
+          <CheckBox Name="ChkPurgeSource" Content="Borrar TODO remanente en origen al finalizar" IsChecked="False" />
+        </StackPanel>
       </StackPanel>
 
       <Border Grid.Row="7" Grid.ColumnSpan="2" BorderThickness="1" CornerRadius="4" Margin="0,4,0,8">
