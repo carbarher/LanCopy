@@ -229,9 +229,39 @@ public static class BibliotecaImportEngine
                 return;
             }
 
+            // Verificación del espacio total del lote
+            if (!o.DryRun)
+            {
+                long totalBatchBytes = 0;
+                foreach (var c in candidates)
+                    totalBatchBytes += c.SizeBytes;
+
+                try
+                {
+                    var driveInfo = new DriveInfo(Path.GetPathRoot(Path.GetFullPath(importDest))!);
+                    long freeSpaceBytes = driveInfo.AvailableFreeSpace;
+
+                    // Requerimos el tamaño total del lote + un margen de seguridad de 100 MB para base de datos/metadata/TXTs
+                    long requiredBytes = totalBatchBytes + (100L * 1024L * 1024L);
+                    if (freeSpaceBytes < requiredBytes)
+                    {
+                        var neededStr = FormatBytes(requiredBytes);
+                        var freeStr = FormatBytes(freeSpaceBytes);
+                        host.Log($"❌ Espacio insuficiente en disco para importar el lote completo.");
+                        host.Log($"   → Requerido (con margen de 100MB): {neededStr}");
+                        host.Log($"   → Disponible: {freeStr}");
+                        host.Status("Espacio en disco insuficiente");
+                        host.PipelineQueue("❌ Espacio en disco insuficiente", persistSnapshot: true);
+                        return;
+                    }
+                }
+                catch { }
+            }
+
             // Hash dedup: construir set de hashes de archivos ya en destino
             var existingHashes = new System.Collections.Concurrent.ConcurrentDictionary<string, byte>(StringComparer.OrdinalIgnoreCase);
             var existingQuickSigs = new System.Collections.Concurrent.ConcurrentDictionary<string, byte>(StringComparer.OrdinalIgnoreCase);
+            var existingSimHashes = new BibliotecaImportFilesystem.BKTree();
             if (o.QuickSig)
             {
                 host.Status("🧾 Cargando firmas rápidas...");
@@ -246,11 +276,15 @@ public static class BibliotecaImportEngine
                             var fi = new FileInfo(f);
                             var sig = BibliotecaImportFilesystem.BuildQuickImportSignature(Path.GetFileName(f), fi.Length);
                             existingQuickSigs.TryAdd(sig, 0);
+
+                            var stem = Path.GetFileNameWithoutExtension(f);
+                            var simhash = BibliotecaImportFilesystem.ComputeSimHash(stem);
+                            existingSimHashes.Add(simhash);
                         }
                         catch { }
                     }
                 }, ct);
-                host.Log($"🧾 {existingQuickSigs.Count:N0} firmas rápidas en destino");
+                host.Log($"🧾 {existingQuickSigs.Count:N0} firmas rápidas (y SimHashes difusos) en destino cargados");
             }
             if (o.HashDedup)
             {
@@ -399,6 +433,19 @@ public static class BibliotecaImportEngine
             await Parallel.ForEachAsync(candidates, parallelImport, async (cap, parallelCt) =>
             {
                 var destFileName = cap.DestFileName;
+
+                // Fuzzy author spelling correction
+                var idxSep = destFileName.IndexOf(" - ");
+                if (idxSep > 0)
+                {
+                    var author = destFileName[..idxSep].Trim();
+                    var titleAndExt = destFileName[(idxSep + 3)..].Trim();
+                    var correctedAuthor = StandaloneGutenbergPublicDomainPolicy.TryCorrectAuthorFuzzy(author, importSrc);
+                    if (correctedAuthor != null && !string.Equals(author, correctedAuthor, StringComparison.Ordinal))
+                    {
+                        destFileName = $"{correctedAuthor} - {titleAndExt}";
+                    }
+                }
                 var destFile = Path.Combine(importDest, destFileName);
                 var srcPathForHeat = cap.IsArchived ? cap.ArchivePath : cap.FilePath;
                 var srcTop = BibliotecaImportFilesystem.GetSourceTopFolder(importSrc, srcPathForHeat);
@@ -448,6 +495,19 @@ public static class BibliotecaImportEngine
                         MarkProcessedAndDeleteSource(cap, processedWithoutError: true);
                         goto UpdateUi;
                     }
+
+                    // Deduplicación difusa por SimHash (distancia Hamming <= 3)
+                    var stem = Path.GetFileNameWithoutExtension(destFileName);
+                    var simhash = BibliotecaImportFilesystem.ComputeSimHash(stem);
+                    if (existingSimHashes.FindNearDuplicate(simhash, 3))
+                    {
+                        System.Threading.Interlocked.Increment(ref skipQuickSigDest);
+                        System.Threading.Interlocked.Increment(ref skipped);
+                        MarkProcessedAndDeleteSource(cap, processedWithoutError: true);
+                        if (!o.MinimalLog && (System.Threading.Volatile.Read(ref skipQuickSigDest) % 150 == 0))
+                            host.Log($"  🔀 [Fuzzy Dedup] omitido por similitud difusa: {destFileName}");
+                        goto UpdateUi;
+                    }
                 }
 
                 // Skip duplicado por hash (precalculado o on-demand)
@@ -486,7 +546,7 @@ public static class BibliotecaImportEngine
                         await archSem.WaitAsync(parallelCt).ConfigureAwait(false);
                         try
                         {
-                            BibliotecaImportFilesystem.ExtractFromArchive(cap, destFile);
+                            BibliotecaImportFilesystem.ExtractFromArchiveRecursive(cap, destFile);
                             System.Threading.Interlocked.Increment(ref extracted);
                         }
                         finally { archSem.Release(); }
@@ -514,6 +574,51 @@ public static class BibliotecaImportEngine
                         if (!copyOk)
                             throw new IOException("No se pudo copiar tras reintentos de I/O.");
                     }
+
+                    // 1) Idioma check: si el idioma no es español, desechamos el libro
+                    var sample = BibliotecaImportFilesystem.ExtractTextSample(destFile);
+                    if (!BibliotecaImportFilesystem.IsSpanishText(sample))
+                    {
+                        host.Log($"  🗑️ [Idioma] Descartado por no ser español: {destFileName}");
+                        TryDeleteFileSafe(destFile);
+                        System.Threading.Interlocked.Increment(ref skipped);
+                        MarkProcessedAndDeleteSource(cap, processedWithoutError: true);
+                        goto UpdateUi;
+                    }
+
+                    // 1.5) Validación de integridad EPUB: si está corrupto, lo descartamos
+                    if (destFile.EndsWith(".epub", StringComparison.OrdinalIgnoreCase))
+                    {
+                        if (!BibliotecaImportFilesystem.IsEpubValidAndNotCorrupt(destFile))
+                        {
+                            host.Log($"  ❌ [Corrupto] Descartado por estar corrupto o incompleto: {destFileName}");
+                            TryDeleteFileSafe(destFile);
+                            System.Threading.Interlocked.Increment(ref errors);
+                            failedCandidates.Add(cap);
+                            if (errorSamples.Count < 20)
+                                errorSamples.Enqueue($"{destFileName}: Archivo EPUB corrupto o incompleto.");
+                            MarkProcessedAndDeleteSource(cap, processedWithoutError: false);
+                            goto UpdateUi;
+                        }
+                    }
+
+                    // 2) Enriquecimiento de metadatos EPUB
+                    var sepIdx = destFileName.IndexOf(" - ");
+                    if (sepIdx > 0)
+                    {
+                        var author = destFileName[..sepIdx].Trim();
+                        var titleAndExt = destFileName[(sepIdx + 3)..].Trim();
+                        var title = Path.GetFileNameWithoutExtension(titleAndExt).Trim();
+
+                        // Parse series/volume from title
+                        BibliotecaImportFilesystem.ExtractSeriesAndTitle(title, out var cleanTitle, out var seriesName, out var seriesIndex);
+
+                        if (destFile.EndsWith(".epub", StringComparison.OrdinalIgnoreCase))
+                        {
+                            BibliotecaImportFilesystem.TryEnrichEpubMetadata(destFile, author, cleanTitle, seriesName, seriesIndex);
+                        }
+                    }
+
                     var copyNum = System.Threading.Interlocked.Increment(ref copied);
                     System.Threading.Interlocked.Add(ref copiedBytes, cap.SizeBytes);
                     copiedPaths.Add(destFile);
@@ -539,7 +644,15 @@ public static class BibliotecaImportEngine
                         importDone.Add(destFileName);
                     }
                     if (o.QuickSig && cap.SizeBytes > 0)
+                    {
                         existingQuickSigs.TryAdd(BibliotecaImportFilesystem.BuildQuickImportSignature(destFileName, cap.SizeBytes), 0);
+                        var stem = Path.GetFileNameWithoutExtension(destFileName);
+                        var simhash = BibliotecaImportFilesystem.ComputeSimHash(stem);
+                        lock (existingSimHashes)
+                        {
+                            existingSimHashes.Add(simhash);
+                        }
+                    }
                     var shouldCheckpointByCount = (System.Threading.Interlocked.Increment(ref checkpointCounter) % checkpointStride) == 0;
                     var nowCpTicks = DateTime.UtcNow.Ticks;
                     var shouldCheckpointByTime = (nowCpTicks - System.Threading.Volatile.Read(ref lastCheckpointTicks)) > TimeSpan.FromSeconds(15).Ticks;
@@ -556,30 +669,51 @@ public static class BibliotecaImportEngine
                     var processedWithoutError = true;
 
                     // Generar TXT si está habilitado (solo si pasa tamaño ≥200 KB, español y calidad)
-                    if (o.GenTxt && host.CalibreAvailable)
+                    if (o.GenTxt)
                     {
                         var ext = Path.GetExtension(destFile);
                         if (!ext.Equals(".txt", StringComparison.OrdinalIgnoreCase) &&
                             !ext.Equals(".text", StringComparison.OrdinalIgnoreCase) &&
                             host.ShouldEnqueueTxtForImport(destFileName, destFile, cap.SizeBytes, o.QualityScan))
                         {
-                            try
+                            var txtFile = Path.Combine(importDest, Path.GetFileNameWithoutExtension(destFile) + ".txt");
+                            if (!File.Exists(txtFile))
                             {
-                                var r = await host.EnqueueCalibreTxtAsync(destFile, importDest, parallelCt).ConfigureAwait(false);
-                                if (r.Success && !r.Skipped)
+                                bool convertedDirectly = false;
+                                if (ext.Equals(".epub", StringComparison.OrdinalIgnoreCase))
+                                {
+                                    convertedDirectly = BibliotecaImportFilesystem.TryConvertEpubToTxtDirect(destFile, txtFile);
+                                }
+                                else if (ext.Equals(".pdf", StringComparison.OrdinalIgnoreCase))
+                                {
+                                    convertedDirectly = BibliotecaImportFilesystem.TryConvertPdfToTxtDirect(destFile, txtFile);
+                                }
+
+                                if (convertedDirectly)
                                 {
                                     System.Threading.Interlocked.Increment(ref txtOk);
                                 }
-                                else if (!r.Skipped)
+                                else if (host.CalibreAvailable)
                                 {
-                                    System.Threading.Interlocked.Increment(ref txtFail);
-                                    processedWithoutError = false;
+                                    try
+                                    {
+                                        var r = await host.EnqueueCalibreTxtAsync(destFile, importDest, parallelCt).ConfigureAwait(false);
+                                        if (r.Success && !r.Skipped)
+                                        {
+                                            System.Threading.Interlocked.Increment(ref txtOk);
+                                        }
+                                        else if (!r.Skipped)
+                                        {
+                                            System.Threading.Interlocked.Increment(ref txtFail);
+                                            processedWithoutError = false;
+                                        }
+                                    }
+                                    catch
+                                    {
+                                        System.Threading.Interlocked.Increment(ref txtFail);
+                                        processedWithoutError = false;
+                                    }
                                 }
-                            }
-                            catch
-                            {
-                                System.Threading.Interlocked.Increment(ref txtFail);
-                                processedWithoutError = false;
                             }
                         }
                     }
@@ -704,7 +838,7 @@ public static class BibliotecaImportEngine
             var manifestPath = Path.Combine(importDest, $"import_manifest_{DateTime.Now:yyyyMMdd_HHmmss}.json");
             try
             {
-                File.WriteAllText(manifestPath, System.Text.Json.JsonSerializer.Serialize(copiedList));
+                WriteAllTextWithRetry(manifestPath, System.Text.Json.JsonSerializer.Serialize(copiedList));
                 host.SetLastImportManifestPath(manifestPath);
             }
             catch { }
@@ -754,7 +888,7 @@ public static class BibliotecaImportEngine
             try
             {
                 var repBase = Path.Combine(importDest, $"import_report_{DateTime.Now:yyyyMMdd_HHmmss}");
-                File.WriteAllText(repBase + ".json", System.Text.Json.JsonSerializer.Serialize(report, new System.Text.Json.JsonSerializerOptions { WriteIndented = true }), Encoding.UTF8);
+                WriteAllTextWithRetry(repBase + ".json", System.Text.Json.JsonSerializer.Serialize(report, new System.Text.Json.JsonSerializerOptions { WriteIndented = true }), Encoding.UTF8);
                 var csv = new StringBuilder(2048);
                 csv.AppendLine("metric,value");
                 csv.AppendLine($"candidates,{report.Candidates}");
@@ -777,14 +911,14 @@ public static class BibliotecaImportEngine
                 csv.AppendLine("source_folder,count");
                 foreach (var kv in report.SourceHeatmap)
                     csv.AppendLine($"\"{kv.Key.Replace("\"", "\"\"")}\",{kv.Value}");
-                File.WriteAllText(repBase + ".csv", csv.ToString(), Encoding.UTF8);
+                WriteAllTextWithRetry(repBase + ".csv", csv.ToString(), Encoding.UTF8);
                 host.Log($"📊 Reporte exportado: {Path.GetFileName(repBase)}.json/.csv");
             }
             catch { }
 
             host.SetLastImportFailed(failedCandidates.ToList());
 
-            var summary = $"✅ {copied} importados ({extracted} extraídos de ZIP/RAR) · {skipped} duplicados · {errors} errores";
+            var summary = $"✅ Total {candidates.Count} · importados {copied} ({extracted} extraídos de ZIP/RAR) · omitidos {skipped} · errores {errors}";
             if (o.GenTxt) summary += $" · TXT: {txtOk} OK / {txtFail} fail";
             summary += $" · {BibliotecaImportEngine.FormatBytes(copiedBytes)}";
             if (!o.DryRun && (sourceDeletedFiles + sourceDeletedArchives + sourceDeletedDirs) > 0)
@@ -921,6 +1055,26 @@ public static class BibliotecaImportEngine
         }
     }
 
+    private static void WriteAllTextWithRetry(string path, string contents, Encoding? encoding = null)
+    {
+        for (int i = 0; i < 3; i++)
+        {
+            try
+            {
+                if (encoding != null)
+                    File.WriteAllText(path, contents, encoding);
+                else
+                    File.WriteAllText(path, contents);
+                return;
+            }
+            catch (IOException)
+            {
+                if (i == 2) throw;
+                Thread.Sleep(200);
+            }
+        }
+    }
+
     private static bool TryDeleteFileSafe(string path)
     {
         try
@@ -941,6 +1095,42 @@ public static class BibliotecaImportEngine
         }
     }
 
+    private static bool TryDeleteDirectoryIfEmptyOrTrashOnly(string dirPath)
+    {
+        try
+        {
+            if (!Directory.Exists(dirPath))
+                return true;
+
+            var entries = Directory.GetFileSystemEntries(dirPath);
+            foreach (var entry in entries)
+            {
+                if (Directory.Exists(entry))
+                    return false;
+
+                var name = Path.GetFileName(entry);
+                if (string.Equals(name, "thumbs.db", StringComparison.OrdinalIgnoreCase) ||
+                    string.Equals(name, ".ds_store", StringComparison.OrdinalIgnoreCase) ||
+                    string.Equals(name, "desktop.ini", StringComparison.OrdinalIgnoreCase))
+                {
+                    TryDeleteFileSafe(entry);
+                }
+                else
+                {
+                    return false;
+                }
+            }
+
+            if (!Directory.EnumerateFileSystemEntries(dirPath).Any())
+            {
+                Directory.Delete(dirPath, recursive: false);
+                return true;
+            }
+        }
+        catch { }
+        return false;
+    }
+
     private static int CleanupOriginDirectoryAndParent(string importSrc)
     {
         if (string.IsNullOrWhiteSpace(importSrc) || !Directory.Exists(importSrc))
@@ -958,35 +1148,19 @@ public static class BibliotecaImportEngine
                 .ToList();
             foreach (var d in subDirs)
             {
-                try
-                {
-                    if (!Directory.EnumerateFileSystemEntries(d).Any())
-                    {
-                        Directory.Delete(d, recursive: false);
-                        removed++;
-                    }
-                }
-                catch { }
+                if (TryDeleteDirectoryIfEmptyOrTrashOnly(d))
+                    removed++;
             }
         }
         catch { }
 
         // 2) Borrar carpeta origen si queda vacía.
-        bool srcDeleted = false;
-        try
-        {
-            if (!Directory.EnumerateFileSystemEntries(srcFull).Any())
-            {
-                Directory.Delete(srcFull, recursive: false);
-                removed++;
-                srcDeleted = true;
-            }
-        }
-        catch { }
-
-        // 3) Si origen se borró, borrar padre solo un nivel si quedó vacío.
+        bool srcDeleted = TryDeleteDirectoryIfEmptyOrTrashOnly(srcFull);
         if (srcDeleted)
         {
+            removed++;
+
+            // 3) Si origen se borró, borrar padre solo un nivel si quedó vacío.
             try
             {
                 var parent = Directory.GetParent(srcFull)?.FullName;
@@ -996,11 +1170,10 @@ public static class BibliotecaImportEngine
                     var root = Path.GetPathRoot(parentFull)?.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
                     if (!string.IsNullOrWhiteSpace(root)
                         && !string.Equals(parentFull, root, StringComparison.OrdinalIgnoreCase)
-                        && Directory.Exists(parentFull)
-                        && !Directory.EnumerateFileSystemEntries(parentFull).Any())
+                        && Directory.Exists(parentFull))
                     {
-                        Directory.Delete(parentFull, recursive: false);
-                        removed++;
+                        if (TryDeleteDirectoryIfEmptyOrTrashOnly(parentFull))
+                            removed++;
                     }
                 }
             }

@@ -336,6 +336,7 @@ public partial class ImportBibliotecaWindow : Window
             {
                 // ── Limpieza previa de la carpeta de origen ──────────────────
                 TxtStatus!.Text = "Limpiando carpeta de origen…";
+                AppendLog("🧹 [Limpieza] Borrando archivos no válidos en origen...");
                 var catalogPathOverride = Environment.GetEnvironmentVariable("SLSDOWN_GUTENBERG_AUTHORS_PATH");
                 var gutenbergTokens = await Task.Run(() => SourceFolderCleaner.LoadGutenbergTokens(catalogPathOverride, src), ct);
                 var catalogSnapshot = await Task.Run(() => StandaloneGutenbergPublicDomainPolicy.GetCatalogSnapshot(src), ct);
@@ -348,7 +349,9 @@ public partial class ImportBibliotecaWindow : Window
                 {
                     AppendLog("⚠️ [Gutenberg] No se cargó ningún autor desde catálogo; la política PD rechazará por seguridad.");
                 }
-                await SourceFolderCleaner.CleanAsync(src, gutenbergTokens, cleanProgress, o.DryRun, cfg.ImportDeleteUnknownOnCleanup, ct);
+                var cleanResult = await SourceFolderCleaner.CleanAsync(src, gutenbergTokens, cleanProgress, o.DryRun, cfg.ImportDeleteUnknownOnCleanup, ct);
+                AppendLog($"📊 [Limpieza resumen] escaneados {cleanResult.ScannedTotal:N0} · libros {cleanResult.ScannedBooks:N0} · borrados {cleanResult.Deleted:N0} (no-libro {cleanResult.NonBookDeleted:N0}, desconocido {cleanResult.UnknownDeleted:N0}) · omitidos {cleanResult.Skipped:N0}");
+                AppendLog("✅ [Limpieza] Borrado finalizado.");
                 // ─────────────────────────────────────────────────────────────
             }
             else
@@ -371,7 +374,10 @@ public partial class ImportBibliotecaWindow : Window
 
             if (cfg.PurgeSourceAfterImport)
             {
-                await SourceFolderCleaner.PurgeRemainingBooksAndEmptyDirsAsync(src, new Progress<string>(AppendLog), o.DryRun, ct);
+                AppendLog("🗑️ [Purge origen] Borrando remanentes del origen...");
+                var purgeResult = await SourceFolderCleaner.PurgeRemainingBooksAndEmptyDirsAsync(src, new Progress<string>(AppendLog), o.DryRun, ct);
+                AppendLog($"📊 [Purge resumen] remanentes detectados {purgeResult.RemainingFilesFound:N0} · borrados {purgeResult.RemainingFilesDeleted:N0} · carpetas vacías eliminadas {purgeResult.EmptyDirectoriesDeleted:N0} · errores {purgeResult.DeleteErrors:N0}");
+                AppendLog("✅ [Purge origen] Borrado finalizado.");
             }
             else
             {

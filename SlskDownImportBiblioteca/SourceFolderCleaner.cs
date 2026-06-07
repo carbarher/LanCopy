@@ -396,6 +396,10 @@ internal static class SourceFolderCleaner
             result.Renamed = renamed;
             result.Deleted = deleted;
             result.Skipped = skipped;
+            result.ScannedTotal = scannedTotal;
+            result.ScannedBooks = scannedBooks;
+            result.NonBookDeleted = nonBookDeleted;
+            result.UnknownDeleted = unknownDeleted;
 
             SavePersistentAuthorPolicyCache(
                 catalogStamp,
@@ -427,9 +431,11 @@ internal static class SourceFolderCleaner
         return await Task.Run(() =>
         {
             const int LogFlushThreshold = 64;
+            const int MaxForensicSamples = 30;
             var bufferedLogs = new ConcurrentQueue<string>();
             var flushGate = new object();
             int pendingBufferedLogs = 0;
+            var deleteErrorSamples = new ConcurrentQueue<string>();
 
             void EnqueueBufferedLog(string message)
             {
@@ -488,11 +494,15 @@ internal static class SourceFolderCleaner
                         else
                         {
                             Interlocked.Increment(ref deleteErrors);
+                            if (deleteErrorSamples.Count < MaxForensicSamples)
+                                deleteErrorSamples.Enqueue($"delete-failed: {filePath}");
                         }
                     }
-                    catch
+                    catch (Exception ex)
                     {
                         Interlocked.Increment(ref deleteErrors);
+                        if (deleteErrorSamples.Count < MaxForensicSamples)
+                            deleteErrorSamples.Enqueue($"delete-error: {filePath} :: {ex.Message}");
                     }
                 });
             }
@@ -525,6 +535,55 @@ internal static class SourceFolderCleaner
                 result.EmptyDirectoriesDeleted++;
             else if (dryRun && CanDeleteDirectory(srcDir))
                 result.EmptyDirectoriesDeleted++;
+
+            if (!dryRun && (result.RemainingFilesDeleted < result.RemainingFilesFound || result.DeleteErrors > 0))
+            {
+                int remainingNow = 0;
+                try
+                {
+                    foreach (var _ in EnumerateFilesRecursiveStream(srcDir))
+                        remainingNow++;
+                }
+                catch
+                {
+                }
+
+                EnqueueBufferedLog($"🧪 [Purge forense] Detectados {result.RemainingFilesFound:N0}, borrados {result.RemainingFilesDeleted:N0}, pendientes actuales {remainingNow:N0}, errores {result.DeleteErrors:N0}.");
+
+                if (!deleteErrorSamples.IsEmpty)
+                {
+                    int i = 0;
+                    while (deleteErrorSamples.TryDequeue(out var sample) && i < MaxForensicSamples)
+                    {
+                        EnqueueBufferedLog($"   ↳ {sample}");
+                        i++;
+                    }
+                }
+
+                var nonEmptyDirSamples = new List<string>(12);
+                foreach (var dirPath in directories)
+                {
+                    try
+                    {
+                        if (!Directory.Exists(dirPath))
+                            continue;
+
+                        var entry = Directory.EnumerateFileSystemEntries(dirPath).FirstOrDefault();
+                        if (entry == null)
+                            continue;
+
+                        nonEmptyDirSamples.Add($"{dirPath} -> contiene: {Path.GetFileName(entry)}");
+                        if (nonEmptyDirSamples.Count >= 12)
+                            break;
+                    }
+                    catch
+                    {
+                    }
+                }
+
+                foreach (var sample in nonEmptyDirSamples)
+                    EnqueueBufferedLog($"   ↳ dir-no-vacia: {sample}");
+            }
 
             var mode = dryRun ? "DRY-RUN borraría" : "Borrados";
             EnqueueBufferedLog($"🧹 [Purge origen] {mode} {result.RemainingFilesDeleted:N0}/{result.RemainingFilesFound:N0} archivo(s) remanente(s) · carpetas vacías {result.EmptyDirectoriesDeleted:N0} · errores {result.DeleteErrors:N0}");
@@ -1159,6 +1218,10 @@ internal static class SourceFolderCleaner
         public int Renamed { get; set; }
         public int Deleted { get; set; }
         public int Skipped { get; set; }
+        public int ScannedTotal { get; set; }
+        public int ScannedBooks { get; set; }
+        public int NonBookDeleted { get; set; }
+        public int UnknownDeleted { get; set; }
     }
 
     internal sealed class PurgeResult

@@ -360,21 +360,47 @@ public static class BibliotecaImportFilesystem
         long count = 0;
         try
         {
-            foreach (var f in Directory.EnumerateFiles(srcDir))
+            var stack = new Stack<(string Path, int Depth)>();
+            var visited = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var root = Path.GetFullPath(srcDir);
+            stack.Push((root, 0));
+            visited.Add(root);
+
+            while (stack.Count > 0)
             {
+                var (dir, depth) = stack.Pop();
+                if (depth > 16) continue;
+
                 count++;
-                try { var t = new FileInfo(f).LastWriteTimeUtc.Ticks; if (t > max) max = t; } catch { }
-            }
-            foreach (var sub in Directory.EnumerateDirectories(srcDir))
-            {
-                count++;
-                try { var dt = new DirectoryInfo(sub).LastWriteTimeUtc.Ticks; if (dt > max) max = dt; } catch { }
                 try
                 {
-                    foreach (var f in Directory.EnumerateFiles(sub))
+                    var dt = new DirectoryInfo(dir).LastWriteTimeUtc.Ticks;
+                    if (dt > max) max = dt;
+                }
+                catch { }
+
+                try
+                {
+                    foreach (var f in Directory.EnumerateFiles(dir))
                     {
                         count++;
-                        try { var t = new FileInfo(f).LastWriteTimeUtc.Ticks; if (t > max) max = t; } catch { }
+                        try
+                        {
+                            var t = new FileInfo(f).LastWriteTimeUtc.Ticks;
+                            if (t > max) max = t;
+                        }
+                        catch { }
+                    }
+                }
+                catch { }
+
+                try
+                {
+                    foreach (var sub in Directory.EnumerateDirectories(dir))
+                    {
+                        var full = Path.GetFullPath(sub);
+                        if (visited.Add(full))
+                            stack.Push((full, depth + 1));
                     }
                 }
                 catch { }
