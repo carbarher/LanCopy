@@ -17,8 +17,10 @@ using Avalonia.Interactivity;
 using Avalonia.Layout;
 using Avalonia.Media;
 using Avalonia.Platform.Storage;
+using Avalonia.Styling;
 using Avalonia.Threading;
 using LanCopy.Models;
+using LanCopy.Localization;
 using LanCopy.Services;
 
 namespace LanCopy;
@@ -26,6 +28,7 @@ namespace LanCopy;
 public partial class MainWindow : Window
 {
     private readonly FileServer _server = new();
+    private static Loc L => Loc.Instance;
     private PeerDiscovery? _discovery; // Feature 12: UDP auto-descubrimiento
     private LanClient? _client;        // upload client
     private LanClient? _clientDown;   // Feature 2: cliente separado para download simultáneo
@@ -74,7 +77,11 @@ public partial class MainWindow : Window
 
     // Feature 9: TLS + compresión toggles
     private bool _tlsEnabled;
+    private bool _restrictShareRoot = true; // SEGURIDAD: confina peers a carpeta compartida
+    private bool _readOnly; // SEGURIDAD: si true, el servidor rechaza put/delete/rename
+    private bool _requireApproval; // SEGURIDAD: pedir consentimiento antes de aceptar ficheros
     private bool _compressEnabled;
+    private string _theme = "Dark"; // tema UI: Dark|Light
 
     private static readonly string SettingsPath = Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
@@ -83,6 +90,10 @@ public partial class MainWindow : Window
     private static readonly string QueuePath = Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
         "LanCopy", "queue.json"); // Feature 3: cola persistente
+
+    private static readonly string HistoryPath = Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+        "LanCopy", "history.json"); // historial persistente entre sesiones
 
     // Cached brushes — evita SolidColorBrush.Parse en cada SetConnStatus (#11)
     private static readonly SolidColorBrush BrushConnected = SolidColorBrush.Parse("#28A745");
@@ -128,9 +139,15 @@ public partial class MainWindow : Window
 
         try
         {
-            _server.Start(8742);
+            var savedLocalPort = ReadSavedLocalPort();
+            _server.RestrictToShareRoot = _restrictShareRoot;
+            _server.ReadOnly = _readOnly;
+            _server.ApproveIncoming = _requireApproval ? OnApproveIncomingAsync : null;
+            _server.Start(savedLocalPort);
+            _server.TransferProgress += OnServerTransferProgress;
+            { var lpBox = this.FindControl<TextBox>("txtLocalPort"); if (lpBox != null) lpBox.Text = _server.Port.ToString(); }
             this.FindControl<TextBlock>("txtMyIp")!.Text = $"{_server.LocalIp}:{_server.Port}";
-            SetStatus($"Servidor activo en {_server.LocalIp}:{_server.Port}  —  dale esta IP al otro PC");
+            SetStatus(L.Format("st.serverActive", $"{_server.LocalIp}:{_server.Port}"));
 
             // Feature 12: iniciar auto-descubrimiento UDP
             _discovery = new PeerDiscovery(_server.LocalIp, _server.Port);
@@ -139,9 +156,18 @@ public partial class MainWindow : Window
         }
         catch (Exception ex)
         {
-            SetStatus($"Error al iniciar servidor: {ex.Message}");
+            SetStatus(L.Format("st.serverError", ex.Message));
         }
 
+        var cmbLang = this.FindControl<ComboBox>("cmbLang");
+        if (cmbLang != null)
+        {
+            cmbLang.ItemsSource = Loc.Available.Select(a => a.Native).ToList();
+            int li = 0;
+            for (int i = 0; i < Loc.Available.Count; i++) if (Loc.Available[i].Code == L.Current) { li = i; break; }
+            cmbLang.SelectedIndex = li;
+        }
+        this.FlowDirection = L.IsRtl ? FlowDirection.RightToLeft : FlowDirection.LeftToRight;
         Closing += (_, _) => { _server.Stop(); _discovery?.Stop(); _client?.Dispose(); _clientDown?.Dispose(); _uploadCts.Cancel(); _downloadCts.Cancel(); };
         Opened += OnWindowOpened;
     }
@@ -154,6 +180,7 @@ public partial class MainWindow : Window
         await LoadSettingsAsync();
 
         // No bloquear primer render: refresco local y cola pendiente arrancan sin bloquear Opened.
+        LoadHistory();
         _ = RefreshLocalAsync();
         _ = CheckPendingQueueAsync();
     }
@@ -172,17 +199,57 @@ public partial class MainWindow : Window
         var full = this.FindControl<TextBlock>("txtMyIp")!.Text ?? "";
         var ip = full.Contains(':') ? full[..full.IndexOf(':')] : full;
         _ = TopLevel.GetTopLevel(this)!.Clipboard!.SetTextAsync(ip);
-        SetStatus("IP copiada al portapapeles");
+        SetStatus(L["st.ipCopied"]);
+    }
+
+    private async void CopyPairingCode_Click(object? sender, RoutedEventArgs e)
+    {
+        try
+        {
+            var code = PairingCode.Encode(_server.LocalIp, _server.Port);
+            var top = TopLevel.GetTopLevel(this);
+            if (top?.Clipboard != null) await top.Clipboard.SetTextAsync(code);
+            SetStatus(L.Format("st.codeCopied", code));
+        }
+        catch { SetStatus(L["st.codeError"]); }
+    }
+
+    private void ApplyTheme()
+    {
+        var variant = string.Equals(_theme, "Light", StringComparison.OrdinalIgnoreCase)
+            ? ThemeVariant.Light : ThemeVariant.Dark;
+        if (Application.Current != null) Application.Current.RequestedThemeVariant = variant;
+        this.RequestedThemeVariant = variant;
+    }
+
+    private void ToggleTheme_Click(object? sender, RoutedEventArgs e)
+    {
+        _theme = string.Equals(_theme, "Light", StringComparison.OrdinalIgnoreCase) ? "Dark" : "Light";
+        ApplyTheme();
+        var ip = this.FindControl<TextBox>("txtRemoteIp")?.Text?.Trim() ?? "";
+        var port = this.FindControl<TextBox>("txtRemotePort")?.Text?.Trim() ?? "8742";
+        SaveSettings(ip, port);
+        SetStatus(L.Format("st.themeChanged", _theme));
     }
 
     private void TryConnect()
     {
         var ip = this.FindControl<TextBox>("txtRemoteIp")!.Text?.Trim() ?? "";
         var portStr = this.FindControl<TextBox>("txtRemotePort")!.Text?.Trim() ?? "8742";
-        if (string.IsNullOrEmpty(ip)) { SetStatus("Escribe la IP del otro PC"); return; }
+        if (string.IsNullOrEmpty(ip)) { SetStatus(L["st.enterIp"]); return; }
+
+        // Si el usuario pego un codigo de emparejamiento en el campo IP, decodificarlo.
+        if (PairingCode.TryDecode(ip, out var pcIp, out var pcPort))
+        {
+            ip = pcIp;
+            portStr = pcPort.ToString();
+            this.FindControl<TextBox>("txtRemoteIp")!.Text = ip;
+            this.FindControl<TextBox>("txtRemotePort")!.Text = portStr;
+        }
+
         if (!int.TryParse(portStr, out var port) || port < 1 || port > 65535)
         {
-            SetStatus("Puerto inválido (1-65535)"); return;
+            SetStatus(L["st.invalidPort"]); return;
         }
         SaveSettings(ip, portStr);
         _ = ConnectAsync(ip, port);
@@ -192,8 +259,8 @@ public partial class MainWindow : Window
     {
         if (!silent)
         {
-            SetStatus($"Conectando a {ip}:{port}...");
-            SetConnStatus("Conectando...", BrushConnecting);
+            SetStatus(L.Format("st.connecting", $"{ip}:{port}"));
+            SetConnStatus(L["conn.connecting"], BrushConnecting);
         }
 
         await _clientLock.WaitAsync();
@@ -204,16 +271,16 @@ public partial class MainWindow : Window
         {
             var entries = await _client.ListAsync(_remotePath);
             Dispatcher.UIThread.Post(() => { _remoteItemsAll = entries; ApplyRemoteSort(); UpdateRemotePath(); });
-            SetConnStatus("Conectado", BrushConnected);
-            if (!silent) SetStatus($"Conectado a {ip}:{port}");
+            SetConnStatus(L["conn.connectedWord"], BrushConnected);
+            if (!silent) SetStatus(L.Format("st.connected", $"{ip}:{port}"));
         }
         catch (Exception ex)
         {
             await _clientLock.WaitAsync();
             try { _client?.Dispose(); _client = null; }
             finally { _clientLock.Release(); }
-            SetConnStatus("Error", BrushError);
-            if (!silent) SetStatus($"No se pudo conectar a {ip}:{port}  —  {ex.Message}");
+            SetConnStatus(L["conn.error"], BrushError);
+            if (!silent) SetStatus(L.Format("st.connectFailed", $"{ip}:{port}", ex.Message));
         }
     }
 
@@ -225,7 +292,7 @@ public partial class MainWindow : Window
     private async Task<bool> TryReconnectAsync(string ip, int port, CancellationToken ct)
     {
         if (string.IsNullOrEmpty(ip) || port < 1) return false;
-        SetConnStatus("Reconectando...", BrushConnecting);
+        SetConnStatus(L["conn.reconnecting"], BrushConnecting);
 
         for (int attempt = 1; attempt <= 3; attempt++)
         {
@@ -242,8 +309,8 @@ public partial class MainWindow : Window
                 _clientLock.Release();
                 _ = await snap!.ListAsync("");
 
-                SetConnStatus("Reconectado", BrushConnected);
-                SetStatus("Reconectado");
+                SetConnStatus(L["conn.reconnectedWord"], BrushConnected);
+                SetStatus(L["st.reconnected"]);
                 return true;
             }
             catch (OperationCanceledException) { return false; }
@@ -251,14 +318,14 @@ public partial class MainWindow : Window
             {
                 if (attempt < 3)
                 {
-                    SetStatus($"Reconexión fallida, reintento {attempt}/3...");
+                    SetStatus(L.Format("st.reconnecting", attempt));
                     try { await Task.Delay(2000, ct); } catch { return false; }
                 }
             }
         }
 
-        SetConnStatus("Desconectado", BrushError);
-        SetStatus("No se pudo reconectar");
+        SetConnStatus(L["conn.disconnectedWord"], BrushError);
+        SetStatus(L["st.reconnectFailed"]);
         return false;
     }
 
@@ -302,7 +369,7 @@ public partial class MainWindow : Window
             ApplyLocalFilter(this.FindControl<TextBox>("txtLocalFilter")?.Text?.Trim() ?? "");
             Dispatcher.UIThread.Post(UpdateLocalPath);
         }
-        catch (Exception ex) { SetStatus($"Error local: {ex.Message}"); }
+        catch (Exception ex) { SetStatus(L.Format("st.localError", ex.Message)); }
     }
 
     private void TxtLocalFilter_TextChanged(object? sender, TextChangedEventArgs e)
@@ -386,7 +453,7 @@ public partial class MainWindow : Window
 
     private async void RefreshRemote_Click(object? sender, RoutedEventArgs e)
     {
-        if (_client == null) { SetStatus("No conectado"); return; }
+        if (_client == null) { SetStatus(L["st.notConnected"]); return; }
         await RefreshRemoteAsync();
     }
 
@@ -420,8 +487,8 @@ public partial class MainWindow : Window
                         finally { _clientLock.Release(); }
                         await RefreshRemoteAsync(isRetry: true);
                         // Mostrar "Reconectado" tanto en status como en badge (#19)
-                        SetStatus("Reconectado");
-                        SetConnStatus("Reconectado", BrushConnected);
+                        SetStatus(L["st.reconnected"]);
+                        SetConnStatus(L["conn.reconnectedWord"], BrushConnected);
                         return;
                     }
                     catch { }
@@ -430,8 +497,8 @@ public partial class MainWindow : Window
             await _clientLock.WaitAsync();
             try { _client?.Dispose(); _client = null; }
             finally { _clientLock.Release(); }
-            SetConnStatus("Desconectado", BrushError);
-            SetStatus($"Error remoto: {ex.Message}");
+            SetConnStatus(L["conn.disconnectedWord"], BrushError);
+            SetStatus(L.Format("st.remoteError", ex.Message));
         }
     }
 
@@ -439,17 +506,17 @@ public partial class MainWindow : Window
 
     private async void CopyToRemote(object? sender, RoutedEventArgs e)
     {
-        if (_client == null) { SetStatus("Conecta primero al otro PC"); return; }
+        if (_client == null) { SetStatus(L["st.connectFirst"]); return; }
         var items = GetSelectedItems("localList");
-        if (items.Count == 0) { SetStatus("Selecciona archivos/carpetas (Ctrl+clic múltiples, Ctrl+A todo)"); return; }
+        if (items.Count == 0) { SetStatus(L["st.selectFiles"]); return; }
         await TransferAsync(items, isUpload: true);
     }
 
     private async void CopyToLocal(object? sender, RoutedEventArgs e)
     {
-        if (_client == null) { SetStatus("Conecta primero al otro PC"); return; }
+        if (_client == null) { SetStatus(L["st.connectFirst"]); return; }
         var items = GetSelectedItems("remoteList");
-        if (items.Count == 0) { SetStatus("Selecciona archivos/carpetas en el panel remoto"); return; }
+        if (items.Count == 0) { SetStatus(L["st.selectRemote"]); return; }
         await TransferAsync(items, isUpload: false);
     }
 
@@ -471,7 +538,7 @@ public partial class MainWindow : Window
                 if (bp != null) bp.IsEnabled = false;
                 if (br != null) br.IsEnabled = true;
             });
-            SetStatus("⏸ Transferencia pausada");
+            SetStatus(L["st.paused"]);
         }
     }
 
@@ -487,7 +554,7 @@ public partial class MainWindow : Window
                 if (bp != null) bp.IsEnabled = true;
                 if (br != null) br.IsEnabled = false;
             });
-            SetStatus("▶ Transferencia reanudada");
+            SetStatus(L["st.resumed"]);
         }
     }
 
@@ -523,7 +590,7 @@ public partial class MainWindow : Window
 
             var totalBytes = fileList.Sum(x => x.entry.Size);
             var arrow = isUpload ? ">>" : "<<";
-            SetStatus($"{arrow} {fileList.Count} archivo{(fileList.Count > 1 ? "s" : "")} — {FileEntry.FormatSize(totalBytes)} total");
+            SetStatus(L.Format("st.filesTotal", $"{arrow} {fileList.Count}", fileList.Count > 1 ? L["word.files"] : L["word.file"], FileEntry.FormatSize(totalBytes)));
 
             var skipSet = await CheckOverwriteAsync(fileList, isUpload);
             if (skipSet == null) return;
@@ -566,7 +633,7 @@ public partial class MainWindow : Window
             // -- Pase 2: reintentar archivos fallidos -------------------------
             if (failedFiles.Count > 0 && !ct.IsCancellationRequested)
             {
-                SetStatus($"Reintentando {failedFiles.Count} archivo(s) fallido(s)...");
+                SetStatus(L.Format("st.retrying", failedFiles.Count));
                 try { await Task.Delay(2000, ct); } catch { goto cleanup; }
 
                 bool reconnected2 = await TryReconnectAsync(remoteIp, remotePort, ct);
@@ -641,6 +708,32 @@ public partial class MainWindow : Window
     /// <summary>
     /// Transfiere un único archivo. Devuelve true si éxito, false si error o cancelado.
     /// </summary>
+    // Progreso del lado servidor (cuando el OTRO PC inicia la copia): recepcion 'put' / envio 'get'.
+    private long _srvLastDone;
+    private readonly Stopwatch _srvSw = new();
+
+    private void OnServerTransferProgress(FileServer.TransferProgressInfo info)
+    {
+        if (info.Done <= 0 || info.Done < _srvLastDone) { _srvSw.Restart(); _srvLastDone = 0; }
+        var elapsed = _srvSw.Elapsed.TotalSeconds;
+        var speed = elapsed > 0.01 ? (info.Done - _srvLastDone) / elapsed : 0;
+        _srvLastDone = info.Done;
+        _srvSw.Restart();
+
+        var pct = info.Total > 0 ? info.Done * 100.0 / info.Total : 0.0;
+        var arrow = info.Receiving ? "\u2B07" : "\u2B06";
+        var verb = info.Receiving ? L["verb.receiving"] : L["verb.sending"];
+
+        Dispatcher.UIThread.Post(() =>
+        {
+            if (_progressBar != null) _progressBar.Value = pct;
+            if (_txtSpeed != null) _txtSpeed.Text = $"{FileEntry.FormatSize((long)speed)}/s";
+            UpdateSparkline(speed);
+        });
+        SetStatus($"{arrow} {verb} {info.FileName}  " +
+                  $"{FileEntry.FormatSize(info.Done)}/{FileEntry.FormatSize(info.Total)}  " +
+                  $"@ {FileEntry.FormatSize((long)speed)}/s");
+    }
     private async Task<bool> DoTransferFileAsync(
         FileEntry entry, string destPath, bool isUpload,
         int fi, int total, long fileStart, long totalTransfer,
@@ -744,7 +837,7 @@ public partial class MainWindow : Window
 
             if (!fileOk && !ct.IsCancellationRequested)
             {
-                SetStatus($"⚠ Error en {entry.Name}, reconectando...");
+                SetStatus(L.Format("st.errorReconnecting", entry.Name));
                 bool reconnected = await TryReconnectAsync(remoteIp, remotePort, ct);
                 if (reconnected)
                     fileOk = await DoTransferFileAsync(
@@ -845,7 +938,7 @@ public partial class MainWindow : Window
                             result.Add((new FileEntry { Name = rf.Name, FullPath = rf.FullPath, Size = rf.Size, Tag = "dir" }, dest));
                         }
                     }
-                    catch (Exception ex) { SetStatus($"Error listando {item.Name}: {ex.Message}"); }
+                    catch (Exception ex) { SetStatus(L.Format("st.errorListing", item.Name, ex.Message)); }
                 }
             }
         }
@@ -927,7 +1020,38 @@ public partial class MainWindow : Window
             // Feature 7: toast notificación al completar
             if (_notifManager != null && color == "#28A745")
                 _notifManager.Show(new Notification("LanCopy", text, NotificationType.Success));
+
+            SaveHistory();
         });
+    }
+
+    private void SaveHistory()
+    {
+        try
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(HistoryPath)!);
+            var snapshot = _history.Take(50).ToList();
+            File.WriteAllText(HistoryPath, JsonSerializer.Serialize(snapshot));
+        }
+        catch { /* historial es best-effort */ }
+    }
+
+    private void LoadHistory()
+    {
+        try
+        {
+            if (!File.Exists(HistoryPath)) return;
+            var items = JsonSerializer.Deserialize<List<TransferRecord>>(File.ReadAllText(HistoryPath));
+            if (items == null) return;
+            Dispatcher.UIThread.Post(() =>
+            {
+                _history.Clear();
+                foreach (var it in items.Take(50)) _history.Add(it);
+                if (_historyExpander != null && _history.Count > 0)
+                    _historyExpander.IsExpanded = true;
+            });
+        }
+        catch { /* historial corrupto: ignorar */ }
     }
 
     // ── Settings ─────────────────────────────────────────────────────────────
@@ -943,6 +1067,11 @@ public partial class MainWindow : Window
             {
                 if (doc.TryGetProperty("remoteIp", out var ip)) this.FindControl<TextBox>("txtRemoteIp")!.Text = ip.GetString();
                 if (doc.TryGetProperty("remotePort", out var port)) this.FindControl<TextBox>("txtRemotePort")!.Text = port.GetString();
+                if (doc.TryGetProperty("localPort", out var lport))
+                {
+                    var lpTxt = lport.ValueKind == JsonValueKind.Number ? lport.GetInt32().ToString() : lport.GetString();
+                    var lpc = this.FindControl<TextBox>("txtLocalPort"); if (lpc != null && !string.IsNullOrEmpty(lpTxt)) lpc.Text = lpTxt;
+                }
             });
             if (doc.TryGetProperty("pin", out var pin))
             {
@@ -961,6 +1090,39 @@ public partial class MainWindow : Window
                     if (chk != null) chk.IsChecked = _tlsEnabled;
                 });
             }
+            // SEGURIDAD: confinamiento a carpeta compartida
+            if (doc.TryGetProperty("restrictShareRoot", out var rsr))
+            {
+                _restrictShareRoot = rsr.GetBoolean();
+                _server.RestrictToShareRoot = _restrictShareRoot;
+                await Dispatcher.UIThread.InvokeAsync(() =>
+                {
+                    var chk = this.FindControl<CheckBox>("chkShareRoot");
+                    if (chk != null) chk.IsChecked = _restrictShareRoot;
+                });
+            }
+            // SEGURIDAD: modo solo lectura
+            if (doc.TryGetProperty("readOnly", out var roEl))
+            {
+                _readOnly = roEl.GetBoolean();
+                _server.ReadOnly = _readOnly;
+                await Dispatcher.UIThread.InvokeAsync(() =>
+                {
+                    var chk = this.FindControl<CheckBox>("chkReadOnly");
+                    if (chk != null) chk.IsChecked = _readOnly;
+                });
+            }
+            // SEGURIDAD: consentimiento del receptor
+            if (doc.TryGetProperty("requireApproval", out var raEl))
+            {
+                _requireApproval = raEl.GetBoolean();
+                _server.ApproveIncoming = _requireApproval ? OnApproveIncomingAsync : null;
+                await Dispatcher.UIThread.InvokeAsync(() =>
+                {
+                    var chk = this.FindControl<CheckBox>("chkRequireApproval");
+                    if (chk != null) chk.IsChecked = _requireApproval;
+                });
+            }
             // Feature 2: compresión
             if (doc.TryGetProperty("compressEnabled", out var comp))
             {
@@ -970,6 +1132,12 @@ public partial class MainWindow : Window
                     var chk = this.FindControl<CheckBox>("chkCompress");
                     if (chk != null) chk.IsChecked = _compressEnabled;
                 });
+            }
+            // Tema UI
+            if (doc.TryGetProperty("theme", out var themeEl))
+            {
+                _theme = themeEl.GetString() ?? "Dark";
+                await Dispatcher.UIThread.InvokeAsync(ApplyTheme);
             }
             // Feature 3: perfiles
             if (doc.TryGetProperty("profiles", out var profilesEl))
@@ -991,15 +1159,31 @@ public partial class MainWindow : Window
             {
                 remoteIp = ip,
                 remotePort = port,
+                localPort = this.FindControl<TextBox>("txtLocalPort")?.Text?.Trim() ?? "8742",
                 pin,
                 tlsEnabled = _tlsEnabled,
+                restrictShareRoot = _restrictShareRoot,
+                readOnly = _readOnly,
+                requireApproval = _requireApproval,
                 compressEnabled = _compressEnabled,
+                language = L.Current,
+                theme = _theme,
                 profiles = _profiles
             }));
         }
         catch { }
     }
 
+    private void CmbLang_SelectionChanged(object? sender, SelectionChangedEventArgs e)
+    {
+        if (sender is not ComboBox cmb) return;
+        var idx = cmb.SelectedIndex;
+        if (idx < 0 || idx >= Loc.Available.Count) return;
+        var code = Loc.Available[idx].Code;
+        if (code == L.Current) return;
+        L.SetLanguage(code);
+        this.FlowDirection = L.IsRtl ? FlowDirection.RightToLeft : FlowDirection.LeftToRight;
+    }
     private void TxtPin_TextChanged(object? sender, TextChangedEventArgs e)
     {
         var pin = ((TextBox)sender!).Text?.Trim() ?? "";
@@ -1091,6 +1275,65 @@ public partial class MainWindow : Window
 
     // ── UDP Peer Discovery (Feature 12) ──────────────────────────────────────
 
+    private static int ReadSavedLocalPort()
+    {
+        try
+        {
+            if (!File.Exists(SettingsPath)) return 8742;
+            var doc = JsonSerializer.Deserialize<JsonElement>(File.ReadAllText(SettingsPath));
+            if (doc.TryGetProperty("localPort", out var lp))
+            {
+                if (lp.ValueKind == JsonValueKind.Number && lp.TryGetInt32(out var n) && n is >= 1 and <= 65535) return n;
+                if (lp.ValueKind == JsonValueKind.String && int.TryParse(lp.GetString(), out var s) && s is >= 1 and <= 65535) return s;
+            }
+        }
+        catch { }
+        return 8742;
+    }
+
+    private void TxtLocalPort_KeyDown(object? sender, KeyEventArgs e)
+    {
+        if (e.Key == Key.Enter) ApplyLocalPort();
+    }
+
+    private void ApplyLocalPort_Click(object? sender, RoutedEventArgs e) => ApplyLocalPort();
+
+    // Reinicia el servidor (y el descubrimiento) en el nuevo puerto local indicado por el usuario.
+    private void ApplyLocalPort()
+    {
+        var box = this.FindControl<TextBox>("txtLocalPort");
+        if (box == null) return;
+        if (!int.TryParse(box.Text?.Trim(), out var port) || port < 1 || port > 65535)
+        {
+            SetStatus(L["st.localPortInvalid"]);
+            box.Text = _server.Port.ToString();
+            return;
+        }
+        if (port == _server.Port) { SetStatus(L.Format("st.alreadyListening", port)); return; }
+
+        try
+        {
+            _discovery?.Stop();
+            _server.TransferProgress -= OnServerTransferProgress;
+            _server.Stop();
+            _server.Start(port);
+            _server.TransferProgress += OnServerTransferProgress;
+            this.FindControl<TextBlock>("txtMyIp")!.Text = $"{_server.LocalIp}:{_server.Port}";
+
+            _discovery = new PeerDiscovery(_server.LocalIp, _server.Port);
+            _discovery.PeersChanged += UpdatePeersCombo;
+            _discovery.Start();
+
+            SetStatus(L.Format("st.serverRestarted", $"{_server.LocalIp}:{_server.Port}"));
+            SaveSettings(
+                this.FindControl<TextBox>("txtRemoteIp")?.Text?.Trim() ?? "",
+                this.FindControl<TextBox>("txtRemotePort")?.Text?.Trim() ?? "8742");
+        }
+        catch (Exception ex)
+        {
+            SetStatus(L.Format("st.portChangeFailed", ex.Message));
+        }
+    }
     private void UpdatePeersCombo()
     {
         Dispatcher.UIThread.Post(() =>
@@ -1142,7 +1385,7 @@ public partial class MainWindow : Window
         }
 
         // Convertir a FileEntry y enviar al remoto si hay cliente
-        if (_client == null) { SetStatus("Conecta al PC remoto antes de arrastrar archivos"); return; }
+        if (_client == null) { SetStatus(L["st.connectBeforeDrag"]); return; }
         var entries = fileList
             .Select(f => f.TryGetLocalPath())
             .Where(p => p != null && System.IO.File.Exists(p))
@@ -1162,7 +1405,7 @@ public partial class MainWindow : Window
 
         if (selected.Count == 1 && selected[0].IsDirectory)
         {
-            SetStatus($"Carpeta: {selected[0].Name}  —  doble clic para entrar");
+            SetStatus(L.Format("st.folderDoubleClick", selected[0].Name));
             return;
         }
         var files = selected.Where(f => !f.IsDirectory).ToList();
@@ -1170,7 +1413,7 @@ public partial class MainWindow : Window
         var parts = new List<string>();
         if (files.Count > 0) parts.Add($"{files.Count} archivo{(files.Count > 1 ? "s" : "")} ({FileEntry.FormatSize(files.Sum(f => f.Size))})");
         if (dirs.Count > 0) parts.Add($"{dirs.Count} carpeta{(dirs.Count > 1 ? "s" : "")}");
-        SetStatus($"Seleccionado: {string.Join(", ", parts)}");
+        SetStatus(L.Format("st.selected", string.Join(", ", parts)));
     }
 
     private void UpdateLocalPath()
@@ -1244,7 +1487,7 @@ public partial class MainWindow : Window
 
     private async void LocalCtx_Send(object? sender, RoutedEventArgs e)
     {
-        if (_client == null) { SetStatus("Conecta primero al otro PC"); return; }
+        if (_client == null) { SetStatus(L["st.connectFirst"]); return; }
         var items = GetSelectedItems("localList");
         if (items.Count == 0) return;
         await TransferAsync(items, isUpload: true);
@@ -1258,20 +1501,20 @@ public partial class MainWindow : Window
 
         if (!SafeFileOps.TryValidateMutationPath(item.FullPath, out var sourcePath, out var reason))
         {
-            SetStatus($"Bloqueado: {reason}");
+            SetStatus(L.Format("st.blocked", reason));
             SafeFileOps.Audit("rename", item.FullPath, "blocked", reason);
             return;
         }
 
-        var dlg = new InputDialog("Renombrar", "Nuevo nombre:", item.Name);
+        var dlg = new InputDialog(L["dlg.rename.title"], L["dlg.rename.prompt"], item.Name);
         _ = dlg.ShowDialog(this);
         var newName = await dlg.GetResultAsync();
         if (string.IsNullOrWhiteSpace(newName) || newName == item.Name) return;
-        if (newName.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0) { SetStatus("Nombre inválido"); return; }
+        if (newName.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0) { SetStatus(L["st.invalidName"]); return; }
 
         if (SafeFileOps.IsOnCooldown($"local-rename:{sourcePath}", 2))
         {
-            SetStatus("Cooldown activo (2s)");
+            SetStatus(L["st.cooldown"]);
             SafeFileOps.Audit("rename", sourcePath, "blocked", "cooldown");
             return;
         }
@@ -1282,7 +1525,7 @@ public partial class MainWindow : Window
             var destPath = Path.Combine(dir, newName);
             if (!SafeFileOps.TryValidateMutationPath(destPath, out _, out var destReason, requireExists: false))
             {
-                SetStatus($"Destino bloqueado: {destReason}");
+                SetStatus(L.Format("st.destBlocked", destReason));
                 SafeFileOps.Audit("rename", sourcePath, "blocked", $"dest:{destReason}");
                 return;
             }
@@ -1296,7 +1539,7 @@ public partial class MainWindow : Window
         catch (Exception ex)
         {
             SafeFileOps.Audit("rename", sourcePath, "error", ex.Message);
-            SetStatus($"Error al renombrar: {ex.Message}");
+            SetStatus(L.Format("st.renameError", ex.Message));
         }
     }
 
@@ -1330,12 +1573,12 @@ public partial class MainWindow : Window
 
         if (SafeFileOps.IsHighRiskDelete(allowed.Select(x => x.path).ToList()))
         {
-            var confirmDlg = new InputDialog("Confirmación dura", $"Operación de riesgo. Escribe {SafeFileOps.HardConfirmToken} para continuar:", "");
+            var confirmDlg = new InputDialog(L["dlg.hard.title"], L.Format("dlg.hard.prompt", SafeFileOps.HardConfirmToken), "");
             _ = confirmDlg.ShowDialog(this);
             var token = await confirmDlg.GetResultAsync();
             if (!string.Equals(token, SafeFileOps.HardConfirmToken, StringComparison.Ordinal))
             {
-                SetStatus("Borrado cancelado por confirmación dura");
+                SetStatus(L["st.deleteCancelled"]);
                 return;
             }
         }
@@ -1371,16 +1614,16 @@ public partial class MainWindow : Window
 
         await RefreshLocalAsync();
         await ShowInfoDialog("Resumen borrado local", $"OK:{ok}  Bloq:{blocked.Count + cooldown}  Err:{err}" + Environment.NewLine + Environment.NewLine + string.Join(Environment.NewLine, lines));
-        SetStatus($"Borrado local: OK={ok}, Bloq={blocked.Count + cooldown}, Err={err}");
+        SetStatus(L.Format("st.deleteLocalResult", ok, blocked.Count + cooldown, err));
     }
 
     private async void LocalCtx_Verify(object? sender, RoutedEventArgs e)
     {
-        if (_client == null) { SetStatus("Conecta primero al otro PC"); return; }
+        if (_client == null) { SetStatus(L["st.connectFirst"]); return; }
         var items = GetSelectedItems("localList").Where(x => !x.IsDirectory).ToList();
         if (items.Count == 0) return;
 
-        SetStatus("Verificando…");
+        SetStatus(L["st.verifying"]);
         var results = new System.Collections.Concurrent.ConcurrentBag<string>();
         var ct = CancellationToken.None;
         var toleranceTicks = TimeSpan.FromSeconds(2).Ticks;
@@ -1469,7 +1712,7 @@ public partial class MainWindow : Window
         var text = string.Join(Environment.NewLine, items.Select(x => x.FullPath));
         var clipboard = TopLevel.GetTopLevel(this)?.Clipboard;
         if (clipboard != null) await clipboard.SetTextAsync(text);
-        SetStatus("Ruta(s) copiada(s)");
+        SetStatus(L["st.pathsCopied"]);
     }
 
     // ══ Context menus — Remote ════════════════════════════════════════════════════
@@ -1489,7 +1732,7 @@ public partial class MainWindow : Window
 
     private async void RemoteCtx_Receive(object? sender, RoutedEventArgs e)
     {
-        if (_client == null) { SetStatus("Conecta primero al otro PC"); return; }
+        if (_client == null) { SetStatus(L["st.connectFirst"]); return; }
         var items = GetSelectedItems("remoteList");
         if (items.Count == 0) return;
         await TransferAsync(items, isUpload: false);
@@ -1497,16 +1740,16 @@ public partial class MainWindow : Window
 
     private async void RemoteCtx_Rename(object? sender, RoutedEventArgs e)
     {
-        if (_client == null) { SetStatus("Conecta primero al otro PC"); return; }
+        if (_client == null) { SetStatus(L["st.connectFirst"]); return; }
         var items = GetSelectedItems("remoteList");
         if (items.Count != 1) return;
         var item = items[0];
 
-        var dlg = new InputDialog("Renombrar (remoto)", "Nuevo nombre:", item.Name);
+        var dlg = new InputDialog(L["dlg.rename.titleRemote"], L["dlg.rename.prompt"], item.Name);
         _ = dlg.ShowDialog(this);
         var newName = await dlg.GetResultAsync();
         if (string.IsNullOrWhiteSpace(newName) || newName == item.Name) return;
-        if (newName.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0) { SetStatus("Nombre inválido"); return; }
+        if (newName.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0) { SetStatus(L["st.invalidName"]); return; }
 
         try
         {
@@ -1520,13 +1763,13 @@ public partial class MainWindow : Window
         catch (Exception ex)
         {
             SafeFileOps.Audit("remote-rename", item.FullPath, "error", ex.Message);
-            SetStatus($"Error al renombrar: {ex.Message}");
+            SetStatus(L.Format("st.renameError", ex.Message));
         }
     }
 
     private async void RemoteCtx_Delete(object? sender, RoutedEventArgs e)
     {
-        if (_client == null) { SetStatus("Conecta primero al otro PC"); return; }
+        if (_client == null) { SetStatus(L["st.connectFirst"]); return; }
         var items = GetSelectedItems("remoteList");
         if (items.Count == 0) return;
 
@@ -1534,12 +1777,12 @@ public partial class MainWindow : Window
 
         if (items.Count >= 20 || items.Any(x => x.IsDirectory))
         {
-            var confirmDlg = new InputDialog("Confirmación dura", $"Operación de riesgo. Escribe {SafeFileOps.HardConfirmToken} para continuar:", "");
+            var confirmDlg = new InputDialog(L["dlg.hard.title"], L.Format("dlg.hard.prompt", SafeFileOps.HardConfirmToken), "");
             _ = confirmDlg.ShowDialog(this);
             var token = await confirmDlg.GetResultAsync();
             if (!string.Equals(token, SafeFileOps.HardConfirmToken, StringComparison.Ordinal))
             {
-                SetStatus("Borrado remoto cancelado por confirmación dura");
+                SetStatus(L["st.deleteCancelledRemote"]);
                 return;
             }
         }
@@ -1569,16 +1812,16 @@ public partial class MainWindow : Window
 
         await RefreshRemoteAsync();
         await ShowInfoDialog("Resumen borrado remoto", $"OK:{ok}  Err:{err}" + Environment.NewLine + Environment.NewLine + string.Join(Environment.NewLine, lines));
-        SetStatus($"Borrado remoto: OK={ok}, Err={err}");
+        SetStatus(L.Format("st.deleteRemoteResult", ok, err));
     }
 
     private async void RemoteCtx_Verify(object? sender, RoutedEventArgs e)
     {
-        if (_client == null) { SetStatus("Conecta primero al otro PC"); return; }
+        if (_client == null) { SetStatus(L["st.connectFirst"]); return; }
         var items = GetSelectedItems("remoteList").Where(x => !x.IsDirectory).ToList();
         if (items.Count == 0) return;
 
-        SetStatus("Verificando…");
+        SetStatus(L["st.verifying"]);
         var results = new System.Collections.Concurrent.ConcurrentBag<string>();
         var ct = CancellationToken.None;
         var toleranceTicks = TimeSpan.FromSeconds(2).Ticks;
@@ -1657,7 +1900,7 @@ public partial class MainWindow : Window
         var text = string.Join(Environment.NewLine, items.Select(x => x.FullPath));
         var clipboard = TopLevel.GetTopLevel(this)?.Clipboard;
         if (clipboard != null) await clipboard.SetTextAsync(text);
-        SetStatus("Ruta(s) copiada(s)");
+        SetStatus(L["st.pathsCopied"]);
     }
 
     // ══ Helpers UI ════════════════════════════════════════════════════════════════
@@ -1747,8 +1990,8 @@ public partial class MainWindow : Window
     {
         var ip = this.FindControl<TextBox>("txtRemoteIp")?.Text?.Trim() ?? "";
         var port = this.FindControl<TextBox>("txtRemotePort")?.Text?.Trim() ?? "8742";
-        if (string.IsNullOrEmpty(ip)) { SetStatus("Escribe IP primero"); return; }
-        var dlg = new InputDialog("Guardar perfil", "Nombre del perfil:", ip);
+        if (string.IsNullOrEmpty(ip)) { SetStatus(L["st.enterIpFirst"]); return; }
+        var dlg = new InputDialog(L["dlg.profile.title"], L["dlg.profile.prompt"], ip);
         _ = dlg.ShowDialog(this);
         var name = await dlg.GetResultAsync();
         if (string.IsNullOrWhiteSpace(name)) return;
@@ -1756,7 +1999,7 @@ public partial class MainWindow : Window
         _profiles.Add(new ConnectionProfile(name, ip, port));
         SaveSettings(ip, port);
         RefreshProfilesCombo();
-        SetStatus($"Perfil guardado: {name}");
+        SetStatus(L.Format("st.profileSaved", name));
     }
 
     private void DeleteProfile_Click(object? sender, RoutedEventArgs e)
@@ -1768,7 +2011,7 @@ public partial class MainWindow : Window
             this.FindControl<TextBox>("txtRemoteIp")?.Text?.Trim() ?? "",
             this.FindControl<TextBox>("txtRemotePort")?.Text?.Trim() ?? "8742");
         RefreshProfilesCombo();
-        SetStatus($"Perfil eliminado: {name}");
+        SetStatus(L.Format("st.profileDeleted", name));
     }
 
     private void RefreshProfilesCombo()
@@ -1849,8 +2092,8 @@ public partial class MainWindow : Window
 
     private void StartWatch()
     {
-        if (_client == null) { SetStatus("Conecta primero al remoto"); return; }
-        if (string.IsNullOrEmpty(_localPath)) { SetStatus("Navega a una carpeta local primero"); return; }
+        if (_client == null) { SetStatus(L["st.connectFirstRemote"]); return; }
+        if (string.IsNullOrEmpty(_localPath)) { SetStatus(L["st.navLocalFirst"]); return; }
 
         try
         {
@@ -1865,14 +2108,14 @@ public partial class MainWindow : Window
             _watcherActive = true;
 
             var btn = this.FindControl<Button>("btnWatch");
-            if (btn != null) { btn.Content = "⏹ Parar"; btn.Background = SolidColorBrush.Parse("#C0392B"); }
+            if (btn != null) { btn.Content = L["btn.watchStop"]; btn.Background = SolidColorBrush.Parse("#C0392B"); }
             var tb = this.FindControl<TextBlock>("txtWatchStatus");
-            if (tb != null) tb.Text = "👁 Vigilando";
-            SetStatus($"Vigilando: {_localPath}");
+            if (tb != null) tb.Text = L["label.watching"];
+            SetStatus(L.Format("st.watching", _localPath));
         }
         catch (Exception ex)
         {
-            SetStatus($"Error al iniciar vigilador: {ex.Message}");
+            SetStatus(L.Format("st.watchError", ex.Message));
         }
     }
 
@@ -1885,10 +2128,10 @@ public partial class MainWindow : Window
         _watcherActive = false;
 
         var btn = this.FindControl<Button>("btnWatch");
-        if (btn != null) { btn.Content = "👁 Vigilar"; btn.Background = SolidColorBrush.Parse("#795548"); }
+        if (btn != null) { btn.Content = L["btn.watch"]; btn.Background = SolidColorBrush.Parse("#795548"); }
         var tb = this.FindControl<TextBlock>("txtWatchStatus");
         if (tb != null) tb.Text = "";
-        SetStatus("Vigilador detenido");
+        SetStatus(L["st.watchStopped"]);
     }
 
     private void OnWatcherEvent(object sender, FileSystemEventArgs e)
@@ -1905,7 +2148,7 @@ public partial class MainWindow : Window
                 var entry = new FileEntry { Name = fi.Name, FullPath = fi.FullName, Size = fi.Length };
                 await Dispatcher.UIThread.InvokeAsync(() =>
                 {
-                    SetStatus($"👁 Cambio detectado: {fi.Name}");
+                    SetStatus(L.Format("st.changeDetected", fi.Name));
                     _ = TransferAsync(new List<FileEntry> { entry }, isUpload: true);
                 });
             }
@@ -1921,11 +2164,11 @@ public partial class MainWindow : Window
 
     private async Task SyncAsync(bool toRemote)
     {
-        if (_client == null) { SetStatus("Conecta primero al remoto"); return; }
-        if (string.IsNullOrEmpty(_localPath)) { SetStatus("Navega a carpeta local primero"); return; }
-        if (string.IsNullOrEmpty(_remotePath)) { SetStatus("Navega a carpeta remota primero"); return; }
+        if (_client == null) { SetStatus(L["st.connectFirstRemote"]); return; }
+        if (string.IsNullOrEmpty(_localPath)) { SetStatus(L["st.navLocalFirst"]); return; }
+        if (string.IsNullOrEmpty(_remotePath)) { SetStatus(L["st.navRemoteFirst"]); return; }
 
-        SetStatus("Sync: obteniendo listas...");
+        SetStatus(L["st.syncFetching"]);
         try
         {
             // Lista remota (soporta recursivo con LastWriteUtcTicks)
@@ -1979,12 +2222,12 @@ public partial class MainWindow : Window
                     }).ToList();
             }
 
-            if (toTransfer.Count == 0) { SetStatus("Sync: carpetas ya sincronizadas ✓"); return; }
+            if (toTransfer.Count == 0) { SetStatus(L["st.syncDone"]); return; }
 
-            SetStatus($"Sync: {toTransfer.Count} archivo(s) distintos a transferir...");
+            SetStatus(L.Format("st.syncToTransfer", toTransfer.Count));
             await TransferAsync(toTransfer, isUpload: toRemote);
         }
-        catch (Exception ex) { SetStatus($"Sync error: {ex.Message}"); }
+        catch (Exception ex) { SetStatus(L.Format("st.syncError", ex.Message)); }
     }
 
     // ── Feature 9+2: TLS + compresión ────────────────────────────────────────
@@ -1996,7 +2239,56 @@ public partial class MainWindow : Window
         SaveSettings(
             this.FindControl<TextBox>("txtRemoteIp")?.Text?.Trim() ?? "",
             this.FindControl<TextBox>("txtRemotePort")?.Text?.Trim() ?? "8742");
-        SetStatus(_tlsEnabled ? "TLS activado" : "TLS desactivado");
+        SetStatus(_tlsEnabled ? L["st.tlsOn"] : L["st.tlsOff"]);
+    }
+
+    private void ChkShareRoot_Changed(object? sender, RoutedEventArgs e)
+    {
+        _restrictShareRoot = (sender as CheckBox)?.IsChecked == true;
+        _server.RestrictToShareRoot = _restrictShareRoot;
+        SaveSettings(
+            this.FindControl<TextBox>("txtRemoteIp")?.Text?.Trim() ?? "",
+            this.FindControl<TextBox>("txtRemotePort")?.Text?.Trim() ?? "8742");
+        SetStatus(_restrictShareRoot ? L["st.shareRootOn"] : L["st.shareRootOff"]);
+    }
+
+    private void ChkReadOnly_Changed(object? sender, RoutedEventArgs e)
+    {
+        _readOnly = (sender as CheckBox)?.IsChecked == true;
+        _server.ReadOnly = _readOnly;
+        SaveSettings(
+            this.FindControl<TextBox>("txtRemoteIp")?.Text?.Trim() ?? "",
+            this.FindControl<TextBox>("txtRemotePort")?.Text?.Trim() ?? "8742");
+        SetStatus(_readOnly ? L["st.readOnlyOn"] : L["st.readOnlyOff"]);
+    }
+
+    private void ChkRequireApproval_Changed(object? sender, RoutedEventArgs e)
+    {
+        _requireApproval = (sender as CheckBox)?.IsChecked == true;
+        _server.ApproveIncoming = _requireApproval ? OnApproveIncomingAsync : null;
+        SaveSettings(
+            this.FindControl<TextBox>("txtRemoteIp")?.Text?.Trim() ?? "",
+            this.FindControl<TextBox>("txtRemotePort")?.Text?.Trim() ?? "8742");
+        SetStatus(_requireApproval ? L["st.approvalOn"] : L["st.approvalOff"]);
+    }
+
+    // Llamado por el servidor (hilo de red) antes de aceptar un fichero. Marshala a la UI,
+    // muestra el dialogo y aplica un timeout de 60s que rechaza por seguridad si nadie responde.
+    private async Task<bool> OnApproveIncomingAsync(FileServer.IncomingTransfer info, CancellationToken ct)
+    {
+        try
+        {
+            return await Dispatcher.UIThread.InvokeAsync(async () =>
+            {
+                var dlg = new ConsentDialog(info.Ip, info.FileName, info.Size);
+                _ = dlg.ShowDialog(this);
+                var result = dlg.GetResultAsync();
+                var winner = await Task.WhenAny(result, Task.Delay(TimeSpan.FromSeconds(60), ct));
+                if (winner != result) { try { dlg.Close(); } catch { } return false; }
+                return await result;
+            });
+        }
+        catch { return false; }
     }
 
     private void ChkCompress_Changed(object? sender, RoutedEventArgs e)
@@ -2005,7 +2297,7 @@ public partial class MainWindow : Window
         SaveSettings(
             this.FindControl<TextBox>("txtRemoteIp")?.Text?.Trim() ?? "",
             this.FindControl<TextBox>("txtRemotePort")?.Text?.Trim() ?? "8742");
-        SetStatus(_compressEnabled ? "Compresión activada" : "Compresión desactivada");
+        SetStatus(_compressEnabled ? L["st.compressOn"] : L["st.compressOff"]);
     }
 }
 

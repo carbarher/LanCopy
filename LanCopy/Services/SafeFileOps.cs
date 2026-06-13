@@ -15,6 +15,7 @@ internal static class SafeFileOps
     private static readonly ConcurrentDictionary<string, (DateTime Ts, long Size, long LastWriteUtcTicks, bool Exists, bool IsDir)> _statCache
         = new(StringComparer.OrdinalIgnoreCase);
     private const int StatCacheTtlSeconds = 5;
+    private const int StatCacheMax = 4096; // tope anti-crecimiento ilimitado
 
     public const string HardConfirmToken = "BORRAR";
 
@@ -253,7 +254,19 @@ internal static class SafeFileOps
         }
 
         _statCache[normalizedPath] = (now, size, lastWriteTicks, exists, isDir);
+        if (_statCache.Count > StatCacheMax) PruneStatCache(now);
         return (exists, isDir, size, lastWriteTicks);
+    }
+
+    // Poda del cache: primero entradas expiradas; si sigue lleno, las mas antiguas.
+    private static void PruneStatCache(DateTime now)
+    {
+        foreach (var kv in _statCache)
+            if ((now - kv.Value.Ts).TotalSeconds >= StatCacheTtlSeconds)
+                _statCache.TryRemove(kv.Key, out _);
+        if (_statCache.Count <= StatCacheMax) return;
+        foreach (var kv in _statCache.OrderBy(x => x.Value.Ts).Take(_statCache.Count - StatCacheMax / 2))
+            _statCache.TryRemove(kv.Key, out _);
     }
 
     // Invalidar caché para archivo (al borrar/renombrar)

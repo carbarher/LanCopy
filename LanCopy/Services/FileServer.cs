@@ -7,6 +7,7 @@ using System.Net.Sockets;
 using System.Security.Authentication;
 using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
+using System.Text;
 using System.Text.Json;
 using LanCopy.Models;
 
@@ -23,6 +24,100 @@ public sealed class FileServer
     public string? RequiredPin { get; set; } // Feature 10: si no-null, clientes deben autenticar
     public bool TlsEnabled { get; set; }     // Feature 9: TLS toggle
 
+    // SEGURIDAD: por defecto confina TODAS las operaciones a la carpeta compartida (ShareRoot).
+    // Sin esto, un peer puede leer/escribir cualquier ruta del disco (path traversal).
+    // El "modo navegador remoto" (acceso a todo el disco) requiere poner esto en false
+    // conscientemente; entonces la proteccion recae en PIN + TLS.
+    public bool RestrictToShareRoot { get; set; } = true;
+
+    // Modo solo lectura: rechaza put/delete/rename. Util para compartir sin riesgo de escritura.
+    public bool ReadOnly { get; set; }
+
+    // Si true, escucha solo en la IP LAN detectada en vez de IPAddress.Any (reduce exposicion).
+    public bool BindLanOnly { get; set; }
+
+    // Consentimiento del receptor: si se asigna, se invoca antes de aceptar cada fichero entrante.
+    // Devolver false rechaza la transferencia. Si es null, se aceptan automaticamente (compatibilidad).
+    public readonly record struct IncomingTransfer(string Ip, string FileName, long Size);
+    public Func<IncomingTransfer, CancellationToken, Task<bool>>? ApproveIncoming { get; set; }
+
+    private readonly SemaphoreSlim _connLimit = new(64, 64);
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<string, int> _perIp = new();
+    private const int MaxPerIp = 8;
+
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<string, (int fails, long untilTick)> _pinFails = new();
+    private const int PinMaxFails = 5;
+    private const long PinBackoffMs = 30_000;
+
+    private bool TryGuardRead(string? path, out string full, out string reason)
+    {
+        full = ""; reason = "";
+        if (RestrictToShareRoot)
+            return ShareRoot.TryResolve(path, out full, out reason);
+        full = string.IsNullOrEmpty(path) ? "" : System.IO.Path.GetFullPath(path);
+        return true;
+    }
+
+    private bool TryGuardWrite(string? path, out string full, out string reason)
+    {
+        full = ""; reason = "";
+        if (RestrictToShareRoot)
+        {
+            // En modo confinado, la raiz elegida por el usuario ya garantiza la contencion.
+            // No aplicamos SystemProtection (la raiz podria estar legitimamente bajo ProgramData,
+            // etc.), pero SI bloqueamos enlaces/reparse points que escapen de la raiz.
+            if (!ShareRoot.TryResolve(path, out full, out reason)) return false;
+            if (SafeFileOps.ContainsReparsePoint(full)) { reason = "La ruta contiene un enlace/reparse point"; return false; }
+            return true;
+        }
+
+        // Modo disco completo: la unica barrera es SystemProtection + reparse.
+        if (string.IsNullOrEmpty(path)) { reason = "Ruta vacia"; return false; }
+        full = System.IO.Path.GetFullPath(path);
+        // El fichero destino de un put aun no existe; comprobamos la proteccion sobre el
+        // ancestro existente mas cercano (evita falsos positivos por File.GetAttributes).
+        var checkPath = full;
+        while (!File.Exists(checkPath) && !Directory.Exists(checkPath))
+        {
+            var parent = System.IO.Path.GetDirectoryName(checkPath);
+            if (string.IsNullOrEmpty(parent) || parent == checkPath) break;
+            checkPath = parent;
+        }
+        if (SystemProtection.IsProtected(checkPath)) { reason = "Ruta protegida del sistema"; return false; }
+        if (SafeFileOps.ContainsReparsePoint(full)) { reason = "La ruta contiene un enlace/reparse point"; return false; }
+        return true;
+    }
+
+    private static bool FixedTimeEquals(string? a, string? b)
+    {
+        if (a is null || b is null) return false;
+        var ba = Encoding.UTF8.GetBytes(a);
+        var bb = Encoding.UTF8.GetBytes(b);
+        return CryptographicOperations.FixedTimeEquals(ba, bb);
+    }
+
+    // Progreso de transferencias del lado servidor: recepcion ('put') y envio ('get').
+    // Receiving=true cuando este equipo recibe; false cuando envia.
+    public readonly record struct TransferProgressInfo(bool Receiving, string FileName, long Done, long Total);
+    public event Action<TransferProgressInfo>? TransferProgress;
+
+    private IProgress<(long done, long total)> MakeProgress(bool receiving, string fileName) =>
+        new ProgressThrottle(v => TransferProgress?.Invoke(
+            new TransferProgressInfo(receiving, fileName, v.done, v.total)), intervalMs: 150);
+
+    private sealed class ProgressThrottle(Action<(long done, long total)> sink, long intervalMs)
+        : IProgress<(long done, long total)>
+    {
+        private long _lastMs;
+        public void Report((long done, long total) v)
+        {
+            var now = Environment.TickCount64;
+            if (v.done < v.total && now - Interlocked.Read(ref _lastMs) < intervalMs) return;
+            Interlocked.Exchange(ref _lastMs, now);
+            sink(v);
+        }
+    }
+
     private static readonly string CertPath = System.IO.Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
         "LanCopy", "server.pfx");
@@ -33,7 +128,7 @@ public sealed class FileServer
         Directory.CreateDirectory(System.IO.Path.GetDirectoryName(CertPath)!);
         if (File.Exists(CertPath))
         {
-            _serverCert = new X509Certificate2(CertPath, "lancopy",
+            _serverCert = X509CertificateLoader.LoadPkcs12FromFile(CertPath, "lancopy",
                 X509KeyStorageFlags.Exportable | X509KeyStorageFlags.PersistKeySet);
             return;
         }
@@ -42,7 +137,7 @@ public sealed class FileServer
         var cert = req.CreateSelfSigned(DateTimeOffset.UtcNow.AddDays(-1), DateTimeOffset.UtcNow.AddYears(10));
         var pfxBytes = cert.Export(X509ContentType.Pfx, "lancopy");
         File.WriteAllBytes(CertPath, pfxBytes);
-        _serverCert = new X509Certificate2(pfxBytes, "lancopy",
+        _serverCert = X509CertificateLoader.LoadPkcs12(pfxBytes, "lancopy",
             X509KeyStorageFlags.Exportable | X509KeyStorageFlags.PersistKeySet);
     }
 
@@ -50,10 +145,15 @@ public sealed class FileServer
     {
         Port = port;
         LocalIp = ResolveLocalIp();
+        if (RestrictToShareRoot) ShareRoot.EnsureRootExists();
         if (TlsEnabled) EnsureCert();
         _cts = new CancellationTokenSource();
-        _listener = new TcpListener(IPAddress.Any, port);
+        var bindAddr = IPAddress.Any;
+        if (BindLanOnly && IPAddress.TryParse(LocalIp, out var lan) && lan.AddressFamily == AddressFamily.InterNetwork)
+            bindAddr = lan;
+        _listener = new TcpListener(bindAddr, port);
         _listener.Start();
+        Log.Info("server", "started", new { port, ip = LocalIp, tls = TlsEnabled, restrictShareRoot = RestrictToShareRoot, readOnly = ReadOnly, bindLanOnly = BindLanOnly });
         _ = AcceptLoopAsync(_cts.Token);
     }
 
@@ -61,6 +161,7 @@ public sealed class FileServer
     {
         _cts?.Cancel();
         _listener?.Stop();
+        Log.Info("server", "stopped");
     }
 
     private async Task AcceptLoopAsync(CancellationToken ct)
@@ -79,13 +180,34 @@ public sealed class FileServer
 
     private async Task HandleWithTimeoutAsync(TcpClient tcp, CancellationToken serverCt)
     {
+        var ip = (tcp.Client.RemoteEndPoint as IPEndPoint)?.Address.ToString() ?? "?";
+
+        if (!await _connLimit.WaitAsync(0))
+        {
+            try { tcp.Dispose(); } catch { }
+            return;
+        }
+        var count = _perIp.AddOrUpdate(ip, 1, (_, v) => v + 1);
+        if (count > MaxPerIp)
+        {
+            _perIp.AddOrUpdate(ip, 0, (_, v) => Math.Max(0, v - 1));
+            _connLimit.Release();
+            try { tcp.Dispose(); } catch { }
+            return;
+        }
+
         using var connCts = CancellationTokenSource.CreateLinkedTokenSource(serverCt);
         connCts.CancelAfter(TimeSpan.FromSeconds(60));
-        try { await HandleAsync(tcp, connCts.Token); }
+        try { await HandleAsync(tcp, ip, connCts.Token); }
         catch { tcp.Dispose(); }
+        finally
+        {
+            _perIp.AddOrUpdate(ip, 0, (_, v) => Math.Max(0, v - 1));
+            _connLimit.Release();
+        }
     }
 
-    private async Task HandleAsync(TcpClient tcp, CancellationToken ct)
+    private async Task HandleAsync(TcpClient tcp, string ip, CancellationToken ct)
     {
         using (tcp)
         {
@@ -107,19 +229,38 @@ public sealed class FileServer
                     stream = ssl;
                 }
 
+                // Lectura de cabeceras con buffer (evita 1 syscall por byte) sin consumir el payload.
+                stream = new BufferedLineStream(stream);
+
                 // Feature 10: autenticación PIN si está configurado
                 if (!string.IsNullOrEmpty(RequiredPin))
                 {
+                    // Rate-limit por IP: tras varios fallos, rechazar durante un backoff.
+                    if (_pinFails.TryGetValue(ip, out var st) && st.fails >= PinMaxFails
+                        && Environment.TickCount64 < st.untilTick)
+                    {
+                        await Protocol.WriteLineAsync(stream,
+                            JsonSerializer.Serialize(new { status = "error", error = "Demasiados intentos. Espere." }), ct);
+                        return;
+                    }
+
                     var authLine = await Protocol.ReadLineAsync(stream, ct);
                     var authReq = JsonSerializer.Deserialize<JsonElement>(authLine);
                     var authCmd = authReq.TryGetProperty("cmd", out var cmdEl) ? cmdEl.GetString() : null;
                     var authPin = authReq.TryGetProperty("pin", out var pinEl) ? pinEl.GetString() : null;
-                    if (authCmd != "auth" || authPin != RequiredPin)
+
+                    // Comparacion en tiempo constante (evita timing attacks).
+                    var okPin = authCmd == "auth" && FixedTimeEquals(authPin, RequiredPin);
+                    if (!okPin)
                     {
+                        var nf = _pinFails.AddOrUpdate(ip, (1, Environment.TickCount64 + PinBackoffMs),
+                            (_, v) => (v.fails + 1, Environment.TickCount64 + PinBackoffMs));
+                        SafeFileOps.Audit("auth", ip, "blocked", $"pin-fail #{nf.fails}", "remote");
                         await Protocol.WriteLineAsync(stream,
                             JsonSerializer.Serialize(new { status = "error", error = "PIN inválido" }), ct);
                         return;
                     }
+                    _pinFails.TryRemove(ip, out _);
                     await Protocol.WriteLineAsync(stream, JsonSerializer.Serialize(new { status = "ok" }), ct);
                 }
 
@@ -135,9 +276,18 @@ public sealed class FileServer
                         else await HandleListAsync(req, stream, ct);
                         break;
                     case "get": await HandleGetAsync(req, stream, ct); break;
-                    case "put": await HandlePutAsync(req, stream, ct); break;
-                    case "delete": await HandleDeleteAsync(req, stream, ct); break;
-                    case "rename": await HandleRenameAsync(req, stream, ct); break;
+                    case "put":
+                    case "delete":
+                    case "rename":
+                        if (ReadOnly)
+                        {
+                            await Protocol.WriteLineAsync(stream, JsonSerializer.Serialize(new { status = "error", error = "Servidor en modo solo lectura" }), ct);
+                            break;
+                        }
+                        if (cmd == "put") await HandlePutAsync(req, stream, ip, ct);
+                        else if (cmd == "delete") await HandleDeleteAsync(req, stream, ct);
+                        else await HandleRenameAsync(req, stream, ct);
+                        break;
                     case "sha1": await HandleSha1Async(req, stream, ct); break;
                     case "sha256": await HandleSha256Async(req, stream, ct); break;
                     case "hash": await HandleHashAsync(req, stream, ct); break;
@@ -145,22 +295,34 @@ public sealed class FileServer
                     case "caps": await HandleCapsAsync(req, stream, ct); break;
                 }
             }
-            catch { }
+            catch (Exception ex) { Log.Warn("server", "handler-error", new { ip, error = ex.Message }); }
         }
     }
 
-    private static async Task HandleListAsync(JsonElement req, Stream stream, CancellationToken ct)
+    private async Task HandleListAsync(JsonElement req, Stream stream, CancellationToken ct)
     {
-        var path = req.GetProperty("path").GetString() ?? "";
+        var reqPath = req.GetProperty("path").GetString() ?? "";
+        if (!TryGuardRead(reqPath, out var path, out var gReason))
+        {
+            await Protocol.WriteLineAsync(stream, JsonSerializer.Serialize(new { status = "error", error = gReason }), ct);
+            return;
+        }
         var entries = BuildEntries(path);
+        if (RestrictToShareRoot)
+            entries.RemoveAll(e => !ShareRoot.TryResolve(e.FullPath, out _, out _));
         await Protocol.WriteLineAsync(stream, JsonSerializer.Serialize(new { status = "ok", entries }), ct);
     }
 
     private const int MaxListRecursiveFiles = 100_000;
 
-    private static async Task HandleListRecursiveAsync(JsonElement req, Stream stream, CancellationToken ct)
+    private async Task HandleListRecursiveAsync(JsonElement req, Stream stream, CancellationToken ct)
     {
-        var root = req.GetProperty("path").GetString() ?? "";
+        var reqRoot = req.GetProperty("path").GetString() ?? "";
+        if (!TryGuardRead(reqRoot, out var root, out var gReason))
+        {
+            await Protocol.WriteLineAsync(stream, JsonSerializer.Serialize(new { status = "error", error = gReason }), ct);
+            return;
+        }
         var entries = new List<FileEntry>();
         try
         {
@@ -185,15 +347,20 @@ public sealed class FileServer
     private async Task HandleCapsAsync(JsonElement req, Stream stream, CancellationToken ct)
     {
         await Protocol.WriteLineAsync(stream,
-            JsonSerializer.Serialize(new { status = "ok", compress = true, tls = TlsEnabled }), ct);
+            JsonSerializer.Serialize(new { status = "ok", compress = true, tls = TlsEnabled, version = Protocol.Version, minVersion = Protocol.MinSupportedVersion, readOnly = ReadOnly }), ct);
     }
 
     // Feature 2: límite de compresión en memoria (200 MB)
     private const long MaxCompressInMemory = 200L * 1024 * 1024;
 
-    private static async Task HandleGetAsync(JsonElement req, Stream stream, CancellationToken ct)
+    private async Task HandleGetAsync(JsonElement req, Stream stream, CancellationToken ct)
     {
-        var path = req.GetProperty("path").GetString()!;
+        var reqPath = req.GetProperty("path").GetString();
+        if (!TryGuardRead(reqPath, out var path, out var gReason))
+        {
+            await Protocol.WriteLineAsync(stream, JsonSerializer.Serialize(new { status = "error", error = gReason }), ct);
+            return;
+        }
         if (Directory.Exists(path))
         {
             await Protocol.WriteLineAsync(stream, JsonSerializer.Serialize(new { status = "error", error = "Es un directorio" }), ct);
@@ -202,10 +369,8 @@ public sealed class FileServer
         await using var fs = File.OpenRead(path);
         var size = fs.Length;
 
-        // Compat: exponer SHA-256 y SHA-1 para clientes nuevos y viejos.
+        // Integridad: SHA-256 (una sola lectura previa al envio).
         var sha256 = Convert.ToHexString(await SHA256.HashDataAsync(fs, ct)).ToLowerInvariant();
-        fs.Seek(0, SeekOrigin.Begin);
-        var sha1 = Convert.ToHexString(await SHA1.HashDataAsync(fs, ct)).ToLowerInvariant();
         fs.Seek(0, SeekOrigin.Begin);
 
         // Feature 2: compresión deflate opcional
@@ -219,19 +384,19 @@ public sealed class FileServer
             var compressedSize = ms.Length;
             ms.Seek(0, SeekOrigin.Begin);
             await Protocol.WriteLineAsync(stream, JsonSerializer.Serialize(new
-            { status = "ok", size, sha256, sha1, compress = true, compressed_size = compressedSize }), ct);
-            await Protocol.CopyExactAsync(ms, stream, compressedSize, null, ct);
+            { status = "ok", size, sha256, compress = true, compressed_size = compressedSize }), ct);
+            await Protocol.CopyExactAsync(ms, stream, compressedSize, MakeProgress(false, Path.GetFileName(path)), ct);
         }
         else
         {
-            await Protocol.WriteLineAsync(stream, JsonSerializer.Serialize(new { status = "ok", size, sha256, sha1 }), ct);
-            await Protocol.CopyExactAsync(fs, stream, size, null, ct);
+            await Protocol.WriteLineAsync(stream, JsonSerializer.Serialize(new { status = "ok", size, sha256 }), ct);
+            await Protocol.CopyExactAsync(fs, stream, size, MakeProgress(false, Path.GetFileName(path)), ct);
         }
     }
 
     private const long MaxPutBytes = 100L * 1024 * 1024 * 1024; // 100 GB
 
-    private static async Task HandlePutAsync(JsonElement req, Stream stream, CancellationToken ct)
+    private async Task HandlePutAsync(JsonElement req, Stream stream, string ip, CancellationToken ct)
     {
         var size = req.GetProperty("size").GetInt64();
         if (size < 0 || size > MaxPutBytes)
@@ -239,7 +404,31 @@ public sealed class FileServer
             await Protocol.WriteLineAsync(stream, JsonSerializer.Serialize(new { status = "error", error = "Tamaño inválido" }), ct);
             return;
         }
-        var path = req.GetProperty("path").GetString()!;
+        var reqPath = req.GetProperty("path").GetString();
+        if (!TryGuardWrite(reqPath, out var path, out var gReason))
+        {
+            await Protocol.WriteLineAsync(stream, JsonSerializer.Serialize(new { status = "error", error = gReason }), ct);
+            return;
+        }
+        // Numero de bytes que el cliente va a enviar por el cable (cuerpo).
+        long wireBytes = req.TryGetProperty("compress", out var ceGate) && ceGate.GetBoolean()
+            && req.TryGetProperty("compressed_size", out var csGate) ? csGate.GetInt64() : size;
+        // Consentimiento del receptor antes de tocar el disco.
+        if (ApproveIncoming is { } approve)
+        {
+            bool ok;
+            try { ok = await approve(new IncomingTransfer(ip, Path.GetFileName(path), size), ct); }
+            catch { ok = false; }
+            if (!ok)
+            {
+                Log.Info("server", "put-rejected", new { ip, file = Path.GetFileName(path) });
+                // Drenar el cuerpo para que el cliente termine de escribir y reciba el ack limpio
+                // (sin esto, el cierre con bytes sin leer provoca un RST que pierde el error).
+                await Protocol.DrainAsync(stream, wireBytes, ct);
+                await Protocol.WriteLineAsync(stream, JsonSerializer.Serialize(new { status = "error", error = "Transferencia rechazada por el receptor" }), ct);
+                return;
+            }
+        }
         var dir = Path.GetDirectoryName(path);
         if (!string.IsNullOrEmpty(dir)) Directory.CreateDirectory(dir);
 
@@ -247,26 +436,35 @@ public sealed class FileServer
         bool isCompressed = req.TryGetProperty("compress", out var ce) && ce.GetBoolean()
                             && req.TryGetProperty("compressed_size", out _);
         await using var fs = File.Create(path);
+        string sha256;
         if (isCompressed)
         {
             var compressedSize = req.GetProperty("compressed_size").GetInt64();
             using var compBuf = new MemoryStream();
-            await Protocol.CopyExactAsync(stream, compBuf, compressedSize, null, ct);
+            await Protocol.CopyExactAsync(stream, compBuf, compressedSize, MakeProgress(true, Path.GetFileName(path)), ct);
             compBuf.Seek(0, SeekOrigin.Begin);
             await using var ds = new DeflateStream(compBuf, CompressionMode.Decompress);
-            await ds.CopyToAsync(fs, ct);
+            // Anti zip-bomb + hash en una sola pasada mientras se escribe.
+            using var hasher = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
+            var zbuf = new byte[Protocol.BufferSize];
+            long written = 0;
+            int zr;
+            while ((zr = await ds.ReadAsync(zbuf, ct)) > 0)
+            {
+                written += zr;
+                if (written > size) throw new InvalidDataException("Descompresion excede el tamano declarado (posible zip-bomb)");
+                await fs.WriteAsync(zbuf.AsMemory(0, zr), ct);
+                hasher.AppendData(zbuf, 0, zr);
+            }
+            sha256 = Convert.ToHexString(hasher.GetHashAndReset()).ToLowerInvariant();
         }
         else
         {
-            await Protocol.CopyExactAsync(stream, fs, size, null, ct);
+            // Hash en streaming durante la recepcion: evita re-leer el fichero del disco.
+            sha256 = await Protocol.CopyExactToHashAsync(stream, fs, size, MakeProgress(true, Path.GetFileName(path)), ct);
         }
 
-        fs.Seek(0, SeekOrigin.Begin);
-        var sha256 = Convert.ToHexString(await SHA256.HashDataAsync(fs, ct)).ToLowerInvariant();
-        fs.Seek(0, SeekOrigin.Begin);
-        var sha1 = Convert.ToHexString(await SHA1.HashDataAsync(fs, ct)).ToLowerInvariant();
-
-        await Protocol.WriteLineAsync(stream, JsonSerializer.Serialize(new { status = "ok", sha256, sha1 }), ct);
+        await Protocol.WriteLineAsync(stream, JsonSerializer.Serialize(new { status = "ok", sha256 }), ct);
     }
 
     private static async Task HandleDeleteAsync(JsonElement req, Stream stream, CancellationToken ct)
@@ -367,9 +565,14 @@ public sealed class FileServer
         }
     }
 
-    private static async Task HandleSha1Async(JsonElement req, Stream stream, CancellationToken ct)
+    private async Task HandleSha1Async(JsonElement req, Stream stream, CancellationToken ct)
     {
-        var path = req.GetProperty("path").GetString()!;
+        var reqPath = req.GetProperty("path").GetString();
+        if (!TryGuardRead(reqPath, out var path, out var gReason))
+        {
+            await Protocol.WriteLineAsync(stream, JsonSerializer.Serialize(new { status = "error", error = gReason }), ct);
+            return;
+        }
         try
         {
             await using var fs = File.OpenRead(path);
@@ -383,9 +586,14 @@ public sealed class FileServer
         }
     }
 
-    private static async Task HandleSha256Async(JsonElement req, Stream stream, CancellationToken ct)
+    private async Task HandleSha256Async(JsonElement req, Stream stream, CancellationToken ct)
     {
-        var path = req.GetProperty("path").GetString()!;
+        var reqPath = req.GetProperty("path").GetString();
+        if (!TryGuardRead(reqPath, out var path, out var gReason))
+        {
+            await Protocol.WriteLineAsync(stream, JsonSerializer.Serialize(new { status = "error", error = gReason }), ct);
+            return;
+        }
         try
         {
             await using var fs = File.OpenRead(path);
@@ -399,9 +607,14 @@ public sealed class FileServer
         }
     }
 
-    private static async Task HandleHashAsync(JsonElement req, Stream stream, CancellationToken ct)
+    private async Task HandleHashAsync(JsonElement req, Stream stream, CancellationToken ct)
     {
-        var path = req.GetProperty("path").GetString()!;
+        var reqPath = req.GetProperty("path").GetString();
+        if (!TryGuardRead(reqPath, out var path, out var gReason))
+        {
+            await Protocol.WriteLineAsync(stream, JsonSerializer.Serialize(new { status = "error", error = gReason }), ct);
+            return;
+        }
         var alg = req.TryGetProperty("alg", out var algEl) ? (algEl.GetString() ?? "sha256") : "sha256";
 
         try
@@ -424,9 +637,14 @@ public sealed class FileServer
         }
     }
 
-    private static async Task HandleStatAsync(JsonElement req, Stream stream, CancellationToken ct)
+    private async Task HandleStatAsync(JsonElement req, Stream stream, CancellationToken ct)
     {
-        var path = req.GetProperty("path").GetString()!;
+        var reqPath = req.GetProperty("path").GetString();
+        if (!TryGuardRead(reqPath, out var path, out var gReason))
+        {
+            await Protocol.WriteLineAsync(stream, JsonSerializer.Serialize(new { status = "error", error = gReason }), ct);
+            return;
+        }
         try
         {
             if (File.Exists(path))

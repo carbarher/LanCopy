@@ -3,6 +3,7 @@ using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Layout;
 using Avalonia.Media;
+using LanCopy.Localization;
 
 namespace LanCopy;
 
@@ -52,8 +53,8 @@ internal sealed class InputDialog : Window
             Spacing = 8
         };
 
-        var btnOk = MakeBtn("Aceptar", "#007ACC");
-        var btnCancel = MakeBtn("Cancelar", "#3E3E42");
+        var btnOk = MakeBtn(Loc.Instance["dlg.input.ok"], "#007ACC");
+        var btnCancel = MakeBtn(Loc.Instance["dlg.input.cancel"], "#3E3E42");
 
         btnOk.Click += (_, _) =>
         {

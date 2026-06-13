@@ -36,18 +36,21 @@ public sealed class LanClient : IDisposable
         // Feature 9: envolver con SslStream si TLS activo
         if (UseTls)
         {
+            // TOFU real: fija la huella del cert del host en el primer uso y la verifica despues.
             var ssl = new SslStream(stream, leaveInnerStreamOpen: false,
-                // Aceptar cualquier certificado (TOFU — Trust On First Use)
-                (sender, cert, chain, errors) => true);
+                (sender, cert, chain, errors) => CertTrust.ValidateOrPin(_host, cert));
             await ssl.AuthenticateAsClientAsync(new SslClientAuthenticationOptions
             {
                 TargetHost = _host,
                 EnabledSslProtocols = SslProtocols.Tls12 | SslProtocols.Tls13,
-                RemoteCertificateValidationCallback = (s, c, ch, e) => true,
+                RemoteCertificateValidationCallback = (s, c, ch, e) => CertTrust.ValidateOrPin(_host, c),
                 CertificateRevocationCheckMode = X509RevocationMode.NoCheck
             }, ct);
             stream = ssl;
         }
+
+        // Lectura de cabeceras con buffer (sin consumir el payload binario que sigue).
+        stream = new BufferedLineStream(stream);
 
         // Feature 10: enviar auth si PIN configurado
         if (!string.IsNullOrEmpty(Pin))
@@ -110,6 +113,7 @@ public sealed class LanClient : IDisposable
                                 && header.TryGetProperty("compressed_size", out var _compSizeProp);
 
         await using var fs = File.Create(localPath);
+        string? actualSha256 = null;
         if (serverCompressed)
         {
             var compressedSize = header.GetProperty("compressed_size").GetInt64();
@@ -117,20 +121,28 @@ public sealed class LanClient : IDisposable
             await Protocol.CopyExactAsync(stream, compBuf, compressedSize, null, ct);
             compBuf.Seek(0, SeekOrigin.Begin);
             await using var ds = new DeflateStream(compBuf, CompressionMode.Decompress);
-            await ds.CopyToAsync(fs, ct);
+            // Hash en una pasada mientras se descomprime/escribe.
+            using var hasher = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
+            var dbuf = new byte[Protocol.BufferSize];
+            int dr;
+            while ((dr = await ds.ReadAsync(dbuf, ct)) > 0)
+            {
+                await fs.WriteAsync(dbuf.AsMemory(0, dr), ct);
+                hasher.AppendData(dbuf, 0, dr);
+            }
+            actualSha256 = Convert.ToHexString(hasher.GetHashAndReset()).ToLowerInvariant();
         }
         else
         {
-            await Protocol.CopyExactAsync(stream, fs, size, progress, ct);
+            // Hash en streaming durante la recepcion: evita re-leer el fichero del disco.
+            actualSha256 = await Protocol.CopyExactToHashAsync(stream, fs, size, progress, ct);
         }
 
-        // Preferir SHA-256; fallback SHA-1 para compatibilidad.
+        // Verificar integridad. Preferir SHA-256; fallback SHA-1 para peers antiguos.
         if (header.TryGetProperty("sha256", out var sha256El))
         {
             var expected = sha256El.GetString() ?? "";
-            fs.Seek(0, SeekOrigin.Begin);
-            var actual = Convert.ToHexString(await SHA256.HashDataAsync(fs, ct)).ToLowerInvariant();
-            if (!string.Equals(expected, actual, StringComparison.OrdinalIgnoreCase))
+            if (!string.Equals(expected, actualSha256, StringComparison.OrdinalIgnoreCase))
                 throw new Exception($"Checksum SHA256 no coincide para {Path.GetFileName(localPath)}");
         }
         else if (header.TryGetProperty("sha1", out var sha1El))
@@ -157,10 +169,8 @@ public sealed class LanClient : IDisposable
         await using var fs = File.OpenRead(localPath);
         var size = fs.Length;
 
-        // Calcular ambos hashes para compatibilidad.
+        // Integridad: SHA-256 (una sola lectura).
         var sha256Local = Convert.ToHexString(await SHA256.HashDataAsync(fs, ct)).ToLowerInvariant();
-        fs.Seek(0, SeekOrigin.Begin);
-        var sha1Local = Convert.ToHexString(await SHA1.HashDataAsync(fs, ct)).ToLowerInvariant();
         fs.Seek(0, SeekOrigin.Begin);
 
         // Feature 2: compresión deflate opcional (solo archivos <= 200 MB)
@@ -186,18 +196,12 @@ public sealed class LanClient : IDisposable
         var ack = JsonSerializer.Deserialize<JsonElement>(ackLine);
         EnsureOk(ack);
 
-        // Preferir SHA-256; fallback SHA-1 para peer viejo.
+        // Verificar integridad SHA-256 reportada por el servidor.
         if (ack.TryGetProperty("sha256", out var sha256El))
         {
             var serverSha256 = sha256El.GetString() ?? "";
             if (!string.Equals(sha256Local, serverSha256, StringComparison.OrdinalIgnoreCase))
                 throw new Exception($"Checksum SHA256 no coincide para {Path.GetFileName(localPath)}");
-        }
-        else if (ack.TryGetProperty("sha1", out var sha1El))
-        {
-            var serverSha1 = sha1El.GetString() ?? "";
-            if (!string.Equals(sha1Local, serverSha1, StringComparison.OrdinalIgnoreCase))
-                throw new Exception($"Checksum SHA1 no coincide para {Path.GetFileName(localPath)}");
         }
     }
 

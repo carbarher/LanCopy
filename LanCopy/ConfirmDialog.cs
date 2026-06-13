@@ -2,6 +2,7 @@ using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Layout;
 using Avalonia.Media;
+using LanCopy.Localization;
 
 namespace LanCopy;
 
@@ -14,7 +15,7 @@ internal sealed class ConfirmDialog : Window
 
     public ConfirmDialog(int count, string firstName)
     {
-        Title = "Confirmar sobreescritura";
+        Title = Loc.Instance["dlg.overwrite.title"];
         Width = 470;
         Height = 160;
         CanResize = false;
@@ -22,8 +23,8 @@ internal sealed class ConfirmDialog : Window
         WindowStartupLocation = WindowStartupLocation.CenterOwner;
 
         var msg = count == 1
-            ? $"'{firstName}' ya existe en el destino."
-            : $"{count} archivos ya existen en el destino.";
+            ? Loc.Instance.Format("dlg.overwrite.one", firstName)
+            : Loc.Instance.Format("dlg.overwrite.many", count);
 
         var panel = new StackPanel { Margin = new Thickness(20), Spacing = 16 };
         panel.Children.Add(new TextBlock
@@ -40,10 +41,10 @@ internal sealed class ConfirmDialog : Window
             Spacing = 8
         };
 
-        var btnCancel    = MakeBtn("Cancelar", "#3E3E42");
-        var btnSkip      = MakeBtn("Omitir", "#555555");
-        var btnRename    = MakeBtn("Renombrar", "#007ACC");
-        var btnOverwrite = MakeBtn("Sobreescribir", "#C0392B");
+        var btnCancel    = MakeBtn(Loc.Instance["dlg.overwrite.cancel"], "#3E3E42");
+        var btnSkip      = MakeBtn(Loc.Instance["dlg.overwrite.skip"], "#555555");
+        var btnRename    = MakeBtn(Loc.Instance["dlg.overwrite.rename"], "#007ACC");
+        var btnOverwrite = MakeBtn(Loc.Instance["dlg.overwrite.overwrite"], "#C0392B");
 
         btnCancel.Click    += (_, _) => { _tcs.TrySetResult(OverwriteAction.Cancel); Close(); };
         btnSkip.Click      += (_, _) => { _tcs.TrySetResult(OverwriteAction.SkipAll); Close(); };
