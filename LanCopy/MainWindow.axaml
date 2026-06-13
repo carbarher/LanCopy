@@ -5,7 +5,7 @@
         x:Class="LanCopy.MainWindow"
         Title="{l:Tr app.title}"
         Icon="/Assets/app.png"
-        Width="920" Height="660" MinWidth="560" MinHeight="460"
+        Width="820" Height="660" MinWidth="500" MinHeight="460"
         Background="{DynamicResource ChromeBg}"
         WindowStartupLocation="CenterScreen">
 
@@ -17,7 +17,7 @@
             <!-- Fila 1: conexion principal (se reorganiza al estrechar) -->
             <WrapPanel>
                 <!-- Grupo: este PC -->
-                <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Spacing="6" Margin="0,2,20,2">
+                <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Spacing="6" Margin="0,2,10,2">
                     <TextBlock Text="{l:Tr top.myip}" Foreground="{DynamicResource TextFg}" VerticalAlignment="Center"/>
                     <TextBlock x:Name="txtMyIp" Text="…" Foreground="#FFD700" FontWeight="Bold" VerticalAlignment="Center"
                                ToolTip.Tip="{l:Tr tip.myip}"/>
@@ -38,11 +38,11 @@
                 <!-- Grupo: conectar a -->
                 <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Spacing="6" Margin="0,2,0,2">
                     <TextBlock Text="{l:Tr top.connectto}" Foreground="{DynamicResource TextFg}" VerticalAlignment="Center"/>
-                    <ComboBox x:Name="cmbPeers" Width="140" Background="{DynamicResource InputBg}" Foreground="{DynamicResource InputFg}"
+                    <ComboBox x:Name="cmbPeers" Width="116" Background="{DynamicResource InputBg}" Foreground="{DynamicResource InputFg}"
                               PlaceholderText="{l:Tr peers.placeholder}" Padding="4,4" BorderBrush="{DynamicResource BorderFg}"
                               SelectionChanged="CmbPeers_SelectionChanged"
                               ToolTip.Tip="{l:Tr tip.peers}"/>
-                    <TextBox x:Name="txtRemoteIp" Width="140" Background="{DynamicResource InputBg}" Foreground="{DynamicResource InputFg}"
+                    <TextBox x:Name="txtRemoteIp" Width="120" Background="{DynamicResource InputBg}" Foreground="{DynamicResource InputFg}"
                              PlaceholderText="{l:Tr remoteip.placeholder}" Padding="6,4" BorderBrush="{DynamicResource BorderFg}" KeyDown="TxtRemoteIp_KeyDown"
                              ToolTip.Tip="{l:Tr tip.remoteip}"/>
                     <TextBlock Text=":" Foreground="{DynamicResource TextFg}" VerticalAlignment="Center"/>

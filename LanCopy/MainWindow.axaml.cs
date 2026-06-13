@@ -1167,7 +1167,14 @@ public partial class MainWindow : Window
             if (doc.TryGetProperty("profiles", out var profilesEl))
             {
                 _profiles = JsonSerializer.Deserialize<List<ConnectionProfile>>(profilesEl.GetRawText()) ?? new();
-                await Dispatcher.UIThread.InvokeAsync(RefreshProfilesCombo);
+                await Dispatcher.UIThread.InvokeAsync(() =>
+                {
+                    // Al iniciar, selecciona el perfil que coincida con la conexion restaurada.
+                    var curIp = this.FindControl<TextBox>("txtRemoteIp")?.Text?.Trim() ?? "";
+                    var curPort = this.FindControl<TextBox>("txtRemotePort")?.Text?.Trim() ?? "";
+                    var match = _profiles.FirstOrDefault(p => p.Ip == curIp && p.Port == curPort)?.Name;
+                    RefreshProfilesCombo(match);
+                });
             }
         }
         catch { }
@@ -2033,7 +2040,7 @@ public partial class MainWindow : Window
         _profiles.RemoveAll(p => p.Name == name);
         _profiles.Add(new ConnectionProfile(name, ip, port, pin, _tlsEnabled, _compressEnabled));
         SaveSettings(ip, port);
-        RefreshProfilesCombo();
+        RefreshProfilesCombo(name);
         SetStatus(L.Format("st.profileSaved", name));
     }
 
@@ -2049,12 +2056,15 @@ public partial class MainWindow : Window
         SetStatus(L.Format("st.profileDeleted", name));
     }
 
-    private void RefreshProfilesCombo()
+    private void RefreshProfilesCombo(string? select = null)
     {
         var combo = this.FindControl<ComboBox>("cmbProfiles");
         if (combo == null) return;
+        var keep = select ?? combo.SelectedItem as string;
+        var names = _profiles.Select(p => p.Name).ToList();
         combo.ItemsSource = null;
-        combo.ItemsSource = _profiles.Select(p => p.Name).ToList();
+        combo.ItemsSource = names;
+        if (keep != null && names.Contains(keep)) combo.SelectedItem = keep;
     }
 
     // ── Feature 6: Ordenación de columnas ────────────────────────────────────
