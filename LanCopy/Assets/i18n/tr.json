@@ -157,6 +157,7 @@
   "tip.speed": "Geçerli aktarım hızı.",
   "st.pathsCopied": "Yol(lar) kopyalandı",
   "st.profileSaved": "Profil kaydedildi: {0}",
+  "st.profileLoaded": "Profil yüklendi: {0}",
   "st.deleteLocalResult": "Yerel silme: OK={0}, Engel={1}, Hata={2}",
   "st.verifying": "Doğrulanıyor...",
   "st.enterIpFirst": "Önce IP girin",

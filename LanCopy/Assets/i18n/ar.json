@@ -157,6 +157,7 @@
   "tip.speed": "سرعة النقل الحالية.",
   "st.pathsCopied": "تم نسخ المسار(ات)",
   "st.profileSaved": "تم حفظ الملف: {0}",
+  "st.profileLoaded": "تم تحميل الملف الشخصي: {0}",
   "st.deleteLocalResult": "حذف محلي: نجح={0}، محظور={1}، خطأ={2}",
   "st.verifying": "جارٍ التحقق...",
   "st.enterIpFirst": "أدخل IP أولاً",

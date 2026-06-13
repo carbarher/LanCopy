@@ -157,6 +157,7 @@
   "tip.speed": "Tốc độ truyền hiện tại.",
   "st.pathsCopied": "Đã sao chép đường dẫn",
   "st.profileSaved": "Đã lưu hồ sơ: {0}",
+  "st.profileLoaded": "Đã tải hồ sơ: {0}",
   "st.deleteLocalResult": "Xóa nội bộ: OK={0}, Chặn={1}, Lỗi={2}",
   "st.verifying": "Đang xác minh...",
   "st.enterIpFirst": "Nhập IP trước",

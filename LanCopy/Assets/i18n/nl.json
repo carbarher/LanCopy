@@ -157,6 +157,7 @@
   "tip.speed": "Huidige overdrachtssnelheid.",
   "st.pathsCopied": "Pad(en) gekopieerd",
   "st.profileSaved": "Profiel opgeslagen: {0}",
+  "st.profileLoaded": "Profiel geladen: {0}",
   "st.deleteLocalResult": "Lokaal verwijderen: OK={0}, Geblok={1}, Fout={2}",
   "st.verifying": "Verifiëren...",
   "st.enterIpFirst": "Voer eerst het IP in",

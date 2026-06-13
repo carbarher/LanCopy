@@ -168,7 +168,11 @@ public partial class MainWindow : Window
             cmbLang.SelectedIndex = li;
         }
         this.FlowDirection = L.IsRtl ? FlowDirection.RightToLeft : FlowDirection.LeftToRight;
-        Closing += (_, _) => { _server.Stop(); _discovery?.Stop(); _client?.Dispose(); _clientDown?.Dispose(); _uploadCts.Cancel(); _downloadCts.Cancel(); };
+        Closing += (_, _) =>
+        {
+            try { SaveSettings(this.FindControl<TextBox>("txtRemoteIp")?.Text ?? "", this.FindControl<TextBox>("txtRemotePort")?.Text ?? "8742"); } catch { }
+            _server.Stop(); _discovery?.Stop(); _client?.Dispose(); _clientDown?.Dispose(); _uploadCts.Cancel(); _downloadCts.Cancel();
+        };
         Opened += OnWindowOpened;
     }
 
@@ -1139,6 +1143,26 @@ public partial class MainWindow : Window
                 _theme = themeEl.GetString() ?? "Dark";
                 await Dispatcher.UIThread.InvokeAsync(ApplyTheme);
             }
+            // Geometria de ventana persistente
+            await Dispatcher.UIThread.InvokeAsync(() =>
+            {
+                try
+                {
+                    if (doc.TryGetProperty("winW", out var wEl) && doc.TryGetProperty("winH", out var hEl))
+                    {
+                        var w = wEl.GetDouble(); var h = hEl.GetDouble();
+                        if (w >= MinWidth && h >= MinHeight && w < 10000 && h < 10000) { Width = w; Height = h; }
+                    }
+                    if (doc.TryGetProperty("winX", out var xEl) && doc.TryGetProperty("winY", out var yEl))
+                    {
+                        var x = xEl.GetInt32(); var y = yEl.GetInt32();
+                        if (x > -32000 && y > -32000 && x < 32000 && y < 32000) Position = new PixelPoint(x, y);
+                    }
+                    if (doc.TryGetProperty("winMax", out var mEl) && mEl.GetBoolean())
+                        WindowState = WindowState.Maximized;
+                }
+                catch { }
+            });
             // Feature 3: perfiles
             if (doc.TryGetProperty("profiles", out var profilesEl))
             {
@@ -1168,6 +1192,11 @@ public partial class MainWindow : Window
                 compressEnabled = _compressEnabled,
                 language = L.Current,
                 theme = _theme,
+                winW = this.Width,
+                winH = this.Height,
+                winX = this.Position.X,
+                winY = this.Position.Y,
+                winMax = this.WindowState == WindowState.Maximized,
                 profiles = _profiles
             }));
         }
@@ -1982,8 +2011,13 @@ public partial class MainWindow : Window
         if (combo?.SelectedItem is not string name) return;
         var p = _profiles.FirstOrDefault(x => x.Name == name);
         if (p == null) return;
+        // Restaura todos los ajustes del perfil (los handlers aplican y persisten); NO conecta.
         this.FindControl<TextBox>("txtRemoteIp")!.Text = p.Ip;
         this.FindControl<TextBox>("txtRemotePort")!.Text = p.Port;
+        this.FindControl<TextBox>("txtPin")!.Text = p.Pin;
+        var chkT = this.FindControl<CheckBox>("chkTls"); if (chkT != null) chkT.IsChecked = p.Tls;
+        var chkC = this.FindControl<CheckBox>("chkCompress"); if (chkC != null) chkC.IsChecked = p.Compress;
+        SetStatus(L.Format("st.profileLoaded", name));
     }
 
     private async void SaveProfile_Click(object? sender, RoutedEventArgs e)
@@ -1995,8 +2029,9 @@ public partial class MainWindow : Window
         _ = dlg.ShowDialog(this);
         var name = await dlg.GetResultAsync();
         if (string.IsNullOrWhiteSpace(name)) return;
+        var pin = this.FindControl<TextBox>("txtPin")?.Text?.Trim() ?? "";
         _profiles.RemoveAll(p => p.Name == name);
-        _profiles.Add(new ConnectionProfile(name, ip, port));
+        _profiles.Add(new ConnectionProfile(name, ip, port, pin, _tlsEnabled, _compressEnabled));
         SaveSettings(ip, port);
         RefreshProfilesCombo();
         SetStatus(L.Format("st.profileSaved", name));
@@ -2302,4 +2337,4 @@ public partial class MainWindow : Window
 }
 
 // ── Modelo: perfil de conexión (Feature 3) ────────────────────────────────────
-internal record ConnectionProfile(string Name, string Ip, string Port);
+internal record ConnectionProfile(string Name, string Ip, string Port, string Pin = "", bool Tls = false, bool Compress = false);

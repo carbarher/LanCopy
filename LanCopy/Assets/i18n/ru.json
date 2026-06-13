@@ -157,6 +157,7 @@
   "tip.speed": "Текущая скорость передачи.",
   "st.pathsCopied": "Путь(и) скопирован(ы)",
   "st.profileSaved": "Профиль сохранён: {0}",
+  "st.profileLoaded": "Профиль загружен: {0}",
   "st.deleteLocalResult": "Локальное удаление: OK={0}, Блок={1}, Ошиб={2}",
   "st.verifying": "Проверка...",
   "st.enterIpFirst": "Сначала введите IP",

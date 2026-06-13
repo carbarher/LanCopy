@@ -157,6 +157,7 @@
   "tip.speed": "वर्तमान स्थानांतरण गति।",
   "st.pathsCopied": "पथ कॉपी किए गए",
   "st.profileSaved": "प्रोफ़ाइल सहेजी गई: {0}",
+  "st.profileLoaded": "प्रोफ़ाइल लोड हुई: {0}",
   "st.deleteLocalResult": "स्थानीय हटाना: ठीक={0}, अवरुद्ध={1}, त्रुटि={2}",
   "st.verifying": "सत्यापित हो रहा है...",
   "st.enterIpFirst": "पहले IP दर्ज करें",

@@ -157,6 +157,7 @@
   "tip.speed": "현재 전송 속도.",
   "st.pathsCopied": "경로 복사됨",
   "st.profileSaved": "프로필 저장됨: {0}",
+  "st.profileLoaded": "프로필 불러옴: {0}",
   "st.deleteLocalResult": "로컬 삭제: 성공={0}, 차단={1}, 오류={2}",
   "st.verifying": "확인 중…",
   "st.enterIpFirst": "먼저 IP를 입력하세요",

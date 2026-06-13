@@ -157,6 +157,7 @@
   "tip.speed": "Aktuell överföringshastighet.",
   "st.pathsCopied": "Sökväg(ar) kopierade",
   "st.profileSaved": "Profil sparad: {0}",
+  "st.profileLoaded": "Profil laddad: {0}",
   "st.deleteLocalResult": "Lokal borttagning: OK={0}, Block={1}, Fel={2}",
   "st.verifying": "Verifierar...",
   "st.enterIpFirst": "Ange IP först",

@@ -159,6 +159,7 @@
   "tip.speed": "Current transfer speed.",
   "st.pathsCopied": "Path(s) copied",
   "st.profileSaved": "Profile saved: {0}",
+  "st.profileLoaded": "Profile loaded: {0}",
   "st.deleteLocalResult": "Local delete: OK={0}, Blocked={1}, Err={2}",
   "st.verifying": "Verifying...",
   "st.enterIpFirst": "Enter IP first",

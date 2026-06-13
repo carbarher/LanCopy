@@ -157,6 +157,7 @@
   "tip.speed": "Bieżąca prędkość transferu.",
   "st.pathsCopied": "Skopiowano ścieżki",
   "st.profileSaved": "Profil zapisany: {0}",
+  "st.profileLoaded": "Wczytano profil: {0}",
   "st.deleteLocalResult": "Usuwanie lokalne: OK={0}, Zablok={1}, Błąd={2}",
   "st.verifying": "Weryfikacja...",
   "st.enterIpFirst": "Najpierw wpisz IP",

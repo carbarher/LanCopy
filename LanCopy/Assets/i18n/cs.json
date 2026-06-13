@@ -157,6 +157,7 @@
   "tip.speed": "Aktuální rychlost přenosu.",
   "st.pathsCopied": "Cesty zkopírovány",
   "st.profileSaved": "Profil uložen: {0}",
+  "st.profileLoaded": "Profil načten: {0}",
   "st.deleteLocalResult": "Místní mazání: OK={0}, Blok={1}, Chyb={2}",
   "st.verifying": "Ověřování...",
   "st.enterIpFirst": "Nejprve zadejte IP",

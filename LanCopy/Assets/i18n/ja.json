@@ -157,6 +157,7 @@
   "tip.speed": "現在の転送速度。",
   "st.pathsCopied": "パスをコピーしました",
   "st.profileSaved": "プロファイルを保存しました：{0}",
+  "st.profileLoaded": "プロファイルを読み込みました: {0}",
   "st.deleteLocalResult": "ローカル削除：成功={0}、ブロック={1}、エラー={2}",
   "st.verifying": "検証中…",
   "st.enterIpFirst": "先に IP を入力してください",

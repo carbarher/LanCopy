@@ -157,6 +157,7 @@
   "tip.speed": "当前传输速度。",
   "st.pathsCopied": "路径已复制",
   "st.profileSaved": "配置已保存：{0}",
+  "st.profileLoaded": "已加载配置：{0}",
   "st.deleteLocalResult": "本地删除：成功={0}，阻止={1}，错误={2}",
   "st.verifying": "正在校验…",
   "st.enterIpFirst": "请先输入 IP",

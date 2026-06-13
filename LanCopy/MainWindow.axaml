@@ -5,7 +5,7 @@
         x:Class="LanCopy.MainWindow"
         Title="{l:Tr app.title}"
         Icon="/Assets/app.png"
-        Width="1060" Height="680"
+        Width="920" Height="660" MinWidth="560" MinHeight="460"
         Background="{DynamicResource ChromeBg}"
         WindowStartupLocation="CenterScreen">
 
@@ -14,16 +14,17 @@
         <!-- ══ Barra superior ══════════════════════════════════════════════════ -->
         <Border Grid.Row="0" Background="{DynamicResource ToolbarBg}" Padding="12,8">
             <StackPanel Spacing="6">
-            <!-- Fila 1: conexión principal -->
-            <Grid ColumnDefinitions="Auto,Auto,Auto,Auto,*,Auto,Auto,Auto,Auto,Auto,Auto,Auto,Auto,Auto,Auto">
-                <TextBlock Grid.Column="0" Text="{l:Tr top.myip}" Foreground="{DynamicResource TextFg}" VerticalAlignment="Center" Margin="0,0,6,0"/>
-                <TextBlock Grid.Column="1" x:Name="txtMyIp" Text="…" Foreground="#FFD700" FontWeight="Bold" VerticalAlignment="Center" Margin="0,0,4,0"
-                           ToolTip.Tip="{l:Tr tip.myip}"/>
-                <Button    Grid.Column="2" x:Name="btnCopyIp" Content="📋" Click="CopyIp_Click"
-                           Background="Transparent" Foreground="{DynamicResource TextFg}" Padding="4,1" Margin="0,0,12,0"
-                           ToolTip.Tip="{l:Tr tip.copyip}"/>
-                <StackPanel Grid.Column="3" Orientation="Horizontal" VerticalAlignment="Center" Margin="0,0,24,0" Spacing="4">
-                    <TextBlock Text="{l:Tr top.port}" Foreground="{DynamicResource SubtleFg}" FontSize="11" VerticalAlignment="Center"/>
+            <!-- Fila 1: conexion principal (se reorganiza al estrechar) -->
+            <WrapPanel>
+                <!-- Grupo: este PC -->
+                <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Spacing="6" Margin="0,2,20,2">
+                    <TextBlock Text="{l:Tr top.myip}" Foreground="{DynamicResource TextFg}" VerticalAlignment="Center"/>
+                    <TextBlock x:Name="txtMyIp" Text="…" Foreground="#FFD700" FontWeight="Bold" VerticalAlignment="Center"
+                               ToolTip.Tip="{l:Tr tip.myip}"/>
+                    <Button x:Name="btnCopyIp" Content="📋" Click="CopyIp_Click"
+                            Background="Transparent" Foreground="{DynamicResource TextFg}" Padding="4,1"
+                            ToolTip.Tip="{l:Tr tip.copyip}"/>
+                    <TextBlock Text="{l:Tr top.port}" Foreground="{DynamicResource SubtleFg}" FontSize="11" VerticalAlignment="Center" Margin="6,0,0,0"/>
                     <TextBox x:Name="txtLocalPort" Text="8742" Width="56" Background="{DynamicResource InputBg}" Foreground="{DynamicResource InputFg}"
                              Padding="6,2" FontSize="11" BorderBrush="{DynamicResource BorderFg}" KeyDown="TxtLocalPort_KeyDown"
                              ToolTip.Tip="{l:Tr tip.localport}"/>
@@ -34,71 +35,76 @@
                             Background="{DynamicResource InputBg}" Foreground="#FFD700" Padding="6,2" FontSize="11"
                             ToolTip.Tip="{l:Tr tip.paircode}"/>
                 </StackPanel>
-
-                <TextBlock Grid.Column="4"/><!-- spacer -->
-
-                <TextBlock Grid.Column="5" Text="{l:Tr top.connectto}" Foreground="{DynamicResource TextFg}" VerticalAlignment="Center" Margin="0,0,6,0"/>
-                <ComboBox  Grid.Column="6" x:Name="cmbPeers" Width="150" Background="{DynamicResource InputBg}" Foreground="{DynamicResource InputFg}"
-                           PlaceholderText="{l:Tr peers.placeholder}" Padding="4,4" BorderBrush="{DynamicResource BorderFg}"
-                           SelectionChanged="CmbPeers_SelectionChanged"
-                           ToolTip.Tip="{l:Tr tip.peers}"/>
-                <TextBox   Grid.Column="7" x:Name="txtRemoteIp" Width="150" Background="{DynamicResource InputBg}" Foreground="{DynamicResource InputFg}"
-                           PlaceholderText="{l:Tr remoteip.placeholder}" Padding="6,4" BorderBrush="{DynamicResource BorderFg}" KeyDown="TxtRemoteIp_KeyDown"
-                           ToolTip.Tip="{l:Tr tip.remoteip}"/>
-                <TextBlock Grid.Column="8" Text=":" Foreground="{DynamicResource TextFg}" VerticalAlignment="Center" Margin="4,0"/>
-                <TextBox   Grid.Column="9" x:Name="txtRemotePort" Text="8742" Width="58" Background="{DynamicResource InputBg}"
-                           Foreground="{DynamicResource InputFg}" Padding="6,4" BorderBrush="{DynamicResource BorderFg}" KeyDown="TxtRemoteIp_KeyDown"
-                           ToolTip.Tip="{l:Tr tip.remoteport}"/>
-                <Button    Grid.Column="10" x:Name="btnConnect" Content="{l:Tr btn.connect}" Click="Connect_Click"
-                           Background="#007ACC" Foreground="White" Padding="12,5" Margin="8,0,0,0"
-                           ToolTip.Tip="{l:Tr tip.connect}"/>
-                <TextBlock Grid.Column="11" x:Name="txtConnStatus" Text="{l:Tr conn.disconnected}" Foreground="#FF6B6B"
-                           VerticalAlignment="Center" Margin="10,0,0,0" FontSize="12" ToolTip.Tip="{l:Tr tip.connstatus}"/>
-                <TextBlock Grid.Column="12" Text="{l:Tr top.pin}" Foreground="{DynamicResource TextFg}" VerticalAlignment="Center" Margin="12,0,4,0"
-                           ToolTip.Tip="{l:Tr tip.pinlabel}"/>
-                <TextBox   Grid.Column="13" x:Name="txtPin" Width="70" Background="{DynamicResource InputBg}" Foreground="{DynamicResource InputFg}"
-                           PlaceholderText="{l:Tr pin.placeholder}" Padding="6,4" BorderBrush="{DynamicResource BorderFg}"
-                           PasswordChar="●" TextChanged="TxtPin_TextChanged"
-                           ToolTip.Tip="{l:Tr tip.pin}"/>
-            </Grid>
-            <!-- Fila 2: perfiles + opciones -->
-            <StackPanel Orientation="Horizontal" Spacing="8">
-                <TextBlock Text="{l:Tr top.profile}" Foreground="{DynamicResource TextFg}" VerticalAlignment="Center" FontSize="11"/>
-                <ComboBox x:Name="cmbProfiles" Width="160" Background="{DynamicResource InputBg}" Foreground="{DynamicResource InputFg}"
-                          Padding="4,3" BorderBrush="{DynamicResource BorderFg}" FontSize="11"
-                          SelectionChanged="CmbProfiles_SelectionChanged"
-                          ToolTip.Tip="{l:Tr tip.profiles}"/>
-                <Button Content="{l:Tr btn.saveprofile}" Click="SaveProfile_Click"
-                        Background="{DynamicResource InputBg}" Foreground="{DynamicResource InputFg}" Padding="6,3" FontSize="11"
-                        ToolTip.Tip="{l:Tr tip.saveprofile}"/>
-                <Button Content="❌" Click="DeleteProfile_Click"
-                        Background="{DynamicResource InputBg}" Foreground="#FF6B6B" Padding="6,3" FontSize="11"
-                        ToolTip.Tip="{l:Tr tip.deleteprofile}"/>
-                <Border Width="1" Background="{DynamicResource DividerBg}" Margin="4,0"/>
-                <CheckBox x:Name="chkTls" Content="{l:Tr chk.tls}" Foreground="{DynamicResource TextFg}" FontSize="11"
-                          IsCheckedChanged="ChkTls_Changed"
-                          ToolTip.Tip="{l:Tr tip.tls}"/>
-                <CheckBox x:Name="chkShareRoot" Content="{l:Tr chk.shareRoot}" Foreground="{DynamicResource TextFg}" FontSize="11"                           IsChecked="True"                           IsCheckedChanged="ChkShareRoot_Changed"                           ToolTip.Tip="{l:Tr tip.shareRoot}"/>
-                <CheckBox x:Name="chkReadOnly" Content="{l:Tr chk.readOnly}" Foreground="{DynamicResource TextFg}" FontSize="11" IsCheckedChanged="ChkReadOnly_Changed" ToolTip.Tip="{l:Tr tip.readOnly}"/>
-                <CheckBox x:Name="chkRequireApproval" Content="{l:Tr chk.requireApproval}" Foreground="{DynamicResource TextFg}" FontSize="11" IsCheckedChanged="ChkRequireApproval_Changed" ToolTip.Tip="{l:Tr tip.requireApproval}"/>
-                <CheckBox x:Name="chkCompress" Content="{l:Tr chk.compress}" Foreground="{DynamicResource TextFg}" FontSize="11"
-                          IsCheckedChanged="ChkCompress_Changed"
-                          ToolTip.Tip="{l:Tr tip.compress}"/>
-                <Border Width="1" Background="{DynamicResource DividerBg}" Margin="4,0"/>
-                <TextBlock x:Name="txtSparkline" Foreground="#00FF88" FontFamily="Consolas,Courier New,monospace"
-                           FontSize="13" VerticalAlignment="Center" ToolTip.Tip="{l:Tr tip.sparkline}"/>
-                <TextBlock x:Name="txtWatchStatus" Foreground="Orange" FontSize="11"
-                           VerticalAlignment="Center" Margin="8,0,0,0" ToolTip.Tip="{l:Tr tip.watchstatus}"/>
-                <Border Width="1" Background="{DynamicResource DividerBg}" Margin="4,0"/>
-                <Button x:Name="btnTheme" Content="🌓" Click="ToggleTheme_Click"
-                        Background="{DynamicResource InputBg}" Foreground="{DynamicResource TextFg}" Padding="6,3" FontSize="11"
-                        ToolTip.Tip="{l:Tr tip.theme}"/>
-                <TextBlock Text="{l:Tr top.language}" Foreground="{DynamicResource TextFg}" VerticalAlignment="Center" FontSize="11"/>
-                <ComboBox x:Name="cmbLang" Width="130" Background="{DynamicResource InputBg}" Foreground="{DynamicResource InputFg}"
-                          Padding="4,3" BorderBrush="{DynamicResource BorderFg}" FontSize="11"
-                          SelectionChanged="CmbLang_SelectionChanged"
-                          ToolTip.Tip="{l:Tr tip.language}"/>
-            </StackPanel>
+                <!-- Grupo: conectar a -->
+                <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Spacing="6" Margin="0,2,0,2">
+                    <TextBlock Text="{l:Tr top.connectto}" Foreground="{DynamicResource TextFg}" VerticalAlignment="Center"/>
+                    <ComboBox x:Name="cmbPeers" Width="140" Background="{DynamicResource InputBg}" Foreground="{DynamicResource InputFg}"
+                              PlaceholderText="{l:Tr peers.placeholder}" Padding="4,4" BorderBrush="{DynamicResource BorderFg}"
+                              SelectionChanged="CmbPeers_SelectionChanged"
+                              ToolTip.Tip="{l:Tr tip.peers}"/>
+                    <TextBox x:Name="txtRemoteIp" Width="140" Background="{DynamicResource InputBg}" Foreground="{DynamicResource InputFg}"
+                             PlaceholderText="{l:Tr remoteip.placeholder}" Padding="6,4" BorderBrush="{DynamicResource BorderFg}" KeyDown="TxtRemoteIp_KeyDown"
+                             ToolTip.Tip="{l:Tr tip.remoteip}"/>
+                    <TextBlock Text=":" Foreground="{DynamicResource TextFg}" VerticalAlignment="Center"/>
+                    <TextBox x:Name="txtRemotePort" Text="8742" Width="58" Background="{DynamicResource InputBg}"
+                             Foreground="{DynamicResource InputFg}" Padding="6,4" BorderBrush="{DynamicResource BorderFg}" KeyDown="TxtRemoteIp_KeyDown"
+                             ToolTip.Tip="{l:Tr tip.remoteport}"/>
+                    <Button x:Name="btnConnect" Content="{l:Tr btn.connect}" Click="Connect_Click"
+                            Background="#007ACC" Foreground="White" Padding="12,5"
+                            ToolTip.Tip="{l:Tr tip.connect}"/>
+                    <TextBlock x:Name="txtConnStatus" Text="{l:Tr conn.disconnected}" Foreground="#FF6B6B"
+                               VerticalAlignment="Center" FontSize="12" ToolTip.Tip="{l:Tr tip.connstatus}"/>
+                    <TextBlock Text="{l:Tr top.pin}" Foreground="{DynamicResource TextFg}" VerticalAlignment="Center" Margin="6,0,0,0"
+                               ToolTip.Tip="{l:Tr tip.pinlabel}"/>
+                    <TextBox x:Name="txtPin" Width="70" Background="{DynamicResource InputBg}" Foreground="{DynamicResource InputFg}"
+                             PlaceholderText="{l:Tr pin.placeholder}" Padding="6,4" BorderBrush="{DynamicResource BorderFg}"
+                             PasswordChar="●" TextChanged="TxtPin_TextChanged"
+                             ToolTip.Tip="{l:Tr tip.pin}"/>
+                </StackPanel>
+            </WrapPanel>
+            <!-- Fila 2: perfiles + opciones (se reorganiza al estrechar) -->
+            <WrapPanel>
+                <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Spacing="6" Margin="0,2,16,2">
+                    <TextBlock Text="{l:Tr top.profile}" Foreground="{DynamicResource TextFg}" VerticalAlignment="Center" FontSize="11"/>
+                    <ComboBox x:Name="cmbProfiles" Width="150" Background="{DynamicResource InputBg}" Foreground="{DynamicResource InputFg}"
+                              Padding="4,3" BorderBrush="{DynamicResource BorderFg}" FontSize="11"
+                              SelectionChanged="CmbProfiles_SelectionChanged"
+                              ToolTip.Tip="{l:Tr tip.profiles}"/>
+                    <Button Content="{l:Tr btn.saveprofile}" Click="SaveProfile_Click"
+                            Background="{DynamicResource InputBg}" Foreground="{DynamicResource InputFg}" Padding="6,3" FontSize="11"
+                            ToolTip.Tip="{l:Tr tip.saveprofile}"/>
+                    <Button Content="❌" Click="DeleteProfile_Click"
+                            Background="{DynamicResource InputBg}" Foreground="#FF6B6B" Padding="6,3" FontSize="11"
+                            ToolTip.Tip="{l:Tr tip.deleteprofile}"/>
+                </StackPanel>
+                <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Spacing="10" Margin="0,2,16,2">
+                    <CheckBox x:Name="chkTls" Content="{l:Tr chk.tls}" Foreground="{DynamicResource TextFg}" FontSize="11"
+                              IsCheckedChanged="ChkTls_Changed"
+                              ToolTip.Tip="{l:Tr tip.tls}"/>
+                    <CheckBox x:Name="chkShareRoot" Content="{l:Tr chk.shareRoot}" Foreground="{DynamicResource TextFg}" FontSize="11" IsChecked="True" IsCheckedChanged="ChkShareRoot_Changed" ToolTip.Tip="{l:Tr tip.shareRoot}"/>
+                    <CheckBox x:Name="chkReadOnly" Content="{l:Tr chk.readOnly}" Foreground="{DynamicResource TextFg}" FontSize="11" IsCheckedChanged="ChkReadOnly_Changed" ToolTip.Tip="{l:Tr tip.readOnly}"/>
+                    <CheckBox x:Name="chkRequireApproval" Content="{l:Tr chk.requireApproval}" Foreground="{DynamicResource TextFg}" FontSize="11" IsCheckedChanged="ChkRequireApproval_Changed" ToolTip.Tip="{l:Tr tip.requireApproval}"/>
+                    <CheckBox x:Name="chkCompress" Content="{l:Tr chk.compress}" Foreground="{DynamicResource TextFg}" FontSize="11"
+                              IsCheckedChanged="ChkCompress_Changed"
+                              ToolTip.Tip="{l:Tr tip.compress}"/>
+                </StackPanel>
+                <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Spacing="6" Margin="0,2,16,2">
+                    <TextBlock x:Name="txtSparkline" Foreground="#00FF88" FontFamily="Consolas,Courier New,monospace"
+                               FontSize="13" VerticalAlignment="Center" ToolTip.Tip="{l:Tr tip.sparkline}"/>
+                    <TextBlock x:Name="txtWatchStatus" Foreground="Orange" FontSize="11"
+                               VerticalAlignment="Center" ToolTip.Tip="{l:Tr tip.watchstatus}"/>
+                </StackPanel>
+                <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Spacing="6" Margin="0,2,0,2">
+                    <Button x:Name="btnTheme" Content="🌓" Click="ToggleTheme_Click"
+                            Background="{DynamicResource InputBg}" Foreground="{DynamicResource TextFg}" Padding="6,3" FontSize="11"
+                            ToolTip.Tip="{l:Tr tip.theme}"/>
+                    <TextBlock Text="{l:Tr top.language}" Foreground="{DynamicResource TextFg}" VerticalAlignment="Center" FontSize="11"/>
+                    <ComboBox x:Name="cmbLang" Width="130" Background="{DynamicResource InputBg}" Foreground="{DynamicResource InputFg}"
+                              Padding="4,3" BorderBrush="{DynamicResource BorderFg}" FontSize="11"
+                              SelectionChanged="CmbLang_SelectionChanged"
+                              ToolTip.Tip="{l:Tr tip.language}"/>
+                </StackPanel>
+            </WrapPanel>
             </StackPanel>
         </Border>
 
