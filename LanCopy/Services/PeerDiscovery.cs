@@ -38,7 +38,12 @@ public sealed class PeerDiscovery : IDisposable
         _ = ExpireLoopAsync(_cts.Token);
     }
 
-    public void Stop() => _cts?.Cancel();
+    public void Stop()
+    {
+        _cts?.Cancel();
+        _cts?.Dispose();
+        _cts = null;
+    }
 
     public System.Collections.Generic.IReadOnlyList<PeerInfo> GetPeers()
     {

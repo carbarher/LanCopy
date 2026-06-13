@@ -161,6 +161,7 @@ public sealed class FileServer
     {
         _cts?.Cancel();
         _listener?.Stop();
+        _cts?.Dispose();
         Log.Info("server", "stopped");
     }
 
@@ -196,10 +197,8 @@ public sealed class FileServer
             return;
         }
 
-        using var connCts = CancellationTokenSource.CreateLinkedTokenSource(serverCt);
-        connCts.CancelAfter(TimeSpan.FromSeconds(60));
-        try { await HandleAsync(tcp, ip, connCts.Token); }
-        catch { tcp.Dispose(); }
+        try { await HandleAsync(tcp, ip, serverCt); }
+        catch { try { tcp.Dispose(); } catch { } }
         finally
         {
             _perIp.AddOrUpdate(ip, 0, (_, v) => Math.Max(0, v - 1));
@@ -212,6 +211,9 @@ public sealed class FileServer
         using (tcp)
         {
             tcp.NoDelay = true;
+            using var hsCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            hsCts.CancelAfter(TimeSpan.FromSeconds(60));
+            var hs = hsCts.Token;
             try
             {
                 // Feature 9: TLS — envuelve NetworkStream con SslStream si está activo
@@ -225,7 +227,7 @@ public sealed class FileServer
                         ClientCertificateRequired = false,
                         EnabledSslProtocols = SslProtocols.Tls12 | SslProtocols.Tls13,
                         CertificateRevocationCheckMode = X509RevocationMode.NoCheck
-                    }, ct);
+                    }, hs);
                     stream = ssl;
                 }
 
@@ -244,7 +246,7 @@ public sealed class FileServer
                         return;
                     }
 
-                    var authLine = await Protocol.ReadLineAsync(stream, ct);
+                    var authLine = await Protocol.ReadLineAsync(stream, hs);
                     var authReq = JsonSerializer.Deserialize<JsonElement>(authLine);
                     var authCmd = authReq.TryGetProperty("cmd", out var cmdEl) ? cmdEl.GetString() : null;
                     var authPin = authReq.TryGetProperty("pin", out var pinEl) ? pinEl.GetString() : null;
@@ -264,7 +266,7 @@ public sealed class FileServer
                     await Protocol.WriteLineAsync(stream, JsonSerializer.Serialize(new { status = "ok" }), ct);
                 }
 
-                var line = await Protocol.ReadLineAsync(stream, ct);
+                var line = await Protocol.ReadLineAsync(stream, hs);
                 var req = JsonSerializer.Deserialize<JsonElement>(line);
                 var cmd = req.GetProperty("cmd").GetString();
 
@@ -413,6 +415,14 @@ public sealed class FileServer
         // Numero de bytes que el cliente va a enviar por el cable (cuerpo).
         long wireBytes = req.TryGetProperty("compress", out var ceGate) && ceGate.GetBoolean()
             && req.TryGetProperty("compressed_size", out var csGate) ? csGate.GetInt64() : size;
+        // Anti-OOM: el cuerpo comprimido se descomprime en memoria; limitar su tamaño declarado.
+        bool gateCompressed = req.TryGetProperty("compress", out var gc) && gc.GetBoolean()
+            && req.TryGetProperty("compressed_size", out _);
+        if (gateCompressed && (wireBytes < 0 || wireBytes > MaxCompressInMemory))
+        {
+            await Protocol.WriteLineAsync(stream, JsonSerializer.Serialize(new { status = "error", error = "compressed_size inválido" }), ct);
+            return;
+        }
         // Consentimiento del receptor antes de tocar el disco.
         if (ApproveIncoming is { } approve)
         {
@@ -435,8 +445,10 @@ public sealed class FileServer
         // Feature 2: compresión deflate opcional
         bool isCompressed = req.TryGetProperty("compress", out var ce) && ce.GetBoolean()
                             && req.TryGetProperty("compressed_size", out _);
-        await using var fs = File.Create(path);
         string sha256;
+        try
+        {
+        await using var fs = File.Create(path);
         if (isCompressed)
         {
             var compressedSize = req.GetProperty("compressed_size").GetInt64();
@@ -462,6 +474,12 @@ public sealed class FileServer
         {
             // Hash en streaming durante la recepcion: evita re-leer el fichero del disco.
             sha256 = await Protocol.CopyExactToHashAsync(stream, fs, size, MakeProgress(true, Path.GetFileName(path)), ct);
+        }
+        }
+        catch
+        {
+            try { if (File.Exists(path)) File.Delete(path); } catch { }
+            throw;
         }
 
         await Protocol.WriteLineAsync(stream, JsonSerializer.Serialize(new { status = "ok", sha256 }), ct);
@@ -523,7 +541,7 @@ public sealed class FileServer
             return;
         }
         // Validar: el nuevo nombre no puede contener separadores de ruta
-        if (string.IsNullOrWhiteSpace(newName) || newName.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0)
+        if (string.IsNullOrWhiteSpace(newName) || newName is "." or ".." || newName.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0)
         {
             await Protocol.WriteLineAsync(stream,
                 JsonSerializer.Serialize(new { status = "error", error = "Nombre inválido" }), ct);

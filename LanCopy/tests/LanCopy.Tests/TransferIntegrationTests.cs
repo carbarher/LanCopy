@@ -95,6 +95,39 @@ public class TransferIntegrationTests : IDisposable
     }
 
     [Fact]
+    public async Task Rename_DotDot_IsBlocked()
+    {
+        var f = Path.Combine(_shared, "victim.txt");
+        await File.WriteAllTextAsync(f, "x");
+        await Assert.ThrowsAnyAsync<Exception>(async () =>
+            await Client().RenameAsync("victim.txt", ".."));
+        await Assert.ThrowsAnyAsync<Exception>(async () =>
+            await Client().RenameAsync("victim.txt", "."));
+        Assert.True(File.Exists(f));
+    }
+
+    [Fact]
+    public async Task Upload_Then_Download_Compressed_PreservesContent()
+    {
+        var srcDir = Path.Combine(Path.GetTempPath(), "lc_zsrc_" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(srcDir);
+        var srcFile = Path.Combine(srcDir, "comp.bin");
+
+        var data = new byte[1_200_000];
+        for (int i = 0; i < data.Length; i++) data[i] = (byte)(i % 37);
+        await File.WriteAllBytesAsync(srcFile, data);
+
+        var upClient = Client(); upClient.UseCompress = true;
+        await upClient.UploadAsync(srcFile, "comp.bin");
+        Assert.Equal(data, await File.ReadAllBytesAsync(Path.Combine(_shared, "comp.bin")));
+
+        var outFile = Path.Combine(srcDir, "comp.out");
+        var dlClient = Client(); dlClient.UseCompress = true;
+        await dlClient.DownloadAsync("comp.bin", outFile);
+        Assert.Equal(data, await File.ReadAllBytesAsync(outFile));
+    }
+
+    [Fact]
     public async Task List_ShareRoot_ShowsOnlyInsideEntries()
     {
         await File.WriteAllTextAsync(Path.Combine(_shared, "a.txt"), "a");

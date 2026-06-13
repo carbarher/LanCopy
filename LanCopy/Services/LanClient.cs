@@ -16,6 +16,7 @@ public sealed class LanClient : IDisposable
 
     private readonly string _host;
     private readonly int _port;
+    private const long MaxCompressInMemory = 200L * 1024 * 1024;
     public string? Pin { get; set; }      // Feature 10: PIN de autenticación
     public bool UseTls { get; set; }      // Feature 9: TLS
     public bool UseCompress { get; set; } // Feature 2: compresión deflate
@@ -117,6 +118,8 @@ public sealed class LanClient : IDisposable
         if (serverCompressed)
         {
             var compressedSize = header.GetProperty("compressed_size").GetInt64();
+            if (compressedSize < 0 || compressedSize > MaxCompressInMemory)
+                throw new InvalidDataException("compressed_size excede el limite permitido");
             using var compBuf = new MemoryStream();
             await Protocol.CopyExactAsync(stream, compBuf, compressedSize, null, ct);
             compBuf.Seek(0, SeekOrigin.Begin);
@@ -125,8 +128,11 @@ public sealed class LanClient : IDisposable
             using var hasher = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
             var dbuf = new byte[Protocol.BufferSize];
             int dr;
+            long written = 0;
             while ((dr = await ds.ReadAsync(dbuf, ct)) > 0)
             {
+                written += dr;
+                if (written > size) throw new InvalidDataException("Descompresion excede el tamano declarado (posible zip-bomb)");
                 await fs.WriteAsync(dbuf.AsMemory(0, dr), ct);
                 hasher.AppendData(dbuf, 0, dr);
             }
