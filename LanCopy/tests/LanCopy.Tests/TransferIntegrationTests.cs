@@ -128,6 +128,51 @@ public class TransferIntegrationTests : IDisposable
     }
 
     [Fact]
+    public async Task Delete_OutsideRoot_IsBlocked()
+    {
+        var outDir = Path.Combine(Path.GetTempPath(), "lc_out_" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(outDir);
+        var victim = Path.Combine(outDir, "victim.txt");
+        await File.WriteAllTextAsync(victim, "no me borres");
+        await Assert.ThrowsAnyAsync<Exception>(async () =>
+            await Client().DeleteAsync(victim));
+        Assert.True(File.Exists(victim));
+    }
+
+    [Fact]
+    public async Task Rename_OutsideRoot_IsBlocked()
+    {
+        var outDir = Path.Combine(Path.GetTempPath(), "lc_out2_" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(outDir);
+        var victim = Path.Combine(outDir, "victim.txt");
+        await File.WriteAllTextAsync(victim, "no me toques");
+        await Assert.ThrowsAnyAsync<Exception>(async () =>
+            await Client().RenameAsync(victim, "hacked.txt"));
+        Assert.True(File.Exists(victim));
+        Assert.False(File.Exists(Path.Combine(outDir, "hacked.txt")));
+    }
+
+    [Fact]
+    public async Task CompressedExtension_RoundTrip_PreservesContent()
+    {
+        var srcDir = Path.Combine(Path.GetTempPath(), "lc_zext_" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(srcDir);
+        var srcFile = Path.Combine(srcDir, "archive.zip");
+        var data = new byte[600_000];
+        new Random(7).NextBytes(data);
+        await File.WriteAllBytesAsync(srcFile, data);
+
+        var up = Client(); up.UseCompress = true;
+        await up.UploadAsync(srcFile, "archive.zip");
+        Assert.Equal(data, await File.ReadAllBytesAsync(Path.Combine(_shared, "archive.zip")));
+
+        var outFile = Path.Combine(srcDir, "archive.out");
+        var dl = Client(); dl.UseCompress = true;
+        await dl.DownloadAsync("archive.zip", outFile);
+        Assert.Equal(data, await File.ReadAllBytesAsync(outFile));
+    }
+
+    [Fact]
     public async Task List_ShareRoot_ShowsOnlyInsideEntries()
     {
         await File.WriteAllTextAsync(Path.Combine(_shared, "a.txt"), "a");

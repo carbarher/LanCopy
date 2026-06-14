@@ -74,6 +74,7 @@ public partial class MainWindow : Window
     private FileSystemWatcher? _watcher;
     private bool _watcherActive;
     private System.Timers.Timer? _watchDebounce;
+    private readonly object _watchLock = new();
 
     // Feature 9: TLS + compresión toggles
     private bool _tlsEnabled;
@@ -308,9 +309,10 @@ public partial class MainWindow : Window
                 finally { _clientLock.Release(); }
 
                 // Ping: verifica que la conexión funciona
+                LanClient? snap;
                 await _clientLock.WaitAsync(ct);
-                var snap = _client;
-                _clientLock.Release();
+                try { snap = _client; }
+                finally { _clientLock.Release(); }
                 _ = await snap!.ListAsync("");
 
                 SetConnStatus(L["conn.reconnectedWord"], BrushConnected);
@@ -741,7 +743,7 @@ public partial class MainWindow : Window
     private async Task<bool> DoTransferFileAsync(
         FileEntry entry, string destPath, bool isUpload,
         int fi, int total, long fileStart, long totalTransfer,
-        string arrow, CancellationToken ct)
+        string arrow, string remoteIp, int remotePort, CancellationToken ct)
     {
         var lastDone = 0L;
         var sw = Stopwatch.StartNew();
@@ -783,11 +785,9 @@ public partial class MainWindow : Window
             {
                 if (_clientDown == null)
                 {
-                    // Crear cliente download si no existe (primera vez o reconexión)
-                    var remoteIp2 = this.FindControl<TextBox>("txtRemoteIp")!.Text?.Trim() ?? "";
-                    var portStr2 = this.FindControl<TextBox>("txtRemotePort")!.Text?.Trim() ?? "8742";
-                    int.TryParse(portStr2, out var remotePort2);
-                    _clientDown = new LanClient(remoteIp2, remotePort2);
+                    // Crear cliente download si no existe (primera vez o reconexión).
+                    // remoteIp/remotePort vienen capturados en el hilo UI por el llamador.
+                    _clientDown = new LanClient(remoteIp, remotePort);
                 }
                 snap = _clientDown;
             }
@@ -837,7 +837,7 @@ public partial class MainWindow : Window
             }
 
             bool fileOk = await DoTransferFileAsync(
-                entry, destPath, isUpload, fi, total, fileStart, totalTransfer, arrow, ct);
+                entry, destPath, isUpload, fi, total, fileStart, totalTransfer, arrow, remoteIp, remotePort, ct);
 
             if (!fileOk && !ct.IsCancellationRequested)
             {
@@ -845,7 +845,7 @@ public partial class MainWindow : Window
                 bool reconnected = await TryReconnectAsync(remoteIp, remotePort, ct);
                 if (reconnected)
                     fileOk = await DoTransferFileAsync(
-                        entry, destPath, isUpload, fi, total, fileStart, totalTransfer, arrow, ct);
+                        entry, destPath, isUpload, fi, total, fileStart, totalTransfer, arrow, remoteIp, remotePort, ct);
             }
 
             if (fileOk)
@@ -2168,8 +2168,7 @@ public partial class MainWindow : Window
     {
         _watcher?.Dispose();
         _watcher = null;
-        _watchDebounce?.Dispose();
-        _watchDebounce = null;
+        lock (_watchLock) { _watchDebounce?.Dispose(); _watchDebounce = null; }
         _watcherActive = false;
 
         var btn = this.FindControl<Button>("btnWatch");
@@ -2181,25 +2180,30 @@ public partial class MainWindow : Window
 
     private void OnWatcherEvent(object sender, FileSystemEventArgs e)
     {
-        // Debounce 700 ms — resetear timer con cada evento
-        _watchDebounce?.Dispose();
-        _watchDebounce = new System.Timers.Timer(700) { AutoReset = false };
-        _watchDebounce.Elapsed += async (_, _) =>
+        // FileSystemWatcher dispara en hilos del pool: serializar el reinicio del debounce.
+        var changedPath = e.FullPath;
+        lock (_watchLock)
         {
-            if (!File.Exists(e.FullPath)) return;
-            try
+            _watchDebounce?.Dispose();
+            var timer = new System.Timers.Timer(700) { AutoReset = false };
+            timer.Elapsed += async (_, _) =>
             {
-                var fi = new FileInfo(e.FullPath);
-                var entry = new FileEntry { Name = fi.Name, FullPath = fi.FullName, Size = fi.Length };
-                await Dispatcher.UIThread.InvokeAsync(() =>
+                if (!File.Exists(changedPath)) return;
+                try
                 {
-                    SetStatus(L.Format("st.changeDetected", fi.Name));
-                    _ = TransferAsync(new List<FileEntry> { entry }, isUpload: true);
-                });
-            }
-            catch { }
-        };
-        _watchDebounce.Start();
+                    var fi = new FileInfo(changedPath);
+                    var entry = new FileEntry { Name = fi.Name, FullPath = fi.FullName, Size = fi.Length };
+                    await Dispatcher.UIThread.InvokeAsync(() =>
+                    {
+                        SetStatus(L.Format("st.changeDetected", fi.Name));
+                        _ = TransferAsync(new List<FileEntry> { entry }, isUpload: true);
+                    });
+                }
+                catch { }
+            };
+            _watchDebounce = timer;
+            timer.Start();
+        }
     }
 
     // ── Feature 1: Sync de carpetas ───────────────────────────────────────────

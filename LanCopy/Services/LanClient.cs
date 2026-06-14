@@ -180,7 +180,7 @@ public sealed class LanClient : IDisposable
         fs.Seek(0, SeekOrigin.Begin);
 
         // Feature 2: compresión deflate opcional (solo archivos <= 200 MB)
-        bool doCompress = UseCompress && size > 0 && size <= 200L * 1024 * 1024;
+        bool doCompress = UseCompress && size > 0 && size <= 200L * 1024 * 1024 && !Protocol.IsCompressedExtension(localPath);
         if (doCompress)
         {
             using var ms = new MemoryStream();

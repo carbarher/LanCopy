@@ -18,6 +18,20 @@ internal static class Protocol
     // Sin tope, un peer malicioso podria enviar bytes sin '\n' hasta agotar la memoria (OOM).
     internal const int MaxLineBytes = 1024 * 1024; // 1 MB
 
+    // Extensiones cuyo contenido ya esta comprimido: deflate no aporta y solo gasta CPU.
+    private static readonly HashSet<string> CompressedExt = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ".zip", ".gz", ".7z", ".rar", ".bz2", ".xz", ".zst", ".lz4", ".cab",
+        ".jpg", ".jpeg", ".png", ".gif", ".webp", ".heic", ".heif",
+        ".mp3", ".aac", ".ogg", ".opus", ".flac", ".m4a", ".wma",
+        ".mp4", ".mkv", ".mov", ".avi", ".webm", ".m4v", ".wmv",
+        ".docx", ".xlsx", ".pptx", ".odt", ".ods", ".odp", ".epub", ".apk", ".jar"
+    };
+
+    // True si el fichero ya esta (probablemente) comprimido y conviene saltar deflate.
+    internal static bool IsCompressedExtension(string path)
+        => CompressedExt.Contains(System.IO.Path.GetExtension(path));
+
     // Lee una linea terminada en '\n'. Si el stream es un BufferedLineStream (lo habitual en
     // servidor/cliente), usa su lectura con buffer (sin 1 syscall por byte). Para cualquier otro
     // stream se usa el fallback byte a byte (seguro: no consume el payload binario que sigue).

@@ -331,6 +331,8 @@ public sealed class FileServer
             foreach (var f in Directory.EnumerateFiles(root, "*", SearchOption.AllDirectories))
             {
                 if (entries.Count >= MaxListRecursiveFiles) break;
+                // Evita que un symlink dentro de la raiz exponga ficheros externos.
+                if (RestrictToShareRoot && !ShareRoot.TryResolve(f, out _, out _)) continue;
                 var fi = new FileInfo(f);
                 entries.Add(new FileEntry
                 {
@@ -377,7 +379,8 @@ public sealed class FileServer
 
         // Feature 2: compresión deflate opcional
         bool wantCompress = req.TryGetProperty("compress", out var ce) && ce.GetBoolean()
-                            && size > 0 && size <= MaxCompressInMemory;
+                            && size > 0 && size <= MaxCompressInMemory
+                            && !Protocol.IsCompressedExtension(path);
         if (wantCompress)
         {
             using var ms = new MemoryStream();
@@ -485,10 +488,18 @@ public sealed class FileServer
         await Protocol.WriteLineAsync(stream, JsonSerializer.Serialize(new { status = "ok", sha256 }), ct);
     }
 
-    private static async Task HandleDeleteAsync(JsonElement req, Stream stream, CancellationToken ct)
+    private async Task HandleDeleteAsync(JsonElement req, Stream stream, CancellationToken ct)
     {
         var path = req.GetProperty("path").GetString()!;
-        if (!SafeFileOps.TryValidateMutationPath(path, out var normalized, out var reason))
+        // Confina a la carpeta compartida cuando RestrictToShareRoot esta activo.
+        if (!TryGuardWrite(path, out var guarded, out var gReason))
+        {
+            await Protocol.WriteLineAsync(stream,
+                JsonSerializer.Serialize(new { status = "error", error = gReason }), ct);
+            SafeFileOps.Audit("delete", path, "blocked", gReason, "remote");
+            return;
+        }
+        if (!SafeFileOps.TryValidateMutationPath(guarded, out var normalized, out var reason))
         {
             await Protocol.WriteLineAsync(stream,
                 JsonSerializer.Serialize(new { status = "error", error = reason }), ct);
@@ -528,12 +539,20 @@ public sealed class FileServer
         }
     }
 
-    private static async Task HandleRenameAsync(JsonElement req, Stream stream, CancellationToken ct)
+    private async Task HandleRenameAsync(JsonElement req, Stream stream, CancellationToken ct)
     {
         var path = req.GetProperty("path").GetString()!;
         var newName = req.GetProperty("newname").GetString()!;
 
-        if (!SafeFileOps.TryValidateMutationPath(path, out var normalized, out var reason))
+        // Confina a la carpeta compartida cuando RestrictToShareRoot esta activo.
+        if (!TryGuardWrite(path, out var guarded, out var gReason))
+        {
+            await Protocol.WriteLineAsync(stream,
+                JsonSerializer.Serialize(new { status = "error", error = gReason }), ct);
+            SafeFileOps.Audit("rename", path, "blocked", gReason, "remote");
+            return;
+        }
+        if (!SafeFileOps.TryValidateMutationPath(guarded, out var normalized, out var reason))
         {
             await Protocol.WriteLineAsync(stream,
                 JsonSerializer.Serialize(new { status = "error", error = reason }), ct);
@@ -561,6 +580,13 @@ public sealed class FileServer
         {
             var dir = Path.GetDirectoryName(normalized)!;
             var newPath = Path.Combine(dir, newName);
+            if (!TryGuardWrite(newPath, out _, out var destGuard))
+            {
+                await Protocol.WriteLineAsync(stream,
+                    JsonSerializer.Serialize(new { status = "error", error = $"Destino bloqueado: {destGuard}" }), ct);
+                SafeFileOps.Audit("rename", normalized, "blocked", $"dest:{destGuard}", "remote");
+                return;
+            }
             if (!SafeFileOps.TryValidateMutationPath(newPath, out _, out var targetReason, requireExists: false))
             {
                 await Protocol.WriteLineAsync(stream,
