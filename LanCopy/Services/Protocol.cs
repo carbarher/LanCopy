@@ -79,6 +79,7 @@ internal static class Protocol
             var read = await src.ReadAsync(buf.AsMemory(0, toRead), ct);
             if (read == 0) throw new EndOfStreamException("Conexion cortada durante la transferencia");
             await dst.WriteAsync(buf.AsMemory(0, read), ct);
+            await RateLimiter.Global.ThrottleAsync(read, ct);
             remaining -= read;
             done += read;
             progress?.Report((done, size));
@@ -117,6 +118,7 @@ internal static class Protocol
             if (read == 0) throw new EndOfStreamException("Conexion cortada durante la transferencia");
             await dst.WriteAsync(buf.AsMemory(0, read), ct);
             hasher.AppendData(buf, 0, read);
+            await RateLimiter.Global.ThrottleAsync(read, ct);
             remaining -= read;
             done += read;
             progress?.Report((done, size));

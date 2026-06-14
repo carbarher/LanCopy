@@ -173,6 +173,51 @@ public class TransferIntegrationTests : IDisposable
     }
 
     [Fact]
+    public async Task Download_Resumes_From_Partial()
+    {
+        var data = new byte[1_500_000];
+        new Random(99).NextBytes(data);
+        await File.WriteAllBytesAsync(Path.Combine(_shared, "resume.bin"), data);
+
+        var outFile = Path.Combine(Path.GetTempPath(), "res_" + Guid.NewGuid().ToString("N") + ".bin");
+        var partFile = outFile + ".part";
+        long pre = 500_000;
+        await File.WriteAllBytesAsync(partFile, data[..(int)pre]); // descarga interrumpida
+
+        await Client().DownloadAsync("resume.bin", outFile);
+
+        Assert.True(File.Exists(outFile));
+        Assert.False(File.Exists(partFile)); // .part promovido al destino
+        Assert.Equal(data, await File.ReadAllBytesAsync(outFile));
+    }
+
+    [Fact]
+    public async Task Download_Resume_CorruptPartial_Throws()
+    {
+        var data = new byte[800_000];
+        new Random(5).NextBytes(data);
+        await File.WriteAllBytesAsync(Path.Combine(_shared, "r2.bin"), data);
+
+        var outFile = Path.Combine(Path.GetTempPath(), "r2_" + Guid.NewGuid().ToString("N") + ".bin");
+        var partFile = outFile + ".part";
+        await File.WriteAllBytesAsync(partFile, new byte[200_000]); // prefijo corrupto (ceros)
+
+        await Assert.ThrowsAnyAsync<Exception>(async () =>
+            await Client().DownloadAsync("r2.bin", outFile));
+    }
+
+    [Fact]
+    public async Task SendText_Triggers_TextReceived()
+    {
+        string? gotText = null;
+        var tcs = new TaskCompletionSource();
+        _server.TextReceived += (ip, text) => { gotText = text; tcs.TrySetResult(); };
+        await Client().SendTextAsync("hola mundo");
+        await Task.WhenAny(tcs.Task, Task.Delay(3000));
+        Assert.Equal("hola mundo", gotText);
+    }
+
+    [Fact]
     public async Task List_ShareRoot_ShowsOnlyInsideEntries()
     {
         await File.WriteAllTextAsync(Path.Combine(_shared, "a.txt"), "a");

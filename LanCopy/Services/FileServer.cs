@@ -101,6 +101,9 @@ public sealed class FileServer
     public readonly record struct TransferProgressInfo(bool Receiving, string FileName, long Done, long Total);
     public event Action<TransferProgressInfo>? TransferProgress;
 
+    // idea-clipboard: texto/portapapeles recibido de un peer (ip, texto).
+    public event Action<string, string>? TextReceived;
+
     private IProgress<(long done, long total)> MakeProgress(bool receiving, string fileName) =>
         new ProgressThrottle(v => TransferProgress?.Invoke(
             new TransferProgressInfo(receiving, fileName, v.done, v.total)), intervalMs: 150);
@@ -301,6 +304,7 @@ public sealed class FileServer
                     case "hash": await HandleHashAsync(req, stream, ct); break;
                     case "stat": await HandleStatAsync(req, stream, ct); break;
                     case "caps": await HandleCapsAsync(req, stream, ct); break;
+                    case "text": await HandleTextAsync(req, stream, ip, ct); break;
                 }
             }
             catch (Exception ex) { Log.Warn("server", "handler-error", new { ip, error = ex.Message }); }
@@ -358,7 +362,21 @@ public sealed class FileServer
     private async Task HandleCapsAsync(JsonElement req, Stream stream, CancellationToken ct)
     {
         await Protocol.WriteLineAsync(stream,
-            JsonSerializer.Serialize(new { status = "ok", compress = true, tls = TlsEnabled, version = Protocol.Version, minVersion = Protocol.MinSupportedVersion, readOnly = ReadOnly }), ct);
+            JsonSerializer.Serialize(new { status = "ok", compress = true, tls = TlsEnabled, version = Protocol.Version, minVersion = Protocol.MinSupportedVersion, readOnly = ReadOnly, text = true }), ct);
+    }
+
+    // idea-clipboard: recibe un texto corto (<=256 KB) y lo notifica (la UI lo copia al portapapeles).
+    private const int MaxTextBytes = 256 * 1024;
+    private async Task HandleTextAsync(JsonElement req, Stream stream, string ip, CancellationToken ct)
+    {
+        var text = req.TryGetProperty("text", out var tEl) ? tEl.GetString() ?? "" : "";
+        if (Encoding.UTF8.GetByteCount(text) > MaxTextBytes)
+        {
+            await Protocol.WriteLineAsync(stream, JsonSerializer.Serialize(new { status = "error", error = "Texto demasiado largo" }), ct);
+            return;
+        }
+        try { TextReceived?.Invoke(ip, text); } catch { }
+        await Protocol.WriteLineAsync(stream, JsonSerializer.Serialize(new { status = "ok" }), ct);
     }
 
     // Feature 2: límite de compresión en memoria (200 MB)
@@ -380,12 +398,17 @@ public sealed class FileServer
         await using var fs = File.OpenRead(path);
         var size = fs.Length;
 
-        // Integridad: SHA-256 (una sola lectura previa al envio).
+        // Reanudacion (idea-resume): el cliente puede pedir desde un offset si ya tiene un .part.
+        long offset = req.TryGetProperty("offset", out var offEl) ? offEl.GetInt64() : 0;
+        if (offset < 0 || offset > size) offset = 0;
+
+        // Integridad: SHA-256 del fichero completo (una sola lectura previa al envio).
         var sha256 = Convert.ToHexString(await SHA256.HashDataAsync(fs, ct)).ToLowerInvariant();
         fs.Seek(0, SeekOrigin.Begin);
 
         // Feature 2: compresión deflate opcional
         bool wantCompress = req.TryGetProperty("compress", out var ce) && ce.GetBoolean()
+                            && offset == 0
                             && size > 0 && size <= MaxCompressInMemory
                             && !Protocol.IsCompressedExtension(path);
         if (wantCompress)
@@ -396,13 +419,14 @@ public sealed class FileServer
             var compressedSize = ms.Length;
             ms.Seek(0, SeekOrigin.Begin);
             await Protocol.WriteLineAsync(stream, JsonSerializer.Serialize(new
-            { status = "ok", size, sha256, compress = true, compressed_size = compressedSize }), ct);
+            { status = "ok", size, sha256, compress = true, compressed_size = compressedSize, range_from = 0L }), ct);
             await Protocol.CopyExactAsync(ms, stream, compressedSize, MakeProgress(false, Path.GetFileName(path)), ct);
         }
         else
         {
-            await Protocol.WriteLineAsync(stream, JsonSerializer.Serialize(new { status = "ok", size, sha256 }), ct);
-            await Protocol.CopyExactAsync(fs, stream, size, MakeProgress(false, Path.GetFileName(path)), ct);
+            if (offset > 0) fs.Seek(offset, SeekOrigin.Begin);
+            await Protocol.WriteLineAsync(stream, JsonSerializer.Serialize(new { status = "ok", size, sha256, range_from = offset }), ct);
+            await Protocol.CopyExactAsync(fs, stream, size - offset, MakeProgress(false, Path.GetFileName(path)), ct);
         }
     }
 

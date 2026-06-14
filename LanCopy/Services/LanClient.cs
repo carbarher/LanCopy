@@ -107,14 +107,25 @@ public sealed class LanClient : IDisposable
         IProgress<(long done, long total)>? progress = null,
         CancellationToken ct = default)
     {
+        // Descarga atomica con reanudacion (idea-resume): se escribe a un .part y se promueve
+        // al destino final solo al verificar el hash. Si existe un .part previo, se reanuda.
+        var partPath = localPath + ".part";
+        long resume = 0;
+        if (File.Exists(partPath))
+        {
+            try { resume = new FileInfo(partPath).Length; } catch { resume = 0; }
+        }
+        bool wantCompress = UseCompress && resume == 0; // no se comprime al reanudar
+
         var (tcp, stream) = await OpenAsync(ct);
         using var _ = tcp;
         await Protocol.WriteLineAsync(stream,
-            JsonSerializer.Serialize(new { cmd = "get", path = remotePath, compress = UseCompress }), ct);
+            JsonSerializer.Serialize(new { cmd = "get", path = remotePath, compress = wantCompress, offset = resume }), ct);
         var headerLine = await Protocol.ReadLineAsync(stream, ct);
         var header = JsonSerializer.Deserialize<JsonElement>(headerLine);
         EnsureOk(header);
         var size = header.GetProperty("size").GetInt64();
+        long rangeFrom = header.TryGetProperty("range_from", out var rfEl) ? rfEl.GetInt64() : 0;
 
         var dir = Path.GetDirectoryName(localPath);
         if (!string.IsNullOrEmpty(dir)) Directory.CreateDirectory(dir);
@@ -122,52 +133,95 @@ public sealed class LanClient : IDisposable
         bool serverCompressed = header.TryGetProperty("compress", out var compEl) && compEl.GetBoolean()
                                 && header.TryGetProperty("compressed_size", out var _compSizeProp);
 
-        await using var fs = File.Create(localPath);
-        string? actualSha256 = null;
-        if (serverCompressed)
+        // Solo reanudamos si el servidor lo honra exactamente y no comprime; si no, empezamos limpio.
+        bool doResume = resume > 0 && !serverCompressed && rangeFrom == resume;
+        if (resume > 0 && !doResume) { try { File.Delete(partPath); } catch { } }
+
+        using var hasher = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
+        var fs = doResume
+            ? new FileStream(partPath, FileMode.Open, FileAccess.ReadWrite)
+            : new FileStream(partPath, FileMode.Create, FileAccess.ReadWrite);
+        try
         {
-            var compressedSize = header.GetProperty("compressed_size").GetInt64();
-            if (compressedSize < 0 || compressedSize > MaxCompressInMemory)
-                throw new InvalidDataException("compressed_size excede el limite permitido");
-            using var compBuf = new MemoryStream();
-            await Protocol.CopyExactAsync(stream, compBuf, compressedSize, null, ct);
-            compBuf.Seek(0, SeekOrigin.Begin);
-            await using var ds = new DeflateStream(compBuf, CompressionMode.Decompress);
-            // Hash en una pasada mientras se descomprime/escribe.
-            using var hasher = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
-            var dbuf = new byte[Protocol.BufferSize];
-            int dr;
-            long written = 0;
-            while ((dr = await ds.ReadAsync(dbuf, ct)) > 0)
+            if (doResume)
             {
-                written += dr;
-                if (written > size) throw new InvalidDataException("Descompresion excede el tamano declarado (posible zip-bomb)");
-                await fs.WriteAsync(dbuf.AsMemory(0, dr), ct);
-                hasher.AppendData(dbuf, 0, dr);
+                // Pre-hashea los bytes ya descargados para verificar el fichero completo al final.
+                fs.Seek(0, SeekOrigin.Begin);
+                var pre = new byte[Protocol.BufferSize];
+                long left = rangeFrom; int pr;
+                while (left > 0 && (pr = await fs.ReadAsync(pre.AsMemory(0, (int)Math.Min(pre.Length, left)), ct)) > 0)
+                { hasher.AppendData(pre, 0, pr); left -= pr; }
+                fs.Seek(0, SeekOrigin.End);
             }
-            actualSha256 = Convert.ToHexString(hasher.GetHashAndReset()).ToLowerInvariant();
+
+            if (serverCompressed)
+            {
+                var compressedSize = header.GetProperty("compressed_size").GetInt64();
+                if (compressedSize < 0 || compressedSize > MaxCompressInMemory)
+                    throw new InvalidDataException("compressed_size excede el limite permitido");
+                using var compBuf = new MemoryStream();
+                await Protocol.CopyExactAsync(stream, compBuf, compressedSize, null, ct);
+                compBuf.Seek(0, SeekOrigin.Begin);
+                await using var ds = new DeflateStream(compBuf, CompressionMode.Decompress);
+                var dbuf = new byte[Protocol.BufferSize];
+                int dr; long written = 0;
+                while ((dr = await ds.ReadAsync(dbuf, ct)) > 0)
+                {
+                    written += dr;
+                    if (written > size) throw new InvalidDataException("Descompresion excede el tamano declarado (posible zip-bomb)");
+                    await fs.WriteAsync(dbuf.AsMemory(0, dr), ct);
+                    hasher.AppendData(dbuf, 0, dr);
+                }
+            }
+            else
+            {
+                // Recibe (size - rangeFrom) bytes hasheando el contenido completo.
+                var buf = new byte[Protocol.BufferSize];
+                long remaining = size - rangeFrom, done = rangeFrom;
+                while (remaining > 0)
+                {
+                    var toRead = (int)Math.Min(remaining, buf.Length);
+                    var read = await stream.ReadAsync(buf.AsMemory(0, toRead), ct);
+                    if (read == 0) throw new EndOfStreamException("Conexion cortada durante la transferencia");
+                    await fs.WriteAsync(buf.AsMemory(0, read), ct);
+                    hasher.AppendData(buf, 0, read);
+                    await RateLimiter.Global.ThrottleAsync(read, ct);
+                    remaining -= read; done += read;
+                    progress?.Report((done, size));
+                }
+            }
+
+            var actualSha256 = Convert.ToHexString(hasher.GetHashAndReset()).ToLowerInvariant();
+            string? mismatch = null;
+            if (header.TryGetProperty("sha256", out var sha256El))
+            {
+                var expected = sha256El.GetString() ?? "";
+                if (!string.Equals(expected, actualSha256, StringComparison.OrdinalIgnoreCase))
+                    mismatch = "SHA256";
+            }
+            else if (header.TryGetProperty("sha1", out var sha1El))
+            {
+                var expected = sha1El.GetString() ?? "";
+                fs.Seek(0, SeekOrigin.Begin);
+                var actual = Convert.ToHexString(await SHA1.HashDataAsync(fs, ct)).ToLowerInvariant();
+                if (!string.Equals(expected, actual, StringComparison.OrdinalIgnoreCase))
+                    mismatch = "SHA1";
+            }
+            if (mismatch != null)
+            {
+                // Hash incorrecto: el .part esta corrupto, lo borramos para no reanudar sobre basura.
+                await fs.DisposeAsync();
+                try { File.Delete(partPath); } catch { }
+                throw new Exception($"Checksum {mismatch} no coincide para {Path.GetFileName(localPath)}");
+            }
         }
-        else
+        finally
         {
-            // Hash en streaming durante la recepcion: evita re-leer el fichero del disco.
-            actualSha256 = await Protocol.CopyExactToHashAsync(stream, fs, size, progress, ct);
+            await fs.DisposeAsync();
         }
 
-        // Verificar integridad. Preferir SHA-256; fallback SHA-1 para peers antiguos.
-        if (header.TryGetProperty("sha256", out var sha256El))
-        {
-            var expected = sha256El.GetString() ?? "";
-            if (!string.Equals(expected, actualSha256, StringComparison.OrdinalIgnoreCase))
-                throw new Exception($"Checksum SHA256 no coincide para {Path.GetFileName(localPath)}");
-        }
-        else if (header.TryGetProperty("sha1", out var sha1El))
-        {
-            var expected = sha1El.GetString() ?? "";
-            fs.Seek(0, SeekOrigin.Begin);
-            var actual = Convert.ToHexString(await SHA1.HashDataAsync(fs, ct)).ToLowerInvariant();
-            if (!string.Equals(expected, actual, StringComparison.OrdinalIgnoreCase))
-                throw new Exception($"Checksum SHA1 no coincide para {Path.GetFileName(localPath)}");
-        }
+        // Exito: promover .part al destino final (sobrescribe si existe).
+        File.Move(partPath, localPath, overwrite: true);
     }
 
     // â”€â”€ PUT â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
@@ -218,6 +272,18 @@ public sealed class LanClient : IDisposable
             if (!string.Equals(sha256Local, serverSha256, StringComparison.OrdinalIgnoreCase))
                 throw new Exception($"Checksum SHA256 no coincide para {Path.GetFileName(localPath)}");
         }
+    }
+
+    // ── TEXT (idea-clipboard) ─────────────────────────────────────────────────────
+
+    public async Task SendTextAsync(string text, CancellationToken ct = default)
+    {
+        var (tcp, stream) = await OpenAsync(ct);
+        using var _ = tcp;
+        await Protocol.WriteLineAsync(stream,
+            JsonSerializer.Serialize(new { cmd = "text", text }), ct);
+        var line = await Protocol.ReadLineAsync(stream, ct);
+        EnsureOk(JsonSerializer.Deserialize<JsonElement>(line));
     }
 
     // ── DELETE ────────────────────────────────────────────────────────────────────

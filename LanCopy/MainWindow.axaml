@@ -105,6 +105,37 @@
                               ToolTip.Tip="{l:Tr tip.language}"/>
                 </StackPanel>
             </WrapPanel>
+            <!-- Fila 3: extras (idea-clipboard, qr, broadcast, sendto, ancho de banda) -->
+            <WrapPanel>
+                <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Spacing="6" Margin="0,2,16,2">
+                    <TextBox x:Name="txtSendText" Width="150" Background="{DynamicResource InputBg}" Foreground="{DynamicResource InputFg}"
+                             PlaceholderText="{l:Tr text.placeholder}" Padding="6,3" FontSize="11" BorderBrush="{DynamicResource BorderFg}"
+                             ToolTip.Tip="{l:Tr tip.sendtext}"/>
+                    <Button x:Name="btnSendText" Content="{l:Tr btn.sendtext}" Click="SendText_Click"
+                            Background="{DynamicResource InputBg}" Foreground="{DynamicResource InputFg}" Padding="6,3" FontSize="11"
+                            ToolTip.Tip="{l:Tr tip.sendtext}"/>
+                </StackPanel>
+                <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Spacing="6" Margin="0,2,16,2">
+                    <Button x:Name="btnQr" Content="{l:Tr btn.qr}" Click="ShowQr_Click"
+                            Background="{DynamicResource InputBg}" Foreground="#FFD700" Padding="6,3" FontSize="11"
+                            ToolTip.Tip="{l:Tr tip.qr}"/>
+                    <Button x:Name="btnPasteLink" Content="{l:Tr btn.pastelink}" Click="PasteLink_Click"
+                            Background="{DynamicResource InputBg}" Foreground="{DynamicResource InputFg}" Padding="6,3" FontSize="11"
+                            ToolTip.Tip="{l:Tr tip.pastelink}"/>
+                    <Button x:Name="btnBroadcast" Content="{l:Tr btn.broadcast}" Click="Broadcast_Click"
+                            Background="{DynamicResource InputBg}" Foreground="{DynamicResource InputFg}" Padding="6,3" FontSize="11"
+                            ToolTip.Tip="{l:Tr tip.broadcast}"/>
+                    <Button x:Name="btnSendTo" Content="{l:Tr btn.sendto}" Click="SendToIntegration_Click"
+                            Background="{DynamicResource InputBg}" Foreground="{DynamicResource InputFg}" Padding="6,3" FontSize="11"
+                            ToolTip.Tip="{l:Tr tip.sendto}"/>
+                </StackPanel>
+                <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Spacing="6" Margin="0,2,0,2">
+                    <TextBlock Text="{l:Tr bw.label}" Foreground="{DynamicResource TextFg}" VerticalAlignment="Center" FontSize="11"/>
+                    <Slider x:Name="sldBandwidth" Width="110" Minimum="0" Maximum="12" Value="0" VerticalAlignment="Center"
+                            ValueChanged="Bandwidth_Changed" ToolTip.Tip="{l:Tr tip.bw}"/>
+                    <TextBlock x:Name="txtBwValue" Text="{l:Tr bw.unlimited}" Foreground="{DynamicResource MutedFg}" VerticalAlignment="Center" FontSize="11" MinWidth="60"/>
+                </StackPanel>
+            </WrapPanel>
             </StackPanel>
         </Border>
 
