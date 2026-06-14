@@ -76,6 +76,15 @@ public static class ShareRoot
                 return false;
             }
 
+            // Defensa extra: un directorio intermedio puede ser una junction/symlink que
+            // apunte fuera aunque la ruta canonica del hijo no se resuelva (fichero normal
+            // bajo un dir enlazado). Bloquea cualquier reparse point entre la raiz y el destino.
+            if (HasReparsePointBetween(root, candidate))
+            {
+                reason = "La ruta atraviesa un enlace/junction";
+                return false;
+            }
+
             fullPath = candidate;
             return true;
         }
@@ -84,6 +93,30 @@ public static class ShareRoot
             reason = "Ruta invalida";
             return false;
         }
+    }
+
+    // Recorre los componentes desde la raiz (exclusive) hasta el destino y devuelve true
+    // si alguno es un reparse point (junction/symlink). El propio root se considera de confianza.
+    private static bool HasReparsePointBetween(string root, string candidate)
+    {
+        try
+        {
+            var rootNorm = Path.GetFullPath(root).TrimEnd(Path.DirectorySeparatorChar);
+            var current = Path.GetFullPath(candidate).TrimEnd(Path.DirectorySeparatorChar);
+            while (!string.IsNullOrEmpty(current) &&
+                   !string.Equals(current, rootNorm, StringComparison.OrdinalIgnoreCase))
+            {
+                if (File.Exists(current) || Directory.Exists(current))
+                {
+                    if ((File.GetAttributes(current) & FileAttributes.ReparsePoint) != 0) return true;
+                }
+                var parent = Directory.GetParent(current)?.FullName;
+                if (string.IsNullOrEmpty(parent) || parent == current) break;
+                current = parent.TrimEnd(Path.DirectorySeparatorChar);
+            }
+        }
+        catch { return true; }
+        return false;
     }
 
     private static string ResolveCanonical(string path)

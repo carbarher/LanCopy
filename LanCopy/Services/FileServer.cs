@@ -214,6 +214,7 @@ public sealed class FileServer
             using var hsCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
             hsCts.CancelAfter(TimeSpan.FromSeconds(60));
             var hs = hsCts.Token;
+            SslStream? sslToDispose = null;
             try
             {
                 // Feature 9: TLS — envuelve NetworkStream con SslStream si está activo
@@ -221,6 +222,7 @@ public sealed class FileServer
                 if (TlsEnabled && _serverCert != null)
                 {
                     var ssl = new SslStream(stream, leaveInnerStreamOpen: false);
+                    sslToDispose = ssl;
                     await ssl.AuthenticateAsServerAsync(new SslServerAuthenticationOptions
                     {
                         ServerCertificate = _serverCert,
@@ -257,6 +259,10 @@ public sealed class FileServer
                     {
                         var nf = _pinFails.AddOrUpdate(ip, (1, Environment.TickCount64 + PinBackoffMs),
                             (_, v) => (v.fails + 1, Environment.TickCount64 + PinBackoffMs));
+                        // Poda entradas expiradas para que IPs falsificadas no acumulen memoria.
+                        if (_pinFails.Count > 4096)
+                            foreach (var kv in _pinFails)
+                                if (Environment.TickCount64 > kv.Value.untilTick) _pinFails.TryRemove(kv.Key, out _);
                         SafeFileOps.Audit("auth", ip, "blocked", $"pin-fail #{nf.fails}", "remote");
                         await Protocol.WriteLineAsync(stream,
                             JsonSerializer.Serialize(new { status = "error", error = "PIN inválido" }), ct);
@@ -298,6 +304,7 @@ public sealed class FileServer
                 }
             }
             catch (Exception ex) { Log.Warn("server", "handler-error", new { ip, error = ex.Message }); }
+            finally { if (sslToDispose != null) { try { await sslToDispose.DisposeAsync(); } catch { } } }
         }
     }
 

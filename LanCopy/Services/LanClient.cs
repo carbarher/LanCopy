@@ -31,6 +31,8 @@ public sealed class LanClient : IDisposable
             ReceiveBufferSize = 512 * 1024,
             SendBufferSize = 512 * 1024,
         };
+        try
+        {
         await tcp.ConnectAsync(_host, _port, ct);
         Stream stream = tcp.GetStream();
 
@@ -63,6 +65,13 @@ public sealed class LanClient : IDisposable
         }
 
         return (tcp, stream);
+        }
+        catch
+        {
+            // Si falla el handshake TLS o el auth PIN, no dejar el socket colgado.
+            try { tcp.Dispose(); } catch { }
+            throw;
+        }
     }
 
     // â”€â”€ LIST â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€

@@ -38,7 +38,11 @@ public static class CertTrust
         try
         {
             Directory.CreateDirectory(Path.GetDirectoryName(StorePath)!);
-            File.WriteAllText(StorePath, JsonSerializer.Serialize(map));
+            // Escritura atomica: temp + replace. Evita corromper el store (y perder TODOS
+            // los pins TOFU) si el proceso muere a media escritura.
+            var tmp = StorePath + ".tmp";
+            File.WriteAllText(tmp, JsonSerializer.Serialize(map));
+            File.Move(tmp, StorePath, overwrite: true);
         }
         catch { }
     }

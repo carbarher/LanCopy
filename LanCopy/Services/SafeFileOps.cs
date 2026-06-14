@@ -16,6 +16,7 @@ internal static class SafeFileOps
         = new(StringComparer.OrdinalIgnoreCase);
     private const int StatCacheTtlSeconds = 5;
     private const int StatCacheMax = 4096; // tope anti-crecimiento ilimitado
+    private const int CooldownsMax = 4096; // tope anti-crecimiento ilimitado
 
     public const string HardConfirmToken = "BORRAR";
 
@@ -122,10 +123,22 @@ internal static class SafeFileOps
     public static bool IsOnCooldown(string key, int seconds)
     {
         var now = DateTime.UtcNow;
-        if (_cooldowns.TryGetValue(key, out var last) && (now - last).TotalSeconds < seconds)
-            return true;
-        _cooldowns[key] = now;
-        return false;
+        // Check-and-set atomico: evita que dos peticiones concurrentes pasen el cooldown.
+        bool onCooldown = false;
+        _cooldowns.AddOrUpdate(key, now, (_, last) =>
+        {
+            if ((now - last).TotalSeconds < seconds) { onCooldown = true; return last; }
+            return now;
+        });
+        if (_cooldowns.Count > CooldownsMax) PruneCooldowns(now, seconds);
+        return onCooldown;
+    }
+
+    private static void PruneCooldowns(DateTime now, int seconds)
+    {
+        foreach (var kv in _cooldowns)
+            if ((now - kv.Value).TotalSeconds >= seconds)
+                _cooldowns.TryRemove(kv.Key, out _);
     }
 
     public static bool IsHighRiskDelete(IReadOnlyList<string> normalizedPaths)

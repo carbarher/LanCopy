@@ -576,8 +576,8 @@ public partial class MainWindow : Window
         if (Interlocked.CompareExchange(ref isFlag, 1, 0) == 1) return;
 
         CancellationTokenSource cts;
-        if (isUpload) { _uploadCts = new CancellationTokenSource(); cts = _uploadCts; }
-        else { _downloadCts = new CancellationTokenSource(); cts = _downloadCts; }
+        if (isUpload) { _uploadCts?.Dispose(); _uploadCts = new CancellationTokenSource(); cts = _uploadCts; }
+        else { _downloadCts?.Dispose(); _downloadCts = new CancellationTokenSource(); cts = _downloadCts; }
         var ct = cts.Token;
 
         // Capturar IP/puerto en hilo UI antes de entrar en async
@@ -772,10 +772,10 @@ public partial class MainWindow : Window
         // Feature 2: upload usa _client/_clientLock, download usa _clientDown/_clientLockDown
         var clientLock = isUpload ? _clientLock : _clientLockDown;
 
+        LanClient? snap = null;
         try
         {
             await clientLock.WaitAsync(ct);
-            LanClient? snap;
             if (isUpload)
             {
                 if (_client == null) { clientLock.Release(); return false; }
@@ -804,9 +804,15 @@ public partial class MainWindow : Window
         catch (Exception ex)
         {
             Debug.WriteLine($"[LanCopy] {entry.Name}: {ex.Message}");
-            // Invalidar cliente para forzar reconexión
-            if (isUpload) { await _clientLock.WaitAsync(ct); _client?.Dispose(); _client = null; _clientLock.Release(); }
-            else { await _clientLockDown.WaitAsync(ct); _clientDown?.Dispose(); _clientDown = null; _clientLockDown.Release(); }
+            // Invalidar cliente para forzar reconexión. Usa None (no el ct que puede estar
+            // cancelado) y solo invalida si sigue siendo el mismo cliente que fallo, para no
+            // tirar uno recien reconectado por otra tarea paralela (evita fallos en cascada).
+            await _clientLock.WaitAsync(CancellationToken.None);
+            try { if (isUpload && _client == snap) { _client?.Dispose(); _client = null; } }
+            finally { _clientLock.Release(); }
+            await _clientLockDown.WaitAsync(CancellationToken.None);
+            try { if (!isUpload && _clientDown == snap) { _clientDown?.Dispose(); _clientDown = null; } }
+            finally { _clientLockDown.Release(); }
             return false;
         }
     }
@@ -1186,7 +1192,7 @@ public partial class MainWindow : Window
         {
             var pin = this.FindControl<TextBox>("txtPin")?.Text?.Trim() ?? "";
             Directory.CreateDirectory(Path.GetDirectoryName(SettingsPath)!);
-            File.WriteAllText(SettingsPath, JsonSerializer.Serialize(new
+            var __json = JsonSerializer.Serialize(new
             {
                 remoteIp = ip,
                 remotePort = port,
@@ -1205,7 +1211,11 @@ public partial class MainWindow : Window
                 winY = this.Position.Y,
                 winMax = this.WindowState == WindowState.Maximized,
                 profiles = _profiles
-            }));
+            });
+            // Escritura atomica: temp + replace (evita settings.json corrupto si crashea).
+            var __tmp = SettingsPath + ".tmp";
+            File.WriteAllText(__tmp, __json);
+            File.Move(__tmp, SettingsPath, overwrite: true);
         }
         catch { }
     }
