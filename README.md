@@ -18,7 +18,7 @@ C# / .NET 9 and Avalonia UI. Available in 20 languages.
 
 | Platform | Download | Notes |
 |----------|----------|-------|
-| **Windows** | [LanCopy-Setup-1.0.0.exe](https://github.com/carbarher/LanCopy/releases/download/v1.0.0/LanCopy-Setup-1.0.0.exe) | Installer (recommended) |
+| **Windows** | [LanCopy-Setup-1.0.0.exe](https://github.com/carbarher/LanCopy/releases/download/v1.0.0/LanCopy-Setup-1.0.0.exe) | Installer — **adds firewall rule, creates shortcuts** |
 | | [LanCopy-win-x64.zip](https://github.com/carbarher/LanCopy/releases/download/v1.0.0/LanCopy-win-x64.zip) | Portable x64 |
 | | [LanCopy-win-arm64.zip](https://github.com/carbarher/LanCopy/releases/download/v1.0.0/LanCopy-win-arm64.zip) | Portable ARM64 (Snapdragon) |
 | **Linux** | [LanCopy-linux-x64.tar.gz](https://github.com/carbarher/LanCopy/releases/download/v1.0.0/LanCopy-linux-x64.tar.gz) | x64 (includes .desktop entry) |
@@ -106,7 +106,7 @@ TCP **8742** (file transfer), UDP **8743** (discovery).
 
 | Plataforma | Descargar | Notas |
 |----------|----------|-------|
-| **Windows** | [LanCopy-Setup-1.0.0.exe](https://github.com/carbarher/LanCopy/releases/download/v1.0.0/LanCopy-Setup-1.0.0.exe) | Instalador (recomendado) |
+| **Windows** | [LanCopy-Setup-1.0.0.exe](https://github.com/carbarher/LanCopy/releases/download/v1.0.0/LanCopy-Setup-1.0.0.exe) | Instalador — **añade regla firewall, crea accesos rápidos** |
 | | [LanCopy-win-x64.zip](https://github.com/carbarher/LanCopy/releases/download/v1.0.0/LanCopy-win-x64.zip) | Portable x64 |
 | | [LanCopy-win-arm64.zip](https://github.com/carbarher/LanCopy/releases/download/v1.0.0/LanCopy-win-arm64.zip) | Portable ARM64 (Snapdragon) |
 | **Linux** | [LanCopy-linux-x64.tar.gz](https://github.com/carbarher/LanCopy/releases/download/v1.0.0/LanCopy-linux-x64.tar.gz) | x64 (incluye entrada .desktop) |
