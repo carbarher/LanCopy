@@ -1,0 +1,6 @@
+<Solution>
+  <Folder Name="/tests/">
+    <Project Path="tests/LanCopy.Tests/LanCopy.Tests.csproj" />
+  </Folder>
+  <Project Path="LanCopy.csproj" />
+</Solution>

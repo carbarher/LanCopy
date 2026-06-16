@@ -1,0 +1,13 @@
+# Configuracion de notas de release automaticas de GitHub.
+# GitHub las genera solo al crear un tag — sin commits manuales.
+changelog:
+  exclude:
+    labels:
+      - ignore-for-release
+  categories:
+    - title: "Novedades"
+      labels: ["enhancement", "feature"]
+    - title: "Correcciones"
+      labels: ["bug"]
+    - title: "Otros cambios"
+      labels: ["*"]
