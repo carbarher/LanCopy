@@ -310,7 +310,7 @@
   "btn.qr": "QR",
   "tip.qr": "Afficher le QR / lien d'appairage",
   "btn.pastelink": "Coller le lien",
-  "tip.pastelink": "Coller un lien lancopy:// ou ip:port pour remplir la connexion",
+  "tip.pastelink": "Coller depuis le presse-papiers un lien lancopy:// ou ip:port pour remplir la connexion",
   "btn.broadcast": "Envoyer à tous",
   "tip.broadcast": "Envoyer les fichiers sélectionnés à tous les pairs découverts",
   "btn.sendto": "Ajouter à « Envoyer vers »",

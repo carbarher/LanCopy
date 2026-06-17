@@ -31,6 +31,11 @@ namespace LanCopy;
 
 public partial class MainWindow : Window
 {
+    // Constantes de validación
+    private const int MinPinLength = 4;
+    private const int MaxPinLength = 128;
+    private const int MaxHistoryItems = 500;
+    private const int SettingsSchemaVersion = 1;
     private readonly FileServer _server = new();
     private static Loc L => Loc.Instance;
     private PeerDiscovery? _discovery; // Feature 12: UDP auto-descubrimiento
@@ -64,6 +69,7 @@ public partial class MainWindow : Window
 
     // Feature 3: perfiles de conexión
     private List<ConnectionProfile> _profiles = new();
+    private readonly object _profilesLock = new();
 
     // Feature 6: ordenación de columnas
     private string _localSortField = "name";
@@ -257,6 +263,9 @@ try { if (_tray != null) _tray.IsVisible = false; } catch { }
 
 // ── Modelo: perfil de conexión (Feature 3) ────────────────────────────────────
 internal record ConnectionProfile(string Name, string Ip, string Port, string Pin = "", bool Tls = false, bool Compress = false);
+
+
+
 
 
 

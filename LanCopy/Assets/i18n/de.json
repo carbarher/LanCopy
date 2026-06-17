@@ -310,7 +310,7 @@
   "btn.qr": "QR",
   "tip.qr": "Kopplungs-QR / -Link anzeigen",
   "btn.pastelink": "Link einfügen",
-  "tip.pastelink": "Einen lancopy://-Link oder ip:port einfügen, um die Verbindung auszufüllen",
+  "tip.pastelink": "Einen lancopy://-Link oder ip:port aus der Zwischenablage einfügen, um die Verbindung auszufüllen",
   "btn.broadcast": "An alle senden",
   "tip.broadcast": "Die ausgewählten Dateien an alle gefundenen Peers senden",
   "btn.sendto": "Zu „Senden an“ hinzufügen",

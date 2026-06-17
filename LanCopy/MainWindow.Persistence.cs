@@ -186,7 +186,7 @@ public partial class MainWindow
                     if (doc.TryGetProperty("winMax", out var mEl) && mEl.GetBoolean())
                         WindowState = WindowState.Maximized;
                 }
-                catch { }
+                catch (Exception ex) { Log.Error("persistence", "load-settings", new { error = ex.Message }); }
             });
             // Feature 3: perfiles
             if (doc.TryGetProperty("profiles", out var profilesEl))
@@ -202,7 +202,7 @@ public partial class MainWindow
                 });
             }
         }
-        catch { }
+        catch (Exception ex) { Log.Error("persistence", "load-settings", new { error = ex.Message }); }
     }
 
     private void SaveSettings(string ip, string port)
@@ -237,10 +237,11 @@ public partial class MainWindow
             // Escritura atomica centralizada (temp + replace).
             JsonStore.WriteRawAtomic(SettingsPath, __json);
         }
-        catch { }
+        catch (Exception ex) { Log.Error("persistence", "load-settings", new { error = ex.Message }); }
     }
 
 }
+
 
 
 

@@ -310,7 +310,7 @@
   "btn.qr": "QR",
   "tip.qr": "Koppelings-QR / -link tonen",
   "btn.pastelink": "Link plakken",
-  "tip.pastelink": "Plak een lancopy://-link of ip:poort om de verbinding in te vullen",
+  "tip.pastelink": "Plak vanuit het klembord een lancopy://-link of ip:poort om de verbinding in te vullen",
   "btn.broadcast": "Naar iedereen sturen",
   "tip.broadcast": "Stuur de geselecteerde bestanden naar alle gevonden peers",
   "btn.sendto": "Toevoegen aan \"Verzenden naar\"",

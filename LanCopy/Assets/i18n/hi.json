@@ -310,7 +310,7 @@
   "btn.qr": "QR",
   "tip.qr": "युग्मन QR / लिंक दिखाएँ",
   "btn.pastelink": "लिंक चिपकाएँ",
-  "tip.pastelink": "कनेक्शन भरने के लिए lancopy:// लिंक या ip:port चिपकाएँ",
+  "tip.pastelink": "कनेक्शन भरने के लिए क्लिपबोर्ड से lancopy:// लिंक या ip:port चिपकाएँ",
   "btn.broadcast": "सभी को भेजें",
   "tip.broadcast": "चयनित फ़ाइलें सभी खोजे गए पीयर को भेजें",
   "btn.sendto": "\"भेजें\" में जोड़ें",

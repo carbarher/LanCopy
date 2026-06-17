@@ -310,7 +310,7 @@
   "btn.qr": "QR",
   "tip.qr": "Pokaż QR / link parowania",
   "btn.pastelink": "Wklej link",
-  "tip.pastelink": "Wklej link lancopy:// lub ip:port, aby wypełnić połączenie",
+  "tip.pastelink": "Wklej ze schowka link lancopy:// lub ip:port, aby wypełnić połączenie",
   "btn.broadcast": "Wyślij do wszystkich",
   "tip.broadcast": "Wyślij wybrane pliki do wszystkich wykrytych urządzeń",
   "btn.sendto": "Dodaj do „Wyślij do”",

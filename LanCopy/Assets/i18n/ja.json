@@ -310,7 +310,7 @@
   "btn.qr": "QR",
   "tip.qr": "ペアリング QR / リンクを表示",
   "btn.pastelink": "リンクを貼り付け",
-  "tip.pastelink": "接続を埋めるには lancopy:// リンクまたは ip:ポート を貼り付けます",
+  "tip.pastelink": "クリップボードから lancopy:// リンクまたは ip:ポート を貼り付けて接続を埋めます",
   "btn.broadcast": "全員に送信",
   "tip.broadcast": "選択したファイルを検出されたすべてのピアに送信",
   "btn.sendto": "「送る」に追加",
