@@ -220,19 +220,6 @@ try { if (_tray != null) _tray.IsVisible = false; } catch { }
             try { SaveSettings(this.FindControl<TextBox>("txtRemoteIp")?.Text ?? "", this.FindControl<TextBox>("txtRemotePort")?.Text ?? "8742"); } catch { }
         }
 
-        if (!_telemetryPromptShown)
-        {
-            var dlg = new TelemetryConsentDialog();
-            _ = dlg.ShowDialog(this);
-            var consent = await dlg.GetResultAsync();
-            _telemetryPromptShown = true;
-            if (consent.HasValue) _telemetryEnabled = consent.Value;
-            try { SaveSettings(this.FindControl<TextBox>("txtRemoteIp")?.Text ?? "", this.FindControl<TextBox>("txtRemotePort")?.Text ?? "8742"); } catch { }
-        }
-
-        ConfigureTelemetry();
-        _ = TelemetryService.TrackAsync("app_started", new { advancedMode = _advancedMode });
-
         // No bloquear primer render: refresco local y cola pendiente arrancan sin bloquear Opened.
         LoadHistory();
         RefreshFavoritesCombo();
