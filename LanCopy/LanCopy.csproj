@@ -16,7 +16,7 @@
     <PublishReadyToRun>false</PublishReadyToRun>
     <EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>
     <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
-    <Version>1.0.0</Version>
+    <Version>1.0.1-beta</Version>
     <AssemblyVersion>1.0.0.0</AssemblyVersion>
     <FileVersion>1.0.0.0</FileVersion>
     <Company>carbar</Company>
@@ -47,3 +47,4 @@
     <PackageReference Include="QRCoder" Version="1.6.0" />
   </ItemGroup>
 </Project>
+
