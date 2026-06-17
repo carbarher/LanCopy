@@ -369,4 +369,16 @@ public partial class MainWindow
             this.FindControl<TextBox>("txtRemotePort")?.Text?.Trim() ?? "8742");
         SetStatus(_compressEnabled ? L["st.compressOn"] : L["st.compressOff"]);
     }
+
+    private void ChkTelemetry_Changed(object? sender, RoutedEventArgs e)
+    {
+        _telemetryEnabled = (sender as CheckBox)?.IsChecked == true;
+        ConfigureTelemetry();
+        SaveSettings(
+            this.FindControl<TextBox>("txtRemoteIp")?.Text?.Trim() ?? "",
+            this.FindControl<TextBox>("txtRemotePort")?.Text?.Trim() ?? "8742");
+        SetStatus(_telemetryEnabled ? L["st.telemetryOn"] : L["st.telemetryOff"]);
+    }
 }
+
+

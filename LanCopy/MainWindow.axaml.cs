@@ -94,6 +94,7 @@ public partial class MainWindow : Window
     private bool _compressEnabled;
     private string _theme = "Dark"; // tema UI: Dark|Light
 
+
     private static readonly string SettingsPath = Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
         "LanCopy", "settings.json");
@@ -199,7 +200,7 @@ public partial class MainWindow : Window
             }
             try { SaveSettings(this.FindControl<TextBox>("txtRemoteIp")?.Text ?? "", this.FindControl<TextBox>("txtRemotePort")?.Text ?? "8742"); } catch { }
             _server.Stop(); _discovery?.Stop(); _client?.Dispose(); _clientDown?.Dispose(); _uploadCts.Cancel(); _downloadCts.Cancel();
-            try { if (_tray != null) _tray.IsVisible = false; } catch { }
+try { if (_tray != null) _tray.IsVisible = false; } catch { }
         };
         Opened += OnWindowOpened;
     }
@@ -218,6 +219,19 @@ public partial class MainWindow : Window
             try { await new WelcomeDialog().ShowDialog(this); } catch { }
             try { SaveSettings(this.FindControl<TextBox>("txtRemoteIp")?.Text ?? "", this.FindControl<TextBox>("txtRemotePort")?.Text ?? "8742"); } catch { }
         }
+
+        if (!_telemetryPromptShown)
+        {
+            var dlg = new TelemetryConsentDialog();
+            _ = dlg.ShowDialog(this);
+            var consent = await dlg.GetResultAsync();
+            _telemetryPromptShown = true;
+            if (consent.HasValue) _telemetryEnabled = consent.Value;
+            try { SaveSettings(this.FindControl<TextBox>("txtRemoteIp")?.Text ?? "", this.FindControl<TextBox>("txtRemotePort")?.Text ?? "8742"); } catch { }
+        }
+
+        ConfigureTelemetry();
+        _ = TelemetryService.TrackAsync("app_started", new { advancedMode = _advancedMode });
 
         // No bloquear primer render: refresco local y cola pendiente arrancan sin bloquear Opened.
         LoadHistory();
@@ -256,3 +270,6 @@ public partial class MainWindow : Window
 
 // ── Modelo: perfil de conexión (Feature 3) ────────────────────────────────────
 internal record ConnectionProfile(string Name, string Ip, string Port, string Pin = "", bool Tls = false, bool Compress = false);
+
+
+

@@ -123,7 +123,7 @@
                     <CheckBox x:Name="chkCompress" Content="{l:Tr chk.compress}" Foreground="{DynamicResource TextFg}" FontSize="12"
                               IsCheckedChanged="ChkCompress_Changed"
                               ToolTip.Tip="{l:Tr tip.compress}"/>
-                </StackPanel>
+</StackPanel>
                 <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Spacing="6" Margin="0,2,0,2">
                     <TextBlock x:Name="txtSparkline" Foreground="#00FF88" FontFamily="Consolas,Courier New,monospace"
                                FontSize="13" VerticalAlignment="Center" ToolTip.Tip="{l:Tr tip.sparkline}"/>
@@ -414,3 +414,5 @@
         </Border>
     </Grid>
 </Window>
+
+

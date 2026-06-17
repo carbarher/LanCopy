@@ -27,6 +27,7 @@ C# / .NET 9 and Avalonia UI. Available in 20 languages.
   symlink/junction escapes, zip-bombs and oversized headers are blocked.
 - **Folder sync, watch mode, clipboard text send, bandwidth limit.**
 - **20 languages**, including RTL (Arabic).
+- **Optional anonymous telemetry (opt-in)** for adoption metrics only.
 
 ### Requirements
 - .NET SDK 9.0 or later
@@ -76,7 +77,7 @@ See [PUBLISHING.md](PUBLISHING.md) for step-by-step release instructions.
 - **Anti-DoS**: line-length cap (1 MB), concurrent/per-IP connection limits,
   and an anti zip-bomb cap on decompression.
 
-See [SECURITY.md](SECURITY.md) to report vulnerabilities.
+See [SECURITY.md](SECURITY.md) to report vulnerabilities. Privacy details: [PRIVACY.md](PRIVACY.md).
 
 ### Default port
 TCP **8742** (file transfer), UDP **8743** (discovery).
@@ -159,3 +160,5 @@ git push origin v1.0.0
 
 ### Licencia
 [MIT](LICENSE) © 2026 carbar. Libre para usar, modificar y distribuir.
+
+

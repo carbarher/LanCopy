@@ -167,6 +167,7 @@ public partial class MainWindow
             if (ok > 0) {
                 AddHistory(L.Format("hist.transferred", arrow, ok, FileEntry.FormatSize(doneBytes)), "#28A745",
                     isUpload ? "send" : "receive", remoteIp, doneBytes, true);
+                _ = TelemetryService.TrackAsync("transfer_completed", new { direction = isUpload ? "send" : "receive", files = ok, bytes = doneBytes });
                 AuditService.Record(remoteIp, isUpload ? "send" : "receive",
                     ok == 1 && fileList.Count == 1 ? fileList[0].entry.Name : $"[{ok} files]",
                     doneBytes, true, __sw.ElapsedMilliseconds);
@@ -493,3 +494,5 @@ public partial class MainWindow
     private static string MakeUniqueDest(string dest) => PathSafety.MakeUnique(dest);
 
 }
+
+

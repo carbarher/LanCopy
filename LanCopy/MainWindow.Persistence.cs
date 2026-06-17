@@ -154,6 +154,23 @@ public partial class MainWindow
                     if (chk != null) chk.IsChecked = _compressEnabled;
                 });
             }
+            if (doc.TryGetProperty("telemetryEnabled", out var telemEnabled))
+                _telemetryEnabled = telemEnabled.GetBoolean();
+            if (doc.TryGetProperty("telemetryPromptShown", out var telemPrompt))
+                _telemetryPromptShown = telemPrompt.GetBoolean();
+            if (doc.TryGetProperty("telemetryInstallId", out var telemId))
+                _telemetryInstallId = telemId.GetString() ?? "";
+            if (doc.TryGetProperty("telemetryEndpoint", out var telemEp))
+                _telemetryEndpoint = telemEp.GetString() ?? "";
+            if (string.IsNullOrWhiteSpace(_telemetryInstallId))
+                _telemetryInstallId = Guid.NewGuid().ToString("N");
+            if (string.IsNullOrWhiteSpace(_telemetryEndpoint))
+                _telemetryEndpoint = Environment.GetEnvironmentVariable("LANCOPY_TELEMETRY_ENDPOINT") ?? "";
+            await Dispatcher.UIThread.InvokeAsync(() =>
+            {
+                var chk = this.FindControl<CheckBox>("chkTelemetry");
+                if (chk != null) chk.IsChecked = _telemetryEnabled;
+            });
             // UX: modo simple/avanzado y asistente de bienvenida
             if (doc.TryGetProperty("advancedMode", out var advEl))
             {
@@ -222,6 +239,7 @@ public partial class MainWindow
                 readOnly = _readOnly,
                 requireApproval = _requireApproval,
                 compressEnabled = _compressEnabled,
+
                 advancedMode = _advancedMode,
                 welcomeShown = _welcomeShown,
                 language = L.Current,
@@ -239,4 +257,14 @@ public partial class MainWindow
         catch { }
     }
 
+    private void ConfigureTelemetry()
+    {
+        var version = typeof(MainWindow).Assembly.GetName().Version?.ToString(3) ?? "0.0.0";
+        TelemetryService.Configure(_telemetryEnabled, _telemetryEndpoint, _telemetryInstallId, version);
+    }
+
 }
+
+
+
+
