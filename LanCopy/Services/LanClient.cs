@@ -13,6 +13,7 @@ namespace LanCopy.Services;
 public sealed class LanClient : IDisposable
 {
     public sealed record RemoteStat(bool Exists, bool IsDirectory, long Size, long LastWriteUtcTicks);
+    public sealed record RemoteHealth(int ConnCurrent, int ConnLimit, int PerIpLimit, int ActiveIps, int PinFailsTracked, int HashCacheEntries, int CommandRateTracked, int CommandRateLimit, int CommandRateWindowSeconds);
 
     private readonly string _host;
     private readonly int _port;
@@ -74,7 +75,7 @@ public sealed class LanClient : IDisposable
         }
     }
 
-    // â”€â”€ LIST â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    // -- LIST --
 
     public async Task<List<FileEntry>> ListAsync(string path, CancellationToken ct = default)
     {
@@ -87,7 +88,7 @@ public sealed class LanClient : IDisposable
         return JsonSerializer.Deserialize<List<FileEntry>>(resp.GetProperty("entries").GetRawText())!;
     }
 
-    // â”€â”€ LIST RECURSIVE (para transferir carpetas) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    // -- LIST RECURSIVE (para transferir carpetas) --
 
     public async Task<List<FileEntry>> ListRecursiveAsync(string path, CancellationToken ct = default)
     {
@@ -100,7 +101,7 @@ public sealed class LanClient : IDisposable
         return JsonSerializer.Deserialize<List<FileEntry>>(resp.GetProperty("entries").GetRawText())!;
     }
 
-    // â”€â”€ GET â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    // -- GET --
 
     public async Task DownloadAsync(
         string remotePath, string localPath,
@@ -182,7 +183,7 @@ public sealed class LanClient : IDisposable
                 {
                     var toRead = (int)Math.Min(remaining, buf.Length);
                     var read = await stream.ReadAsync(buf.AsMemory(0, toRead), ct);
-                    if (read == 0) throw new EndOfStreamException("Conexion cortada durante la transferencia");
+                    if (read == 0) throw new EndOfStreamException("svc.connCut");
                     await fs.WriteAsync(buf.AsMemory(0, read), ct);
                     hasher.AppendData(buf, 0, read);
                     await RateLimiter.Global.ThrottleAsync(read, ct);
@@ -224,7 +225,7 @@ public sealed class LanClient : IDisposable
         File.Move(partPath, localPath, overwrite: true);
     }
 
-    // â”€â”€ PUT â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    // -- PUT --
 
     public async Task UploadAsync(
         string localPath, string remotePath,
@@ -374,6 +375,30 @@ public sealed class LanClient : IDisposable
         return new RemoteStat(true, isDirectory, size, ticks);
     }
 
+
+    // ── HEALTH ───────────────────────────────────────────────────────────────────
+    public async Task<RemoteHealth?> GetHealthAsync(CancellationToken ct = default)
+    {
+        var (tcp, stream) = await OpenAsync(ct);
+        using var _ = tcp;
+        await Protocol.WriteLineAsync(stream, JsonSerializer.Serialize(new { cmd = "health" }), ct);
+        var line = await Protocol.ReadLineAsync(stream, ct);
+        var resp = JsonSerializer.Deserialize<JsonElement>(line);
+        EnsureOk(resp);
+
+        int GetInt(string name, int def = 0) => resp.TryGetProperty(name, out var el) && el.TryGetInt32(out var n) ? n : def;
+        return new RemoteHealth(
+            GetInt("connCurrent"),
+            GetInt("connLimit"),
+            GetInt("perIpLimit"),
+            GetInt("activeIps"),
+            GetInt("pinFailsTracked"),
+            GetInt("hashCacheEntries"),
+            GetInt("commandRateTracked"),
+            GetInt("commandRateLimit"),
+            GetInt("commandRateWindowSeconds"));
+    }
+
     // ── Helpers ───────────────────────────────────────────────────────────────────
 
     private static void EnsureOk(JsonElement resp)
@@ -381,7 +406,7 @@ public sealed class LanClient : IDisposable
         var status = resp.TryGetProperty("status", out var s) ? s.GetString() : null;
         if (status != "ok")
         {
-            var msg = resp.TryGetProperty("error", out var e) ? e.GetString() : "Error desconocido";
+            var msg = resp.TryGetProperty("error", out var e) ? e.GetString() : "svc.unknownError";
             throw new Exception(msg);
         }
     }

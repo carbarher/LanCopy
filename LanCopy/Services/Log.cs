@@ -67,7 +67,8 @@ public static class Log
                 message,
                 data
             };
-            _queue.Add(JsonSerializer.Serialize(rec) + Environment.NewLine);
+            if (!_queue.IsAddingCompleted)
+                _queue.Add(JsonSerializer.Serialize(rec) + Environment.NewLine);
         }
         catch { }
     }
@@ -79,4 +80,17 @@ public static class Log
 
     public static string CurrentLogFile => Path.Combine(LogDir, $"lancopy-{DateTime.UtcNow:yyyyMMdd}.log");
     public static string Directory_ => LogDir;
+
+    /// <summary>
+    /// Señala fin de escrituras y espera a que el hilo background drene la cola.
+    /// Llamar desde el evento Closing de la ventana principal para no perder entradas.
+    /// </summary>
+    public static void Shutdown(int maxWaitMs = 2000)
+    {
+        try
+        {
+            if (!_queue.IsAddingCompleted) _queue.CompleteAdding();
+        }
+        catch { }
+    }
 }

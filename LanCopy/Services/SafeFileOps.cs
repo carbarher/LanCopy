@@ -10,6 +10,7 @@ internal static class SafeFileOps
         "LanCopy", "audit-log.jsonl");
 
     private static readonly ConcurrentDictionary<string, DateTime> _cooldowns = new(StringComparer.OrdinalIgnoreCase);
+    private static readonly object _auditLock = new();
 
     // Stat cache: evita re-stat en batch verify (TTL 5s)
     private static readonly ConcurrentDictionary<string, (DateTime Ts, long Size, long LastWriteUtcTicks, bool Exists, bool IsDir)> _statCache
@@ -29,32 +30,32 @@ internal static class SafeFileOps
 
         if (string.IsNullOrWhiteSpace(path))
         {
-            reason = "Ruta vacía";
+            reason = "svc.emptyPath";
             return false;
         }
 
         try { normalized = Normalize(path); }
         catch
         {
-            reason = "Ruta inválida";
+            reason = "svc.invalidPath";
             return false;
         }
 
         if (Path.GetPathRoot(normalized)?.Equals(normalized, StringComparison.OrdinalIgnoreCase) == true)
         {
-            reason = "Raíz de unidad protegida";
+            reason = "svc.driveRootProtected";
             return false;
         }
 
         if (SystemProtection.IsProtected(normalized))
         {
-            reason = "Ruta protegida del sistema";
+            reason = "svc.sysProtected";
             return false;
         }
 
         if (requireExists && !File.Exists(normalized) && !Directory.Exists(normalized))
         {
-            reason = "Ruta no existe";
+            reason = "svc.pathNotExist";
             return false;
         }
 
@@ -174,7 +175,7 @@ internal static class SafeFileOps
             var root = Path.GetPathRoot(normalizedPath);
             if (string.IsNullOrWhiteSpace(root))
             {
-                error = "No se pudo resolver unidad";
+                error = "svc.driveResolve";
                 return false;
             }
 
@@ -191,7 +192,7 @@ internal static class SafeFileOps
                 File.Move(normalizedPath, movedPath);
             else
             {
-                error = "No existe";
+                error = "svc.notExist";
                 return false;
             }
 
@@ -220,7 +221,7 @@ internal static class SafeFileOps
                 details,
                 actor
             });
-            File.AppendAllText(AuditPath, line + Environment.NewLine);
+            lock (_auditLock) File.AppendAllText(AuditPath, line + Environment.NewLine);
         }
         catch
         {

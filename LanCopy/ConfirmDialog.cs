@@ -30,7 +30,7 @@ internal sealed class ConfirmDialog : Window
         panel.Children.Add(new TextBlock
         {
             Text = msg,
-            Foreground = SolidColorBrush.Parse("#CCCCCC"),
+            Foreground = SolidColorBrush.Parse("#E6E6E6"),
             TextWrapping = TextWrapping.Wrap
         });
 

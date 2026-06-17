@@ -72,7 +72,7 @@ public static class ShareRoot
 
             if (!IsInside(canonicalRoot, canonical))
             {
-                reason = "Ruta fuera de la carpeta compartida";
+                reason = "svc.outsideShare";
                 return false;
             }
 
@@ -81,7 +81,7 @@ public static class ShareRoot
             // bajo un dir enlazado). Bloquea cualquier reparse point entre la raiz y el destino.
             if (HasReparsePointBetween(root, candidate))
             {
-                reason = "La ruta atraviesa un enlace/junction";
+                reason = "svc.reparse";
                 return false;
             }
 
@@ -90,7 +90,7 @@ public static class ShareRoot
         }
         catch
         {
-            reason = "Ruta invalida";
+            reason = "svc.invalidPath";
             return false;
         }
     }

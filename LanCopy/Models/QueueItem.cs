@@ -6,5 +6,7 @@ public record QueueItem(
     string[] DestPaths,
     bool IsUpload,
     string RemoteIp,
-    int RemotePort
+    int RemotePort,
+    string? CreatedUtc = null,
+    int Attempt = 0
 );

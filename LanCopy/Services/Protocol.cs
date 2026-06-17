@@ -47,13 +47,13 @@ internal static class Protocol
         while (true)
         {
             var n = await stream.ReadAsync(buf.AsMemory(0, 1), ct);
-            if (n == 0) throw new EndOfStreamException("Conexion cerrada");
+            if (n == 0) throw new EndOfStreamException("svc.connClosed");
             if (buf[0] == (byte)'\n') break;
             if (buf[0] != (byte)'\r')
             {
                 bytes.Add(buf[0]);
                 if (bytes.Count > MaxLineBytes)
-                    throw new InvalidDataException("Linea de protocolo excede el maximo permitido");
+                    throw new InvalidDataException("svc.lineTooLong");
             }
         }
         return Encoding.UTF8.GetString(bytes.ToArray());
@@ -77,7 +77,7 @@ internal static class Protocol
         {
             var toRead = (int)Math.Min(remaining, buf.Length);
             var read = await src.ReadAsync(buf.AsMemory(0, toRead), ct);
-            if (read == 0) throw new EndOfStreamException("Conexion cortada durante la transferencia");
+            if (read == 0) throw new EndOfStreamException("svc.connCut");
             await dst.WriteAsync(buf.AsMemory(0, read), ct);
             await RateLimiter.Global.ThrottleAsync(read, ct);
             remaining -= read;
@@ -115,7 +115,7 @@ internal static class Protocol
         {
             var toRead = (int)Math.Min(remaining, buf.Length);
             var read = await src.ReadAsync(buf.AsMemory(0, toRead), ct);
-            if (read == 0) throw new EndOfStreamException("Conexion cortada durante la transferencia");
+            if (read == 0) throw new EndOfStreamException("svc.connCut");
             await dst.WriteAsync(buf.AsMemory(0, read), ct);
             hasher.AppendData(buf, 0, read);
             await RateLimiter.Global.ThrottleAsync(read, ct);
@@ -150,7 +150,7 @@ internal sealed class BufferedLineStream(Stream inner, bool leaveOpen = true, in
         while (true)
         {
             if (_pos >= _len && !await FillAsync(ct))
-                throw new EndOfStreamException("Conexion cerrada");
+                throw new EndOfStreamException("svc.connClosed");
             while (_pos < _len)
             {
                 var b = _buf[_pos++];
@@ -159,7 +159,7 @@ internal sealed class BufferedLineStream(Stream inner, bool leaveOpen = true, in
                 {
                     acc.Add(b);
                     if (acc.Count > Protocol.MaxLineBytes)
-                        throw new InvalidDataException("Linea de protocolo excede el maximo permitido");
+                        throw new InvalidDataException("svc.lineTooLong");
                 }
             }
         }

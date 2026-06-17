@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=LanCopy
+GenericName=LAN File Transfer
+Comment=Transferencia de archivos por red local, cifrada y multiplataforma
+Exec=lancopy
+Icon=lancopy
+Terminal=false
+Categories=Network;FileTransfer;
+Keywords=LAN;file;transfer;share;network;
+StartupWMClass=LanCopy

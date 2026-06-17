@@ -28,7 +28,7 @@ internal sealed class InputDialog : Window
         panel.Children.Add(new TextBlock
         {
             Text = prompt,
-            Foreground = SolidColorBrush.Parse("#CCCCCC"),
+            Foreground = SolidColorBrush.Parse("#E6E6E6"),
             TextWrapping = TextWrapping.Wrap,
             FontSize = 12
         });
@@ -37,9 +37,9 @@ internal sealed class InputDialog : Window
         {
             Text = initialValue,
             Background = SolidColorBrush.Parse("#1E1E1E"),
-            Foreground = SolidColorBrush.Parse("#CCCCCC"),
+            Foreground = SolidColorBrush.Parse("#E6E6E6"),
             BorderBrush = SolidColorBrush.Parse("#3F3F46"),
-            CaretBrush = SolidColorBrush.Parse("#CCCCCC"),
+            CaretBrush = SolidColorBrush.Parse("#E6E6E6"),
             Padding = new Thickness(6, 4),
             FontSize = 12,
             SelectionStart = 0,

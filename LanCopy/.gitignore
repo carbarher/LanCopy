@@ -3,3 +3,5 @@ obj/
 publish/
 installer/Output/
 *.user
+*.log
+publish/

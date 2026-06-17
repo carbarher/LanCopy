@@ -18,23 +18,31 @@ public static class CertTrust
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
         "LanCopy", "known_hosts.json");
 
+    // Caché en memoria: evita leer el JSON de disco en cada conexión TLS.
+    // Solo se lee al inicio (lazy) y se escribe al pinear un nuevo host.
+    private static Dictionary<string, string>? _cache;
+
     private static Dictionary<string, string> Load()
     {
+        if (_cache != null) return _cache;
         try
         {
             if (File.Exists(StorePath))
             {
                 var json = File.ReadAllText(StorePath);
-                return JsonSerializer.Deserialize<Dictionary<string, string>>(json)
-                       ?? new Dictionary<string, string>();
+                _cache = JsonSerializer.Deserialize<Dictionary<string, string>>(json)
+                         ?? new Dictionary<string, string>();
+                return _cache;
             }
         }
         catch { }
-        return new Dictionary<string, string>();
+        _cache = new Dictionary<string, string>();
+        return _cache;
     }
 
     private static void Save(Dictionary<string, string> map)
     {
+        _cache = map; // actualizar caché antes de ir a disco
         try
         {
             Directory.CreateDirectory(Path.GetDirectoryName(StorePath)!);

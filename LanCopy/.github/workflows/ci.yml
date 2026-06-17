@@ -9,22 +9,22 @@ on:
 
 jobs:
   build-test:
-    name: Build & Test (Windows)
-    runs-on: windows-latest
+    name: Build & Test (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ windows-latest, ubuntu-latest, macos-latest ]
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
-
       - name: Setup .NET
         uses: actions/setup-dotnet@v4
         with:
           dotnet-version: '9.0.x'
-
       - name: Restore
         run: dotnet restore LanCopy.csproj
-
       - name: Build
         run: dotnet build LanCopy.csproj -c Release --no-restore
-
       - name: Test
         run: dotnet test tests/LanCopy.Tests/LanCopy.Tests.csproj -c Release
 
@@ -38,8 +38,12 @@ jobs:
         include:
           - os: windows-latest
             rid: win-x64
+          - os: windows-latest
+            rid: win-arm64
           - os: ubuntu-latest
             rid: linux-x64
+          - os: ubuntu-latest
+            rid: linux-arm64
           - os: macos-latest
             rid: osx-arm64
           - os: macos-latest
@@ -47,66 +51,76 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
-
       - name: Setup .NET
         uses: actions/setup-dotnet@v4
         with:
           dotnet-version: '9.0.x'
-
-      - name: Publish (${{ matrix.rid }}, self-contained, single file)
+      - name: Publish (${{ matrix.rid }})
         run: >
           dotnet publish LanCopy.csproj -c Release -r ${{ matrix.rid }}
-          --self-contained true
-          -p:PublishSingleFile=true
+          --self-contained true -p:PublishSingleFile=true
           -o publish/${{ matrix.rid }}
-
-      - name: Upload artifact
+      - name: Package Windows (zip)
+        if: startsWith(matrix.rid, 'win-')
+        shell: pwsh
+        run: Compress-Archive -Path publish/${{ matrix.rid }}/* -DestinationPath LanCopy-${{ matrix.rid }}.zip
+      - name: Package Linux (tar.gz)
+        if: startsWith(matrix.rid, 'linux-')
+        run: |
+          chmod +x publish/${{ matrix.rid }}/LanCopy
+          mkdir -p pkg/usr/bin pkg/usr/share/applications pkg/usr/share/icons/hicolor/512x512/apps
+          cp publish/${{ matrix.rid }}/LanCopy pkg/usr/bin/lancopy
+          cp packaging/linux/lancopy.desktop pkg/usr/share/applications/lancopy.desktop
+          cp Assets/app.png pkg/usr/share/icons/hicolor/512x512/apps/lancopy.png
+          tar -C pkg -czf LanCopy-${{ matrix.rid }}.tar.gz .
+      - name: Package macOS (.app)
+        if: startsWith(matrix.rid, 'osx-')
+        run: |
+          chmod +x packaging/macos/make-app.sh
+          packaging/macos/make-app.sh publish/${{ matrix.rid }}/LanCopy "${{ github.ref_name }}"
+          ditto -c -k --sequesterRsrc --keepParent LanCopy.app LanCopy-${{ matrix.rid }}.zip
+      - name: Upload
         uses: actions/upload-artifact@v4
         with:
           name: LanCopy-${{ matrix.rid }}
-          path: publish/${{ matrix.rid }}
+          path: |
+            LanCopy-${{ matrix.rid }}.zip
+            LanCopy-${{ matrix.rid }}.tar.gz
+          if-no-files-found: ignore
 
   installer:
     name: Windows installer
     needs: publish
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: windows-latest
-    permissions:
-      contents: write
     steps:
       - uses: actions/checkout@v4
-
       - name: Download win-x64 artifact
         uses: actions/download-artifact@v4
         with:
           name: LanCopy-win-x64
-          path: publish/win-x64
-
-      # --- Firma de código (opcional) -------------------------------------------------
-      # Para habilitarla, define los secretos del repositorio:
-      #   WINDOWS_CERT_BASE64  -> el .pfx codificado en base64
-      #   WINDOWS_CERT_PASSWORD-> la contraseña del .pfx
-      # y descomenta el bloque siguiente.
+          path: dl/win-x64
+      - name: Unzip
+        shell: pwsh
+        run: Expand-Archive -Path dl/win-x64/LanCopy-win-x64.zip -DestinationPath publish/win-x64 -Force
+      # --- Firma de codigo (opcional) ---
+      # Secretos: WINDOWS_CERT_BASE64 + WINDOWS_CERT_PASSWORD -> descomentar:
       # - name: Sign executable
-      #   if: ${{ secrets.WINDOWS_CERT_BASE64 != '' }}
       #   shell: pwsh
       #   run: |
-      #     $pfx = [IO.Path]::Combine($env:RUNNER_TEMP, 'cert.pfx')
-      #     [IO.File]::WriteAllBytes($pfx, [Convert]::FromBase64String($env:WINDOWS_CERT_BASE64))
-      #     & signtool sign /f $pfx /p $env:WINDOWS_CERT_PASSWORD /fd SHA256 /tr http://timestamp.digicert.com /td SHA256 publish/win-x64/LanCopy.exe
+      #     $pfx=[IO.Path]::Combine($env:RUNNER_TEMP,'cert.pfx')
+      #     [IO.File]::WriteAllBytes($pfx,[Convert]::FromBase64String($env:WINDOWS_CERT_BASE64))
+      #     signtool sign /f $pfx /p $env:WINDOWS_CERT_PASSWORD /fd SHA256 /tr http://timestamp.digicert.com /td SHA256 publish/win-x64/LanCopy.exe
       #   env:
       #     WINDOWS_CERT_BASE64: ${{ secrets.WINDOWS_CERT_BASE64 }}
       #     WINDOWS_CERT_PASSWORD: ${{ secrets.WINDOWS_CERT_PASSWORD }}
-
       - name: Install Inno Setup
         run: choco install innosetup --no-progress -y
-
-      - name: Build installer (Inno Setup)
+      - name: Build installer
         run: >
           & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
           /DMyAppVersion=${{ github.ref_name }}
           installer\LanCopy.iss
-
       - name: Upload installer
         uses: actions/upload-artifact@v4
         with:
@@ -125,8 +139,15 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           path: artifacts
-
       - name: Create release
         uses: softprops/action-gh-release@v2
         with:
-          files: artifacts/**/*
+          generate_release_notes: true   # GitHub genera las notas solo
+          files: |
+            artifacts/LanCopy-win-x64/*
+            artifacts/LanCopy-win-arm64/*
+            artifacts/LanCopy-linux-x64/*
+            artifacts/LanCopy-linux-arm64/*
+            artifacts/LanCopy-osx-x64/*
+            artifacts/LanCopy-osx-arm64/*
+            artifacts/LanCopy-Setup/*

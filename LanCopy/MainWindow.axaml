@@ -14,34 +14,75 @@
         <!-- ══ Barra superior ══════════════════════════════════════════════════ -->
         <Border Grid.Row="0" Background="{DynamicResource ToolbarBg}" Padding="12,8">
             <StackPanel Spacing="6">
-            <!-- Fila 1: conexion principal (se reorganiza al estrechar) -->
+            <!-- ══ BARRA FÁCIL (siempre visible) ══════════════════════════════════ -->
             <WrapPanel>
-                <!-- Grupo: este PC -->
-                <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Spacing="6" Margin="0,2,10,2">
+                <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Spacing="6" Margin="0,2,12,2">
                     <TextBlock Text="{l:Tr top.myip}" Foreground="{DynamicResource TextFg}" VerticalAlignment="Center"/>
                     <TextBlock x:Name="txtMyIp" Text="…" Foreground="#FFD700" FontWeight="Bold" VerticalAlignment="Center"
                                ToolTip.Tip="{l:Tr tip.myip}"/>
                     <Button x:Name="btnCopyIp" Content="📋" Click="CopyIp_Click"
                             Background="Transparent" Foreground="{DynamicResource TextFg}" Padding="4,1"
                             ToolTip.Tip="{l:Tr tip.copyip}"/>
-                    <TextBlock Text="{l:Tr top.port}" Foreground="{DynamicResource SubtleFg}" FontSize="11" VerticalAlignment="Center" Margin="6,0,0,0"/>
-                    <TextBox x:Name="txtLocalPort" Text="8742" Width="56" Background="{DynamicResource InputBg}" Foreground="{DynamicResource InputFg}"
-                             Padding="6,2" FontSize="11" BorderBrush="{DynamicResource BorderFg}" KeyDown="TxtLocalPort_KeyDown"
-                             ToolTip.Tip="{l:Tr tip.localport}"/>
-                    <Button x:Name="btnApplyLocalPort" Content="✓" Click="ApplyLocalPort_Click"
-                            Background="{DynamicResource InputBg}" Foreground="#28A745" Padding="6,2" FontSize="11"
-                            ToolTip.Tip="{l:Tr tip.applyport}"/>
-                    <Button x:Name="btnPairCode" Content="🔗" Click="CopyPairingCode_Click"
-                            Background="{DynamicResource InputBg}" Foreground="#FFD700" Padding="6,2" FontSize="11"
-                            ToolTip.Tip="{l:Tr tip.paircode}"/>
                 </StackPanel>
-                <!-- Grupo: conectar a -->
-                <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Spacing="6" Margin="0,2,0,2">
+                <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Spacing="6" Margin="0,2,12,2">
                     <TextBlock Text="{l:Tr top.connectto}" Foreground="{DynamicResource TextFg}" VerticalAlignment="Center"/>
-                    <ComboBox x:Name="cmbPeers" Width="116" Background="{DynamicResource InputBg}" Foreground="{DynamicResource InputFg}"
+                    <ComboBox x:Name="cmbPeers" Width="150" Background="{DynamicResource InputBg}" Foreground="{DynamicResource InputFg}"
                               PlaceholderText="{l:Tr peers.placeholder}" Padding="4,4" BorderBrush="{DynamicResource BorderFg}"
                               SelectionChanged="CmbPeers_SelectionChanged"
                               ToolTip.Tip="{l:Tr tip.peers}"/>
+                    <Button x:Name="btnConnect" Content="{l:Tr btn.connect}" Click="Connect_Click"
+                            Background="#007ACC" Foreground="White" Padding="14,6" FontWeight="Bold"
+                            ToolTip.Tip="{l:Tr tip.connect}"/>
+                    <TextBlock x:Name="txtConnStatus" Text="{l:Tr conn.disconnected}" Foreground="#FF6B6B"
+                               VerticalAlignment="Center" FontSize="12" ToolTip.Tip="{l:Tr tip.connstatus}"/>
+                </StackPanel>
+                <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Spacing="6" Margin="0,2,12,2">
+                    <Button x:Name="btnQr" Content="{l:Tr btn.qr}" Click="ShowQr_Click"
+                            Background="{DynamicResource InputBg}" Foreground="#FFD700" Padding="8,5"
+                            ToolTip.Tip="{l:Tr tip.qr}"/>
+                    <Button x:Name="btnPasteLink" Content="{l:Tr btn.pastelink}" Click="PasteLink_Click"
+                            Background="{DynamicResource InputBg}" Foreground="{DynamicResource InputFg}" Padding="8,5"
+                            ToolTip.Tip="{l:Tr tip.pastelink}"/>
+                    <Button x:Name="btnFindPeer" Content="{l:Tr btn.findpeer}" Click="Diagnose_Click"
+                            Background="{DynamicResource InputBg}" Foreground="{DynamicResource InputFg}" Padding="8,5"
+                            ToolTip.Tip="{l:Tr tip.findpeer}"/>
+                    <Button x:Name="btnHelp" Content="{l:Tr btn.help}" Click="ShowWelcome_Click"
+                            Background="{DynamicResource InputBg}" Foreground="{DynamicResource InputFg}" Padding="8,5"
+                            ToolTip.Tip="{l:Tr tip.help}"/>
+                </StackPanel>
+                <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Spacing="6" Margin="0,2,0,2">
+                    <Button x:Name="btnTheme" Content="🌓" Click="ToggleTheme_Click"
+                            Background="{DynamicResource InputBg}" Foreground="{DynamicResource TextFg}" Padding="6,3" FontSize="12"
+                            ToolTip.Tip="{l:Tr tip.theme}"/>
+                    <TextBlock Text="{l:Tr top.language}" Foreground="{DynamicResource TextFg}" VerticalAlignment="Center" FontSize="12"/>
+                    <ComboBox x:Name="cmbLang" Width="130" Background="{DynamicResource InputBg}" Foreground="{DynamicResource InputFg}"
+                              Padding="4,3" BorderBrush="{DynamicResource BorderFg}" FontSize="12"
+                              SelectionChanged="CmbLang_SelectionChanged"
+                              ToolTip.Tip="{l:Tr tip.language}"/>
+                    <Button x:Name="btnAdvancedToggle" Content="{l:Tr btn.advanced.show}" Click="ToggleAdvanced_Click"
+                            Background="Transparent" Foreground="{DynamicResource MutedFg}" Padding="6,3" FontSize="12"
+                            ToolTip.Tip="{l:Tr tip.advanced}"/>
+                </StackPanel>
+            </WrapPanel>
+
+            <!-- ══ PANEL AVANZADO (plegable) ══════════════════════════════════════ -->
+            <StackPanel x:Name="advancedPanel" Spacing="6" IsVisible="False">
+            <!-- Fila A: puerto local + conexión manual -->
+            <WrapPanel>
+                <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Spacing="6" Margin="0,2,16,2">
+                    <TextBlock Text="{l:Tr top.port}" Foreground="{DynamicResource SubtleFg}" FontSize="12" VerticalAlignment="Center"/>
+                    <TextBox x:Name="txtLocalPort" Text="8742" Width="56" Background="{DynamicResource InputBg}" Foreground="{DynamicResource InputFg}"
+                             Padding="6,2" FontSize="12" BorderBrush="{DynamicResource BorderFg}" KeyDown="TxtLocalPort_KeyDown"
+                             ToolTip.Tip="{l:Tr tip.localport}"/>
+                    <Button x:Name="btnApplyLocalPort" Content="✓" Click="ApplyLocalPort_Click"
+                            Background="{DynamicResource InputBg}" Foreground="#28A745" Padding="6,2" FontSize="12"
+                            ToolTip.Tip="{l:Tr tip.applyport}"/>
+                    <Button x:Name="btnPairCode" Content="🔗" Click="CopyPairingCode_Click"
+                            Background="{DynamicResource InputBg}" Foreground="#FFD700" Padding="6,2" FontSize="12"
+                            ToolTip.Tip="{l:Tr tip.paircode}"/>
+                </StackPanel>
+                <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Spacing="6" Margin="0,2,0,2">
+                    <TextBlock Text="{l:Tr label.manual}" Foreground="{DynamicResource TextFg}" VerticalAlignment="Center" FontSize="12"/>
                     <TextBox x:Name="txtRemoteIp" Width="120" Background="{DynamicResource InputBg}" Foreground="{DynamicResource InputFg}"
                              PlaceholderText="{l:Tr remoteip.placeholder}" Padding="6,4" BorderBrush="{DynamicResource BorderFg}" KeyDown="TxtRemoteIp_KeyDown"
                              ToolTip.Tip="{l:Tr tip.remoteip}"/>
@@ -49,11 +90,6 @@
                     <TextBox x:Name="txtRemotePort" Text="8742" Width="58" Background="{DynamicResource InputBg}"
                              Foreground="{DynamicResource InputFg}" Padding="6,4" BorderBrush="{DynamicResource BorderFg}" KeyDown="TxtRemoteIp_KeyDown"
                              ToolTip.Tip="{l:Tr tip.remoteport}"/>
-                    <Button x:Name="btnConnect" Content="{l:Tr btn.connect}" Click="Connect_Click"
-                            Background="#007ACC" Foreground="White" Padding="12,5"
-                            ToolTip.Tip="{l:Tr tip.connect}"/>
-                    <TextBlock x:Name="txtConnStatus" Text="{l:Tr conn.disconnected}" Foreground="#FF6B6B"
-                               VerticalAlignment="Center" FontSize="12" ToolTip.Tip="{l:Tr tip.connstatus}"/>
                     <TextBlock Text="{l:Tr top.pin}" Foreground="{DynamicResource TextFg}" VerticalAlignment="Center" Margin="6,0,0,0"
                                ToolTip.Tip="{l:Tr tip.pinlabel}"/>
                     <TextBox x:Name="txtPin" Width="70" Background="{DynamicResource InputBg}" Foreground="{DynamicResource InputFg}"
@@ -62,80 +98,74 @@
                              ToolTip.Tip="{l:Tr tip.pin}"/>
                 </StackPanel>
             </WrapPanel>
-            <!-- Fila 2: perfiles + opciones (se reorganiza al estrechar) -->
+            <!-- Fila B: perfiles + opciones -->
             <WrapPanel>
                 <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Spacing="6" Margin="0,2,16,2">
-                    <TextBlock Text="{l:Tr top.profile}" Foreground="{DynamicResource TextFg}" VerticalAlignment="Center" FontSize="11"/>
+                    <TextBlock Text="{l:Tr top.profile}" Foreground="{DynamicResource TextFg}" VerticalAlignment="Center" FontSize="12"/>
                     <ComboBox x:Name="cmbProfiles" Width="150" Background="{DynamicResource InputBg}" Foreground="{DynamicResource InputFg}"
-                              Padding="4,3" BorderBrush="{DynamicResource BorderFg}" FontSize="11"
+                              Padding="4,3" BorderBrush="{DynamicResource BorderFg}" FontSize="12"
                               SelectionChanged="CmbProfiles_SelectionChanged"
                               ToolTip.Tip="{l:Tr tip.profiles}"/>
                     <Button Content="{l:Tr btn.saveprofile}" Click="SaveProfile_Click"
-                            Background="{DynamicResource InputBg}" Foreground="{DynamicResource InputFg}" Padding="6,3" FontSize="11"
+                            Background="{DynamicResource InputBg}" Foreground="{DynamicResource InputFg}" Padding="6,3" FontSize="12"
                             ToolTip.Tip="{l:Tr tip.saveprofile}"/>
                     <Button Content="❌" Click="DeleteProfile_Click"
-                            Background="{DynamicResource InputBg}" Foreground="#FF6B6B" Padding="6,3" FontSize="11"
+                            Background="{DynamicResource InputBg}" Foreground="#FF6B6B" Padding="6,3" FontSize="12"
                             ToolTip.Tip="{l:Tr tip.deleteprofile}"/>
                 </StackPanel>
                 <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Spacing="10" Margin="0,2,16,2">
-                    <CheckBox x:Name="chkTls" Content="{l:Tr chk.tls}" Foreground="{DynamicResource TextFg}" FontSize="11"
+                    <CheckBox x:Name="chkTls" Content="{l:Tr chk.tls}" Foreground="{DynamicResource TextFg}" FontSize="12" IsChecked="True"
                               IsCheckedChanged="ChkTls_Changed"
                               ToolTip.Tip="{l:Tr tip.tls}"/>
-                    <CheckBox x:Name="chkShareRoot" Content="{l:Tr chk.shareRoot}" Foreground="{DynamicResource TextFg}" FontSize="11" IsChecked="True" IsCheckedChanged="ChkShareRoot_Changed" ToolTip.Tip="{l:Tr tip.shareRoot}"/>
-                    <CheckBox x:Name="chkReadOnly" Content="{l:Tr chk.readOnly}" Foreground="{DynamicResource TextFg}" FontSize="11" IsCheckedChanged="ChkReadOnly_Changed" ToolTip.Tip="{l:Tr tip.readOnly}"/>
-                    <CheckBox x:Name="chkRequireApproval" Content="{l:Tr chk.requireApproval}" Foreground="{DynamicResource TextFg}" FontSize="11" IsCheckedChanged="ChkRequireApproval_Changed" ToolTip.Tip="{l:Tr tip.requireApproval}"/>
-                    <CheckBox x:Name="chkCompress" Content="{l:Tr chk.compress}" Foreground="{DynamicResource TextFg}" FontSize="11"
+                    <CheckBox x:Name="chkShareRoot" Content="{l:Tr chk.shareRoot}" Foreground="{DynamicResource TextFg}" FontSize="12" IsChecked="True" IsCheckedChanged="ChkShareRoot_Changed" ToolTip.Tip="{l:Tr tip.shareRoot}"/>
+                    <CheckBox x:Name="chkReadOnly" Content="{l:Tr chk.readOnly}" Foreground="{DynamicResource TextFg}" FontSize="12" IsCheckedChanged="ChkReadOnly_Changed" ToolTip.Tip="{l:Tr tip.readOnly}"/>
+                    <CheckBox x:Name="chkRequireApproval" Content="{l:Tr chk.requireApproval}" Foreground="{DynamicResource TextFg}" FontSize="12" IsCheckedChanged="ChkRequireApproval_Changed" ToolTip.Tip="{l:Tr tip.requireApproval}"/>
+                    <CheckBox x:Name="chkCompress" Content="{l:Tr chk.compress}" Foreground="{DynamicResource TextFg}" FontSize="12"
                               IsCheckedChanged="ChkCompress_Changed"
                               ToolTip.Tip="{l:Tr tip.compress}"/>
                 </StackPanel>
-                <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Spacing="6" Margin="0,2,16,2">
+                <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Spacing="6" Margin="0,2,0,2">
                     <TextBlock x:Name="txtSparkline" Foreground="#00FF88" FontFamily="Consolas,Courier New,monospace"
                                FontSize="13" VerticalAlignment="Center" ToolTip.Tip="{l:Tr tip.sparkline}"/>
-                    <TextBlock x:Name="txtWatchStatus" Foreground="Orange" FontSize="11"
+                    <TextBlock x:Name="txtWatchStatus" Foreground="Orange" FontSize="12"
                                VerticalAlignment="Center" ToolTip.Tip="{l:Tr tip.watchstatus}"/>
                 </StackPanel>
-                <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Spacing="6" Margin="0,2,0,2">
-                    <Button x:Name="btnTheme" Content="🌓" Click="ToggleTheme_Click"
-                            Background="{DynamicResource InputBg}" Foreground="{DynamicResource TextFg}" Padding="6,3" FontSize="11"
-                            ToolTip.Tip="{l:Tr tip.theme}"/>
-                    <TextBlock Text="{l:Tr top.language}" Foreground="{DynamicResource TextFg}" VerticalAlignment="Center" FontSize="11"/>
-                    <ComboBox x:Name="cmbLang" Width="130" Background="{DynamicResource InputBg}" Foreground="{DynamicResource InputFg}"
-                              Padding="4,3" BorderBrush="{DynamicResource BorderFg}" FontSize="11"
-                              SelectionChanged="CmbLang_SelectionChanged"
-                              ToolTip.Tip="{l:Tr tip.language}"/>
-                </StackPanel>
             </WrapPanel>
-            <!-- Fila 3: extras (idea-clipboard, qr, broadcast, sendto, ancho de banda) -->
+            <!-- Fila C: extras (texto, broadcast, sendto, ancho de banda) -->
             <WrapPanel>
                 <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Spacing="6" Margin="0,2,16,2">
                     <TextBox x:Name="txtSendText" Width="150" Background="{DynamicResource InputBg}" Foreground="{DynamicResource InputFg}"
-                             PlaceholderText="{l:Tr text.placeholder}" Padding="6,3" FontSize="11" BorderBrush="{DynamicResource BorderFg}"
+                             PlaceholderText="{l:Tr text.placeholder}" Padding="6,3" FontSize="12" BorderBrush="{DynamicResource BorderFg}"
                              ToolTip.Tip="{l:Tr tip.sendtext}"/>
                     <Button x:Name="btnSendText" Content="{l:Tr btn.sendtext}" Click="SendText_Click"
-                            Background="{DynamicResource InputBg}" Foreground="{DynamicResource InputFg}" Padding="6,3" FontSize="11"
+                            Background="{DynamicResource InputBg}" Foreground="{DynamicResource InputFg}" Padding="6,3" FontSize="12"
                             ToolTip.Tip="{l:Tr tip.sendtext}"/>
                 </StackPanel>
                 <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Spacing="6" Margin="0,2,16,2">
-                    <Button x:Name="btnQr" Content="{l:Tr btn.qr}" Click="ShowQr_Click"
-                            Background="{DynamicResource InputBg}" Foreground="#FFD700" Padding="6,3" FontSize="11"
-                            ToolTip.Tip="{l:Tr tip.qr}"/>
-                    <Button x:Name="btnPasteLink" Content="{l:Tr btn.pastelink}" Click="PasteLink_Click"
-                            Background="{DynamicResource InputBg}" Foreground="{DynamicResource InputFg}" Padding="6,3" FontSize="11"
-                            ToolTip.Tip="{l:Tr tip.pastelink}"/>
                     <Button x:Name="btnBroadcast" Content="{l:Tr btn.broadcast}" Click="Broadcast_Click"
-                            Background="{DynamicResource InputBg}" Foreground="{DynamicResource InputFg}" Padding="6,3" FontSize="11"
+                            Background="{DynamicResource InputBg}" Foreground="{DynamicResource InputFg}" Padding="6,3" FontSize="12"
                             ToolTip.Tip="{l:Tr tip.broadcast}"/>
                     <Button x:Name="btnSendTo" Content="{l:Tr btn.sendto}" Click="SendToIntegration_Click"
-                            Background="{DynamicResource InputBg}" Foreground="{DynamicResource InputFg}" Padding="6,3" FontSize="11"
+                            Background="{DynamicResource InputBg}" Foreground="{DynamicResource InputFg}" Padding="6,3" FontSize="12"
                             ToolTip.Tip="{l:Tr tip.sendto}"/>
+                    <Button x:Name="btnAudit" Content="📋 Auditoría" Click="ShowAudit_Click"
+                            Background="{DynamicResource InputBg}" Foreground="#FFD700" Padding="6,3" FontSize="12"
+                            ToolTip.Tip="Ver registros de auditoría de transferencias"/>
                 </StackPanel>
                 <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Spacing="6" Margin="0,2,0,2">
-                    <TextBlock Text="{l:Tr bw.label}" Foreground="{DynamicResource TextFg}" VerticalAlignment="Center" FontSize="11"/>
+                    <TextBlock Text="{l:Tr bw.label}" Foreground="{DynamicResource TextFg}" VerticalAlignment="Center" FontSize="12"/>
                     <Slider x:Name="sldBandwidth" Width="110" Minimum="0" Maximum="12" Value="0" VerticalAlignment="Center"
                             ValueChanged="Bandwidth_Changed" ToolTip.Tip="{l:Tr tip.bw}"/>
-                    <TextBlock x:Name="txtBwValue" Text="{l:Tr bw.unlimited}" Foreground="{DynamicResource MutedFg}" VerticalAlignment="Center" FontSize="11" MinWidth="60"/>
+                    <TextBlock x:Name="txtBwValue" Text="{l:Tr bw.unlimited}" Foreground="{DynamicResource MutedFg}" VerticalAlignment="Center" FontSize="12" MinWidth="60"/>
+                    <Separator Width="1" Background="{DynamicResource DividerBg}" Margin="8,0" VerticalAlignment="Stretch"/>
+                    <TextBlock Text="⚡" VerticalAlignment="Center" FontSize="12" ToolTip.Tip="Transferencias paralelas"/>
+                    <Slider x:Name="sldParallel" Width="80" Minimum="1" Maximum="8" Value="4" VerticalAlignment="Center"
+                            IsSnapToTickEnabled="True" TickFrequency="1"
+                            ValueChanged="Parallel_Changed" ToolTip.Tip="Transferencias paralelas simultáneas (1-8)"/>
+                    <TextBlock x:Name="txtParallelValue" Text="4" Foreground="{DynamicResource MutedFg}" VerticalAlignment="Center" FontSize="12" MinWidth="14"/>
                 </StackPanel>
             </WrapPanel>
+            </StackPanel>
             </StackPanel>
         </Border>
 
@@ -143,7 +173,7 @@
         <Grid Grid.Row="1" ColumnDefinitions="*,Auto,*">
 
             <!-- ── Panel izquierdo: Local ──────────────────────────────────── -->
-            <Grid Grid.Column="0" RowDefinitions="Auto,Auto,Auto,Auto,*" Background="{DynamicResource ChromeBg}">
+            <Grid Grid.Column="0" RowDefinitions="Auto,Auto,Auto,Auto,Auto,*" Background="{DynamicResource ChromeBg}">
                 <Border Grid.Row="0" Background="{DynamicResource ToolbarBg}" Padding="10,7">
                     <TextBlock Text="{l:Tr panel.thispc}" Foreground="{DynamicResource InputFg}" FontWeight="Bold" FontSize="13" ToolTip.Tip="{l:Tr tip.thispc}"/>
                 </Border>
@@ -153,7 +183,7 @@
                                 Background="{DynamicResource InputBg}" Foreground="{DynamicResource InputFg}" Padding="0" Width="24" Height="24"
                                 ToolTip.Tip="{l:Tr tip.localup}"/>
                         <TextBlock Grid.Column="1" x:Name="txtLocalPath"
-                                   Text="—" Foreground="{DynamicResource TextFg}" FontSize="11"
+                                   Text="—" Foreground="{DynamicResource TextFg}" FontSize="12"
                                    VerticalAlignment="Center" Margin="6,0" TextTrimming="CharacterEllipsis"
                                    ToolTip.Tip="{Binding #txtLocalPath.Text}"/>
                         <Button Grid.Column="2" Content="🏠" Click="LocalGoHome"
@@ -171,13 +201,13 @@
                 <Border Grid.Row="3" Background="{DynamicResource PanelBg}" Padding="4,2" BorderBrush="{DynamicResource DividerBg}" BorderThickness="0,0,0,1">
                     <StackPanel Orientation="Horizontal" Spacing="4">
                         <Button x:Name="btnLocalSortName" Content="{l:Tr sort.name}" Click="LocalSortName_Click"
-                                Background="Transparent" Foreground="{DynamicResource MutedFg}" FontSize="10" Padding="2,1"
+                                Background="Transparent" Foreground="{DynamicResource MutedFg}" FontSize="12" Padding="2,1"
                                 ToolTip.Tip="{l:Tr tip.sortname}"/>
                         <Button x:Name="btnLocalSortSize" Content="{l:Tr sort.size}" Click="LocalSortSize_Click"
-                                Background="Transparent" Foreground="{DynamicResource MutedFg}" FontSize="10" Padding="2,1"
+                                Background="Transparent" Foreground="{DynamicResource MutedFg}" FontSize="12" Padding="2,1"
                                 ToolTip.Tip="{l:Tr tip.sortsize}"/>
                         <Button x:Name="btnLocalSortDate" Content="{l:Tr sort.date}" Click="LocalSortDate_Click"
-                                Background="Transparent" Foreground="{DynamicResource MutedFg}" FontSize="10" Padding="2,1"
+                                Background="Transparent" Foreground="{DynamicResource MutedFg}" FontSize="12" Padding="2,1"
                                 ToolTip.Tip="{l:Tr tip.sortdate}"/>
                     </StackPanel>
                 </Border>
@@ -213,7 +243,7 @@
                                            FontSize="12" VerticalAlignment="Center" Margin="4,0"
                                            TextTrimming="CharacterEllipsis"/>
                                 <TextBlock Grid.Column="2" Text="{Binding SizeText}" Foreground="{DynamicResource MutedFg}"
-                                           FontSize="10" HorizontalAlignment="Right" VerticalAlignment="Center"/>
+                                           FontSize="12" HorizontalAlignment="Right" VerticalAlignment="Center"/>
                             </Grid>
                         </DataTemplate>
                     </ListBox.ItemTemplate>
@@ -234,40 +264,40 @@
                     <!-- Botón cancelar (#11) -->
                     <Button x:Name="btnCancel" Content="{l:Tr btn.cancel}" Click="CancelTransfer_Click"
                             Background="#C0392B" Foreground="White" Width="90" Padding="8,5"
-                            HorizontalContentAlignment="Center" FontSize="11" IsEnabled="False"
+                            HorizontalContentAlignment="Center" FontSize="12" IsEnabled="False"
                             ToolTip.Tip="{l:Tr tip.cancel}"/>
                     <!-- Pausa/reanudación (#F1) -->
                     <Button x:Name="btnPause" Content="{l:Tr btn.pause}" Click="PauseTransfer_Click"
                             Background="#795548" Foreground="White" Width="90" Padding="8,5"
-                            HorizontalContentAlignment="Center" FontSize="11" IsEnabled="False"
+                            HorizontalContentAlignment="Center" FontSize="12" IsEnabled="False"
                             ToolTip.Tip="{l:Tr tip.pause}"/>
                     <Button x:Name="btnResume" Content="{l:Tr btn.resume}" Click="ResumeTransfer_Click"
                             Background="#4CAF50" Foreground="White" Width="90" Padding="8,5"
-                            HorizontalContentAlignment="Center" FontSize="11" IsEnabled="False"
+                            HorizontalContentAlignment="Center" FontSize="12" IsEnabled="False"
                             ToolTip.Tip="{l:Tr tip.resume}"/>
                     <Separator Background="{DynamicResource DividerBg}" Height="1" Margin="0,4"/>
                     <Button Content="{l:Tr btn.refreshlocal}" Click="RefreshLocal_Click"
                             Background="#555555" Foreground="White" Width="90" Padding="8,5"
-                            HorizontalContentAlignment="Center" FontSize="11"
+                            HorizontalContentAlignment="Center" FontSize="12"
                             ToolTip.Tip="{l:Tr tip.refreshlocal}"/>
                     <Button Content="{l:Tr btn.refreshremote}" Click="RefreshRemote_Click"
                             Background="#555555" Foreground="White" Width="90" Padding="8,5"
-                            HorizontalContentAlignment="Center" FontSize="11"
+                            HorizontalContentAlignment="Center" FontSize="12"
                             ToolTip.Tip="{l:Tr tip.refreshremote}"/>
                     <Separator Background="{DynamicResource DividerBg}" Height="1" Margin="0,4"/>
                     <!-- Feature 1: Sync de carpetas -->
                     <Button x:Name="btnSyncToRemote" Content="{l:Tr btn.synctoremote}" Click="SyncToRemote_Click"
                             Background="#5C4A8A" Foreground="White" Width="90" Padding="8,5"
-                            HorizontalContentAlignment="Center" FontSize="11"
+                            HorizontalContentAlignment="Center" FontSize="12"
                             ToolTip.Tip="{l:Tr tip.synctoremote}"/>
                     <Button x:Name="btnSyncToLocal" Content="{l:Tr btn.synctolocal}" Click="SyncToLocal_Click"
                             Background="#5C4A8A" Foreground="White" Width="90" Padding="8,5"
-                            HorizontalContentAlignment="Center" FontSize="11"
+                            HorizontalContentAlignment="Center" FontSize="12"
                             ToolTip.Tip="{l:Tr tip.synctolocal}"/>
                     <!-- Feature 8: Watch folder -->
                     <Button x:Name="btnWatch" Content="{l:Tr btn.watch}" Click="WatchFolder_Click"
                             Background="#795548" Foreground="White" Width="90" Padding="8,5"
-                            HorizontalContentAlignment="Center" FontSize="11"
+                            HorizontalContentAlignment="Center" FontSize="12"
                             ToolTip.Tip="{l:Tr tip.watch}"/>
                 </StackPanel>
             </Border>
@@ -283,7 +313,7 @@
                                 Background="{DynamicResource InputBg}" Foreground="{DynamicResource InputFg}" Padding="0" Width="24" Height="24"
                                 ToolTip.Tip="{l:Tr tip.remoteup}"/>
                         <TextBlock Grid.Column="1" x:Name="txtRemotePath"
-                                   Text="—" Foreground="{DynamicResource TextFg}" FontSize="11"
+                                   Text="—" Foreground="{DynamicResource TextFg}" FontSize="12"
                                    VerticalAlignment="Center" Margin="6,0" TextTrimming="CharacterEllipsis"
                                    ToolTip.Tip="{Binding #txtRemotePath.Text}"/>
                         <Button Grid.Column="2" Content="🏠" Click="RemoteGoHome"
@@ -295,13 +325,13 @@
                 <Border Grid.Row="2" Background="{DynamicResource PanelBg}" Padding="4,2" BorderBrush="{DynamicResource DividerBg}" BorderThickness="0,0,0,1">
                     <StackPanel Orientation="Horizontal" Spacing="4">
                         <Button x:Name="btnRemoteSortName" Content="{l:Tr sort.name}" Click="RemoteSortName_Click"
-                                Background="Transparent" Foreground="{DynamicResource MutedFg}" FontSize="10" Padding="2,1"
+                                Background="Transparent" Foreground="{DynamicResource MutedFg}" FontSize="12" Padding="2,1"
                                 ToolTip.Tip="{l:Tr tip.sortname}"/>
                         <Button x:Name="btnRemoteSortSize" Content="{l:Tr sort.size}" Click="RemoteSortSize_Click"
-                                Background="Transparent" Foreground="{DynamicResource MutedFg}" FontSize="10" Padding="2,1"
+                                Background="Transparent" Foreground="{DynamicResource MutedFg}" FontSize="12" Padding="2,1"
                                 ToolTip.Tip="{l:Tr tip.sortsize}"/>
                         <Button x:Name="btnRemoteSortDate" Content="{l:Tr sort.date}" Click="RemoteSortDate_Click"
-                                Background="Transparent" Foreground="{DynamicResource MutedFg}" FontSize="10" Padding="2,1"
+                                Background="Transparent" Foreground="{DynamicResource MutedFg}" FontSize="12" Padding="2,1"
                                 ToolTip.Tip="{l:Tr tip.sortdate}"/>
                     </StackPanel>
                 </Border>
@@ -336,7 +366,7 @@
                                            FontSize="12" VerticalAlignment="Center" Margin="4,0"
                                            TextTrimming="CharacterEllipsis"/>
                                 <TextBlock Grid.Column="2" Text="{Binding SizeText}" Foreground="{DynamicResource MutedFg}"
-                                           FontSize="10" HorizontalAlignment="Right" VerticalAlignment="Center"/>
+                                           FontSize="12" HorizontalAlignment="Right" VerticalAlignment="Center"/>
                             </Grid>
                         </DataTemplate>
                     </ListBox.ItemTemplate>
@@ -353,24 +383,28 @@
                                  Minimum="0" Maximum="100" Value="0"
                                  Height="4" Foreground="#28A745" ToolTip.Tip="{l:Tr tip.progress}"/>
                     <TextBlock Grid.Column="1" x:Name="txtSpeed"
-                               Text="" Foreground="{DynamicResource MutedFg}" FontSize="10"
+                               Text="" Foreground="{DynamicResource MutedFg}" FontSize="12"
                                VerticalAlignment="Center" Margin="8,0,0,0" MinWidth="75" ToolTip.Tip="{l:Tr tip.speed}"/>
                 </Grid>
                 <!-- Texto de estado -->
                 <TextBlock Grid.Row="1" x:Name="txtStatus"
                            Text="{l:Tr status.ready}"
-                           Foreground="{DynamicResource TextFg}" FontSize="11" ToolTip.Tip="{l:Tr tip.status}"/>
+                           Foreground="{DynamicResource TextFg}" FontSize="12" ToolTip.Tip="{l:Tr tip.status}"/>
                 <!-- Historial de transferencias (#17) -->
-                <Expander x:Name="historyExpander" Grid.Row="2" Header="{l:Tr history.header}" Foreground="{DynamicResource MutedFg}" FontSize="11"
+                <Expander x:Name="historyExpander" Grid.Row="2" Header="{l:Tr history.header}" Foreground="{DynamicResource MutedFg}" FontSize="12"
                           IsExpanded="False" Margin="0,4,0,0" ToolTip.Tip="{l:Tr tip.history}">
                     <ListBox x:Name="historyList" MaxHeight="110"
                              Background="Transparent" BorderThickness="0"
                              IsHitTestVisible="False">
                         <ListBox.ItemTemplate>
                             <DataTemplate x:DataType="models:TransferRecord">
-                                <StackPanel Orientation="Horizontal" Spacing="8">
-                                    <TextBlock Text="{Binding Time}"  Foreground="{DynamicResource BorderFg}" FontSize="10" FontFamily="Consolas"/>
-                                    <TextBlock Text="{Binding Text}"  Foreground="{Binding Color}" FontSize="11"/>
+                                <StackPanel Orientation="Horizontal" Spacing="6">
+                                    <TextBlock Text="{Binding Time}"     Foreground="{DynamicResource SubtleFg}" FontSize="11" FontFamily="Consolas"/>
+                                    <TextBlock Text="{Binding Text}"     Foreground="{Binding Color}" FontSize="12"/>
+                                    <TextBlock Text="{Binding PeerIp}"   Foreground="{DynamicResource MutedFg}" FontSize="11"
+                                               IsVisible="{Binding PeerIp, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"/>
+                                    <TextBlock Text="{Binding BytesText}" Foreground="{DynamicResource MutedFg}" FontSize="11"
+                                               IsVisible="{Binding HasBytes}"/>
                                 </StackPanel>
                             </DataTemplate>
                         </ListBox.ItemTemplate>

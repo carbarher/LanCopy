@@ -54,7 +54,7 @@ public class ConsentTests : IDisposable
         var ex = await Assert.ThrowsAnyAsync<Exception>(async () =>
             await Client().UploadAsync(src, "f.bin"));
         // El mensaje del servidor debe llegar limpio (no un reset de socket).
-        Assert.Contains("rechaz", ex.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal("svc.rejected", ex.Message);
         Assert.False(File.Exists(Path.Combine(_shared, "f.bin")));
     }
 

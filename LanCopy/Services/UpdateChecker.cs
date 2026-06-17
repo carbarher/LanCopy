@@ -11,14 +11,16 @@ public static class UpdateChecker
     public sealed record UpdateInfo(bool Available, string CurrentVersion, string LatestVersion, string Url, string Notes);
 
     // Repositorio de releases (owner/repo). Configurable si el proyecto se aloja en otro sitio.
-    public static string Owner { get; set; } = "lancopy";
-    public static string Repo { get; set; } = "lancopy";
+    public static string Owner { get; set; } = "carbarher";
+    public static string Repo { get; set; } = "LanCopy";
 
     public static string CurrentVersion =>
         typeof(UpdateChecker).Assembly.GetName().Version?.ToString(3) ?? "0.0.0";
 
     public static async Task<UpdateInfo?> CheckAsync(CancellationToken ct = default)
     {
+        // Respuesta máxima: 512 KB (la API de GitHub puede devolver releases muy grandes).
+        const int MaxResponseBytes = 512 * 1024;
         try
         {
             using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(10) };
@@ -26,12 +28,20 @@ public static class UpdateChecker
             http.DefaultRequestHeaders.Accept.ParseAdd("application/vnd.github+json");
 
             var url = $"https://api.github.com/repos/{Owner}/{Repo}/releases/latest";
-            var json = await http.GetStringAsync(url, ct);
+            // Leer con límite: evita OOM si el endpoint devuelve una respuesta enorme.
+            using var resp = await http.GetAsync(url, HttpCompletionOption.ResponseHeadersRead, ct);
+            resp.EnsureSuccessStatusCode();
+            using var stream = await resp.Content.ReadAsStreamAsync(ct);
+            var buf = new byte[MaxResponseBytes];
+            int read = await stream.ReadAsync(buf.AsMemory(0, MaxResponseBytes), ct);
+            var json = System.Text.Encoding.UTF8.GetString(buf, 0, read);
             var doc = JsonSerializer.Deserialize<JsonElement>(json);
 
             var tag = doc.TryGetProperty("tag_name", out var t) ? (t.GetString() ?? "") : "";
             var htmlUrl = doc.TryGetProperty("html_url", out var h) ? (h.GetString() ?? "") : "";
-            var notes = doc.TryGetProperty("body", out var b) ? (b.GetString() ?? "") : "";
+            // Truncar notas a 4 KB: el cuerpo del release puede tener miles de caracteres.
+            var rawNotes = doc.TryGetProperty("body", out var b) ? (b.GetString() ?? "") : "";
+            var notes = rawNotes.Length > 4096 ? rawNotes[..4096] + "\u2026" : rawNotes;
 
             var latest = NormalizeVersion(tag);
             var current = CurrentVersion;

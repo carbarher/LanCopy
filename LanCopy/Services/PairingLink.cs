@@ -1,4 +1,5 @@
 using System;
+using System.Net;
 using System.Globalization;
 
 namespace LanCopy.Services;

@@ -10,10 +10,12 @@ using System.Threading.Tasks;
 namespace LanCopy.Services;
 
 // Feature 12: auto-descubrimiento UDP
-// Emite broadcast cada 5s con nombre/IP/puerto; escucha anuncios ajenos.
+// Emite broadcast cada 5s y escucha anuncios ajenos.
 public sealed class PeerDiscovery : IDisposable
 {
     public const int UdpPort = 8743;
+    private const int MaxUdpPayload = 1024;
+    private const int MaxPeerNameLen = 64;
 
     public record PeerInfo(string Name, string Ip, int Port, long LastSeen);
 
@@ -51,22 +53,34 @@ public sealed class PeerDiscovery : IDisposable
         return [.. _peers.Values.Where(p => now - p.LastSeen < 20_000)];
     }
 
+    private static string SanitizePeerName(string input)
+    {
+        if (string.IsNullOrEmpty(input)) return "?";
+        var sb = new StringBuilder(input.Length);
+        foreach (var ch in input)
+        {
+            if (!char.IsControl(ch)) sb.Append(ch);
+            if (sb.Length >= MaxPeerNameLen) break;
+        }
+        return sb.Length == 0 ? "?" : sb.ToString();
+    }
+
     private async Task BroadcastLoopAsync(CancellationToken ct)
     {
         using var udp = new UdpClient();
         udp.EnableBroadcast = true;
-        var payload = JsonSerializer.SerializeToUtf8Bytes(new
-        {
-            name = Environment.MachineName,
-            ip = _localIp,
-            port = _tcpPort
-        });
         var ep = new IPEndPoint(IPAddress.Broadcast, UdpPort);
 
         while (!ct.IsCancellationRequested)
         {
             try
             {
+                // Recalcular payload en cada ciclo para evitar datos stale tras cambios de red.
+                var payload = JsonSerializer.SerializeToUtf8Bytes(new
+                {
+                    name = Environment.MachineName,
+                    port = _tcpPort
+                });
                 await udp.SendAsync(payload, ep, ct);
                 await Task.Delay(5000, ct);
             }
@@ -84,13 +98,16 @@ public sealed class PeerDiscovery : IDisposable
             try
             {
                 var result = await udp.ReceiveAsync(ct);
-                var json = Encoding.UTF8.GetString(result.Buffer);
-                var doc = JsonSerializer.Deserialize<JsonElement>(json);
-                var name = doc.TryGetProperty("name", out var n) ? n.GetString() ?? "?" : "?";
-                var ip = doc.TryGetProperty("ip", out var i) ? i.GetString() ?? "" : "";
-                var port = doc.TryGetProperty("port", out var p) ? p.GetInt32() : 8742;
+                if (result.Buffer.Length > MaxUdpPayload) continue;
 
-                if (string.IsNullOrEmpty(ip) || ip == _localIp) continue; // ignorar propio
+                var doc = JsonSerializer.Deserialize<JsonElement>(result.Buffer);
+                var rawName = doc.TryGetProperty("name", out var n) ? n.GetString() ?? "?" : "?";
+                var name = SanitizePeerName(rawName);
+                var ip = result.RemoteEndPoint.Address.ToString();
+                var port = doc.TryGetProperty("port", out var p) ? p.GetInt32() : 8742;
+                if (port < 1 || port > 65535) port = 8742;
+
+                if (string.IsNullOrEmpty(ip) || ip == _localIp) continue;
 
                 var info = new PeerInfo(name, ip, port, Environment.TickCount64);
                 _peers[ip] = info;
