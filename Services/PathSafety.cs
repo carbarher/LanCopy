@@ -9,6 +9,9 @@ namespace LanCopy.Services;
 /// </summary>
 public static class PathSafety
 {
+    private static readonly StringComparison PathComparison =
+        OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
+
     /// <summary>
     /// Combina segmentos bajo baseDir rechazando rutas absolutas y traversal ("..").
     /// Garantiza que el resultado queda contenido dentro de baseDir.
@@ -34,8 +37,8 @@ public static class PathSafety
             var full = Path.GetFullPath(combined);
             var rootWithSep = rootFull.EndsWith(Path.DirectorySeparatorChar)
                 ? rootFull : rootFull + Path.DirectorySeparatorChar;
-            if (!full.StartsWith(rootWithSep, StringComparison.OrdinalIgnoreCase)
-                && !string.Equals(full, rootFull, StringComparison.OrdinalIgnoreCase))
+            if (!full.StartsWith(rootWithSep, PathComparison)
+                && !string.Equals(full, rootFull, PathComparison))
                 return false;
             dest = full;
             return true;

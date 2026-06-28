@@ -10,6 +10,9 @@ namespace LanCopy.Services;
 /// </summary>
 public static class ShareRoot
 {
+    private static readonly StringComparison PathComparison =
+        OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
+
     private static readonly object _lock = new();
     private static string _root = DefaultRoot();
 
@@ -104,7 +107,7 @@ public static class ShareRoot
             var rootNorm = Path.GetFullPath(root).TrimEnd(Path.DirectorySeparatorChar);
             var current = Path.GetFullPath(candidate).TrimEnd(Path.DirectorySeparatorChar);
             while (!string.IsNullOrEmpty(current) &&
-                   !string.Equals(current, rootNorm, StringComparison.OrdinalIgnoreCase))
+                   !string.Equals(current, rootNorm, PathComparison))
             {
                 if (File.Exists(current) || Directory.Exists(current))
                 {
@@ -142,10 +145,10 @@ public static class ShareRoot
         var r = AppendSep(root);
         var c = AppendSep(candidate);
         // candidate == root tambien es valido (la propia raiz)
-        return c.StartsWith(r, StringComparison.OrdinalIgnoreCase)
+        return c.StartsWith(r, PathComparison)
                || string.Equals(candidate.TrimEnd(Path.DirectorySeparatorChar),
                                 root.TrimEnd(Path.DirectorySeparatorChar),
-                                StringComparison.OrdinalIgnoreCase);
+                                PathComparison);
     }
 
     private static string AppendSep(string p)

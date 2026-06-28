@@ -5,6 +5,9 @@ namespace LanCopy.Services;
 
 internal static class SafeFileOps
 {
+    private static readonly StringComparison PathComparison =
+        OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
+
     private static readonly string AuditPath = Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
         "LanCopy", "audit-log.jsonl");
@@ -23,7 +26,7 @@ internal static class SafeFileOps
 
     public static string Normalize(string path) => Path.GetFullPath(path.Trim());
 
-    public static bool TryValidateMutationPath(string? path, out string normalized, out string reason, bool requireExists = true)
+    public static bool TryValidateMutationPath(string? path, out string normalized, out string reason, bool requireExists = true, string? trustedRoot = null)
     {
         normalized = "";
         reason = "";
@@ -41,7 +44,7 @@ internal static class SafeFileOps
             return false;
         }
 
-        if (Path.GetPathRoot(normalized)?.Equals(normalized, StringComparison.OrdinalIgnoreCase) == true)
+        if (Path.GetPathRoot(normalized)?.Equals(normalized, PathComparison) == true)
         {
             reason = "svc.driveRootProtected";
             return false;
@@ -59,7 +62,7 @@ internal static class SafeFileOps
             return false;
         }
 
-        if (ContainsReparsePoint(normalized))
+        if (ContainsReparsePoint(normalized, trustedRoot))
         {
             reason = "Symlink/Junction detectado (bloqueado)";
             return false;
@@ -90,27 +93,38 @@ internal static class SafeFileOps
         }
     }
 
-    public static bool ContainsReparsePoint(string normalizedPath)
+    public static bool ContainsReparsePoint(string normalizedPath, string? trustedRoot = null)
     {
         try
         {
-            var current = normalizedPath;
+            var current = Path.GetFullPath(normalizedPath).TrimEnd(Path.DirectorySeparatorChar);
+            string? stopAt = null;
+            if (!string.IsNullOrWhiteSpace(trustedRoot))
+            {
+                var trusted = Path.GetFullPath(trustedRoot).TrimEnd(Path.DirectorySeparatorChar);
+                var trustedWithSep = trusted + Path.DirectorySeparatorChar;
+                if (current.Equals(trusted, PathComparison) || current.StartsWith(trustedWithSep, PathComparison))
+                    stopAt = trusted;
+            }
 
             while (!File.Exists(current) && !Directory.Exists(current))
             {
                 var parent = Directory.GetParent(current)?.FullName;
                 if (string.IsNullOrWhiteSpace(parent) || parent == current) break;
-                current = parent;
+                current = parent.TrimEnd(Path.DirectorySeparatorChar);
             }
 
             while (!string.IsNullOrWhiteSpace(current))
             {
+                if (stopAt is not null && current.Equals(stopAt, PathComparison))
+                    break;
+
                 if ((File.GetAttributes(current) & FileAttributes.ReparsePoint) != 0)
                     return true;
 
                 var parent = Directory.GetParent(current)?.FullName;
                 if (string.IsNullOrWhiteSpace(parent) || parent == current) break;
-                current = parent;
+                current = parent.TrimEnd(Path.DirectorySeparatorChar);
             }
         }
         catch

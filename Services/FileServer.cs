@@ -73,7 +73,7 @@ public sealed class FileServer
             // No aplicamos SystemProtection (la raiz podria estar legitimamente bajo ProgramData,
             // etc.), pero SI bloqueamos enlaces/reparse points que escapen de la raiz.
             if (!ShareRoot.TryResolve(path, out full, out reason)) return false;
-            if (SafeFileOps.ContainsReparsePoint(full)) { reason = "La ruta contiene un enlace/reparse point"; return false; }
+            if (SafeFileOps.ContainsReparsePoint(full, ShareRoot.Root)) { reason = "La ruta contiene un enlace/reparse point"; return false; }
             return true;
         }
 
@@ -692,7 +692,7 @@ public sealed class FileServer
             SafeFileOps.Audit("delete", path, "blocked", gReason, "remote");
             return;
         }
-        if (!SafeFileOps.TryValidateMutationPath(guarded, out var normalized, out var reason))
+        if (!SafeFileOps.TryValidateMutationPath(guarded, out var normalized, out var reason, trustedRoot: RestrictToShareRoot ? ShareRoot.Root : null))
         {
             await Protocol.WriteLineAsync(stream,
                 JsonSerializer.Serialize(new { status = "error", error = reason }), ct);
@@ -746,7 +746,7 @@ public sealed class FileServer
             return;
         }
 
-        if (!SafeFileOps.TryValidateMutationPath(guarded, out var normalized, out var reason))
+        if (!SafeFileOps.TryValidateMutationPath(guarded, out var normalized, out var reason, trustedRoot: RestrictToShareRoot ? ShareRoot.Root : null))
         {
             await Protocol.WriteLineAsync(stream,
                 JsonSerializer.Serialize(new { status = "error", error = reason }), ct);
@@ -781,7 +781,7 @@ public sealed class FileServer
                 SafeFileOps.Audit("rename", normalized, "blocked", $"dest:{destGuard}", "remote");
                 return;
             }
-            if (!SafeFileOps.TryValidateMutationPath(newPath, out _, out var targetReason, requireExists: false))
+            if (!SafeFileOps.TryValidateMutationPath(newPath, out _, out var targetReason, requireExists: false, trustedRoot: RestrictToShareRoot ? ShareRoot.Root : null))
             {
                 await Protocol.WriteLineAsync(stream,
                     JsonSerializer.Serialize(new { status = "error", error = $"Destino bloqueado: {targetReason}" }), ct);
