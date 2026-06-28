@@ -58,6 +58,14 @@ public class ReadOnlyModeTests : IDisposable
     }
 
     [Fact]
+    public async Task ReadOnly_BlocksMkdir()
+    {
+        await Assert.ThrowsAnyAsync<Exception>(async () =>
+            await Client().CreateDirectoryAsync("cant-create"));
+        Assert.False(Directory.Exists(Path.Combine(_shared, "cant-create")));
+    }
+
+    [Fact]
     public async Task ReadOnly_StillAllowsDownload()
     {
         var f = Path.Combine(_shared, "r.txt");

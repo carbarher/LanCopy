@@ -46,6 +46,43 @@ public partial class MainWindow
     private void LocalList_SelectionChanged(object? sender, SelectionChangedEventArgs e) =>
         ShowSelectionStatus((ListBox)sender!);
 
+    // ── Carpetas favoritas (accesos rápidos) ─────────────────────────────────
+
+    private void LocalFavAdd_Click(object? sender, RoutedEventArgs e)
+    {
+        if (string.IsNullOrWhiteSpace(_localPath)) return;
+        FavoriteFoldersService.Add(_localPath);
+        RefreshFavoritesCombo();
+        SetStatus(L.Format("st.favAdded", _localPath));
+    }
+
+    private void LocalFavRemove_Click(object? sender, RoutedEventArgs e)
+    {
+        var combo = this.FindControl<ComboBox>("cmbFavorites");
+        if (combo?.SelectedItem is not string path) return;
+        FavoriteFoldersService.Remove(path);
+        RefreshFavoritesCombo();
+        SetStatus(L.Format("st.favRemoved", path));
+    }
+
+    private async void CmbFavorites_SelectionChanged(object? sender, SelectionChangedEventArgs e)
+    {
+        var combo = (ComboBox)sender!;
+        if (combo.SelectedItem is not string path) return;
+        _localPath = path;
+        await RefreshLocalAsync();
+    }
+
+    private void RefreshFavoritesCombo(string? select = null)
+    {
+        var combo = this.FindControl<ComboBox>("cmbFavorites");
+        if (combo == null) return;
+        var favs = FavoriteFoldersService.Load();
+        combo.ItemsSource = null;
+        combo.ItemsSource = favs;
+        if (select != null && favs.Contains(select)) combo.SelectedItem = select;
+        else combo.SelectedIndex = -1;
+    }
     private async void LocalGoUp(object? sender, RoutedEventArgs e)
     {
         var parent = Directory.GetParent(_localPath)?.FullName;
@@ -133,7 +170,7 @@ public partial class MainWindow
             foreach (var d in di.GetDirectories().OrderBy(x => x.Name))
                 list.Add(new FileEntry { Name = d.Name, FullPath = d.FullName, IsDirectory = true });
             foreach (var f in di.GetFiles().OrderBy(x => x.Name))
-                list.Add(new FileEntry { Name = f.Name, FullPath = f.FullName, Size = f.Length });
+                list.Add(new FileEntry { Name = f.Name, FullPath = f.FullName, Size = f.Length, LastWriteUtcTicks = f.LastWriteTimeUtc.Ticks });
         }
         catch { }
 
@@ -210,6 +247,8 @@ public partial class MainWindow
                         // Mostrar "Reconectado" tanto en status como en badge (#19)
                         SetStatus(L["st.reconnected"]);
                         SetConnStatus(L["conn.reconnectedWord"], BrushConnected);
+                        UpdateConnectButton(isConnected: true, isBusy: false);
+                        UpdateRemoteCreateFolderButton(isConnected: true);
                         return;
                     }
                     catch { }
@@ -219,6 +258,8 @@ public partial class MainWindow
             try { _client?.Dispose(); _client = null; }
             finally { _clientLock.Release(); }
             SetConnStatus(L["conn.disconnectedWord"], BrushError);
+            UpdateConnectButton(isConnected: false, isBusy: false);
+            UpdateRemoteCreateFolderButton(isConnected: false);
             SetStatus(L.Format("st.remoteError", L[ex.Message]));
         }
     }

@@ -57,6 +57,7 @@ public static class PathSafety
             var candidate = Path.Combine(dir, $"{name} ({n}){ext}");
             if (!File.Exists(candidate)) return candidate;
         }
-        return dest;
+        // Fallback: GUID para evitar sobrescritura silenciosa.
+        return Path.Combine(dir, $"{name} ({Guid.NewGuid():N}){ext}");
     }
 }

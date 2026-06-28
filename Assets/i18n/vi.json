@@ -310,7 +310,7 @@
   "btn.qr": "QR",
   "tip.qr": "Hiện QR / liên kết ghép nối",
   "btn.pastelink": "Dán liên kết",
-  "tip.pastelink": "Dán liên kết lancopy:// hoặc ip:cổng để điền kết nối",
+  "tip.pastelink": "Dán từ bộ nhớ tạm liên kết lancopy:// hoặc ip:cổng để điền kết nối",
   "btn.broadcast": "Gửi cho tất cả",
   "tip.broadcast": "Gửi các tệp đã chọn đến tất cả thiết bị được phát hiện",
   "btn.sendto": "Thêm vào \"Gửi đến\"",

@@ -310,7 +310,7 @@
   "btn.qr": "QR",
   "tip.qr": "إظهار رمز/رابط الاقتران",
   "btn.pastelink": "لصق الرابط",
-  "tip.pastelink": "الصق رابط lancopy:// أو ip:port لملء الاتصال",
+  "tip.pastelink": "الصق رابط lancopy:// أو ip:port من الحافظة لملء الاتصال",
   "btn.broadcast": "إرسال إلى الجميع",
   "tip.broadcast": "إرسال الملفات المحددة إلى جميع الأقران المكتشفين",
   "btn.sendto": "إضافة إلى «إرسال إلى»",

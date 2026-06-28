@@ -31,15 +31,20 @@ namespace LanCopy;
 
 public partial class MainWindow
 {
-    private void AddHistory(string text, string color)
+    private void AddHistory(string text, string color,
+        string operation = "", string peerIp = "", long bytes = 0, bool success = true)
     {
         Dispatcher.UIThread.Post(() =>
         {
             _history.Insert(0, new TransferRecord
             {
-                Time = DateTime.Now.ToString("HH:mm:ss"),
-                Text = text,
-                Color = color
+                Time      = DateTime.Now.ToString("HH:mm:ss"),
+                Text      = text,
+                Color     = color,
+                Operation = operation,
+                PeerIp    = peerIp,
+                Bytes     = bytes,
+                Success   = success
             });
             while (_history.Count > 50) _history.RemoveAt(_history.Count - 1);
 
@@ -149,7 +154,7 @@ public partial class MainWindow
                     if (chk != null) chk.IsChecked = _compressEnabled;
                 });
             }
-            // UX: modo simple/avanzado y asistente de bienvenida
+// UX: modo simple/avanzado y asistente de bienvenida
             if (doc.TryGetProperty("advancedMode", out var advEl))
             {
                 _advancedMode = advEl.GetBoolean();
@@ -181,7 +186,7 @@ public partial class MainWindow
                     if (doc.TryGetProperty("winMax", out var mEl) && mEl.GetBoolean())
                         WindowState = WindowState.Maximized;
                 }
-                catch { }
+                catch (Exception ex) { Log.Error("persistence", "load-settings", new { error = ex.Message }); }
             });
             // Feature 3: perfiles
             if (doc.TryGetProperty("profiles", out var profilesEl))
@@ -197,7 +202,7 @@ public partial class MainWindow
                 });
             }
         }
-        catch { }
+        catch (Exception ex) { Log.Error("persistence", "load-settings", new { error = ex.Message }); }
     }
 
     private void SaveSettings(string ip, string port)
@@ -217,6 +222,7 @@ public partial class MainWindow
                 readOnly = _readOnly,
                 requireApproval = _requireApproval,
                 compressEnabled = _compressEnabled,
+
                 advancedMode = _advancedMode,
                 welcomeShown = _welcomeShown,
                 language = L.Current,
@@ -231,7 +237,12 @@ public partial class MainWindow
             // Escritura atomica centralizada (temp + replace).
             JsonStore.WriteRawAtomic(SettingsPath, __json);
         }
-        catch { }
+        catch (Exception ex) { Log.Error("persistence", "load-settings", new { error = ex.Message }); }
     }
 
 }
+
+
+
+
+

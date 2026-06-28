@@ -1,6 +1,9 @@
+using System;
+using System.Threading.Tasks;
 using Avalonia;
 using Avalonia.Controls.ApplicationLifetimes;
 using Avalonia.Markup.Xaml;
+using Avalonia.Threading;
 
 namespace LanCopy;
 
@@ -11,7 +14,43 @@ public partial class App : Application
     public override void OnFrameworkInitializationCompleted()
     {
         if (ApplicationLifetime is IClassicDesktopStyleApplicationLifetime desktop)
-            desktop.MainWindow = new MainWindow();
+        {
+            var splash = new SplashScreen();
+            splash.Show();
+
+            _ = Task.Run(async () =>
+            {
+                try
+                {
+                    await Dispatcher.UIThread.InvokeAsync(() => splash.SetProgress(30, "Cargando configuración..."));
+                    await Task.Delay(100);
+                    await Dispatcher.UIThread.InvokeAsync(() => splash.SetProgress(60, "Iniciando servidor..."));
+                    await Task.Delay(100);
+                    await Dispatcher.UIThread.InvokeAsync(() => splash.SetProgress(90, "Preparando interfaz..."));
+                    await Task.Delay(150);
+                    await Dispatcher.UIThread.InvokeAsync(() => splash.SetProgress(100, "Listo"));
+                    await Task.Delay(100);
+
+                    await Dispatcher.UIThread.InvokeAsync(async () =>
+                    {
+                        var main = new MainWindow();
+                        desktop.MainWindow = main;
+                        main.Show();
+                        await splash.FadeOutAsync();
+                        splash.Close();
+                    });
+                }
+                catch (Exception)
+                {
+                    await Dispatcher.UIThread.InvokeAsync(() =>
+                    {
+                        splash.Close();
+                        desktop.Shutdown(1);
+                    });
+                }
+            });
+        }
         base.OnFrameworkInitializationCompleted();
     }
 }
+

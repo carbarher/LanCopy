@@ -310,7 +310,7 @@
   "btn.qr": "QR",
   "tip.qr": "Mostrar QR / link de emparelhamento",
   "btn.pastelink": "Colar link",
-  "tip.pastelink": "Cole um link lancopy:// ou ip:porta para preencher a conexão",
+  "tip.pastelink": "Cole da área de transferência um link lancopy:// ou ip:porta para preencher a conexão",
   "btn.broadcast": "Enviar para todos",
   "tip.broadcast": "Enviar os arquivos selecionados para todos os pares descobertos",
   "btn.sendto": "Adicionar a \"Enviar para\"",

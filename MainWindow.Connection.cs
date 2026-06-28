@@ -33,11 +33,60 @@ public partial class MainWindow
 {
     // ── Connection ───────────────────────────────────────────────────────────
 
-    private void Connect_Click(object? sender, RoutedEventArgs e) => TryConnect();
-
-    private void TxtRemoteIp_KeyDown(object? sender, KeyEventArgs e)
+    private void StartConnectionWatchdog()
     {
-        if (e.Key == Key.Enter) TryConnect();
+        if (_connectionWatchdogTimer != null) return;
+        _connectionWatchdogTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(4) };
+        _connectionWatchdogTimer.Tick += ConnectionWatchdog_Tick;
+        _connectionWatchdogTimer.Start();
+    }
+
+    private void StopConnectionWatchdog()
+    {
+        if (_connectionWatchdogTimer == null) return;
+        _connectionWatchdogTimer.Stop();
+        _connectionWatchdogTimer.Tick -= ConnectionWatchdog_Tick;
+        _connectionWatchdogTimer = null;
+    }
+
+    private async void ConnectionWatchdog_Tick(object? sender, EventArgs e)
+    {
+        if (Volatile.Read(ref _isWindowClosing) == 1) return;
+        if (_connectButtonIsBusy || _isTransferring == 1) return;
+        if (Interlocked.CompareExchange(ref _isConnectionProbeRunning, 1, 0) != 0) return;
+
+        try
+        {
+            LanClient? snap;
+            await _clientLock.WaitAsync();
+            try { snap = _client; }
+            finally { _clientLock.Release(); }
+            if (snap == null) return;
+
+            using var probeCts = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+            _ = await snap.ListAsync("", probeCts.Token);
+        }
+        catch (Exception)
+        {
+            if (Volatile.Read(ref _isWindowClosing) == 1 || _isTransferring == 1) return;
+            await DisconnectAsync(silent: true);
+            SetStatus(L["st.disconnected"]);
+        }
+        finally
+        {
+            Interlocked.Exchange(ref _isConnectionProbeRunning, 0);
+        }
+    }
+
+    private async void Connect_Click(object? sender, RoutedEventArgs e)
+    {
+        if (await IsConnectedAsync()) await DisconnectAsync(notifyPeer: true);
+        else await TryConnectAsync();
+    }
+
+    private async void TxtRemoteIp_KeyDown(object? sender, KeyEventArgs e)
+    {
+        if (e.Key == Key.Enter) await TryConnectAsync();
     }
 
     private void CopyIp_Click(object? sender, RoutedEventArgs e)
@@ -78,7 +127,7 @@ public partial class MainWindow
         SetStatus(L.Format("st.themeChanged", _theme));
     }
 
-    private void TryConnect()
+    private async Task TryConnectAsync()
     {
         var ip = this.FindControl<TextBox>("txtRemoteIp")!.Text?.Trim() ?? "";
         var portStr = this.FindControl<TextBox>("txtRemotePort")!.Text?.Trim() ?? "8742";
@@ -98,11 +147,12 @@ public partial class MainWindow
             SetStatus(L["st.invalidPort"]); return;
         }
         SaveSettings(ip, portStr);
-        _ = ConnectAsync(ip, port);
+        await ConnectAsync(ip, port);
     }
 
     private async Task ConnectAsync(string ip, int port, bool silent = false)
     {
+        UpdateConnectButton(isConnected: false, isBusy: true);
         if (!silent)
         {
             SetStatus(L.Format("st.connecting", $"{ip}:{port}"));
@@ -118,6 +168,8 @@ public partial class MainWindow
             var entries = await _client.ListAsync(_remotePath);
             Dispatcher.UIThread.Post(() => { _remoteItemsAll = entries; ApplyRemoteSort(); UpdateRemotePath(); });
             SetConnStatus(L["conn.connectedWord"], BrushConnected);
+            UpdateConnectButton(isConnected: true, isBusy: false);
+            UpdateRemoteCreateFolderButton(isConnected: true);
             if (!silent) SetStatus(L.Format("st.connected", $"{ip}:{port}"));
         }
         catch (Exception ex)
@@ -126,8 +178,96 @@ public partial class MainWindow
             try { _client?.Dispose(); _client = null; }
             finally { _clientLock.Release(); }
             SetConnStatus(L["conn.error"], BrushError);
+            UpdateConnectButton(isConnected: false, isBusy: false);
+            UpdateRemoteCreateFolderButton(isConnected: false);
             if (!silent) SetStatus(L.Format("st.connectFailed", $"{ip}:{port}", L[ex.Message]));
         }
+    }
+
+    private async Task<bool> IsConnectedAsync()
+    {
+        await _clientLock.WaitAsync();
+        try { return _client != null; }
+        finally { _clientLock.Release(); }
+    }
+
+    private async Task DisconnectAsync(bool silent = false, bool notifyPeer = false)
+    {
+        UpdateConnectButton(isConnected: true, isBusy: true);
+        if (notifyPeer) await TrySendDisconnectNoticeAsync();
+        _uploadCts.Cancel();
+        _downloadCts.Cancel();
+
+        await _clientLock.WaitAsync();
+        try { _client?.Dispose(); _client = null; }
+        finally { _clientLock.Release(); }
+
+        await _clientLockDown.WaitAsync();
+        try { _clientDown?.Dispose(); _clientDown = null; }
+        finally { _clientLockDown.Release(); }
+
+        Dispatcher.UIThread.Post(() =>
+        {
+            _remotePath = "";
+            _remoteItemsAll = [];
+            _remoteItems.ReplaceAll([]);
+            UpdateRemotePath();
+        });
+
+        SetConnStatus(L["conn.disconnectedWord"], BrushError);
+        UpdateConnectButton(isConnected: false, isBusy: false);
+        UpdateRemoteCreateFolderButton(isConnected: false);
+        if (!silent) SetStatus(L["st.disconnected"]);
+    }
+
+    private async Task TrySendDisconnectNoticeAsync()
+    {
+        var ip = this.FindControl<TextBox>("txtRemoteIp")?.Text?.Trim() ?? "";
+        var portText = this.FindControl<TextBox>("txtRemotePort")?.Text?.Trim() ?? "8742";
+        if (string.IsNullOrWhiteSpace(ip) || !int.TryParse(portText, out var port)) return;
+
+        try
+        {
+            using var cli = MakeClient(ip, port);
+            await cli.SendDisconnectNoticeAsync();
+        }
+        catch { }
+    }
+
+    private void OnDisconnectNoticeReceived(string ip)
+    {
+        Dispatcher.UIThread.Post(async () =>
+        {
+            var remoteIp = this.FindControl<TextBox>("txtRemoteIp")?.Text?.Trim() ?? "";
+            if (!string.Equals(remoteIp, ip, StringComparison.OrdinalIgnoreCase)) return;
+            if (!await IsConnectedAsync()) return;
+
+            await DisconnectAsync(silent: true);
+            SetStatus(L["st.disconnected"]);
+        });
+    }
+
+    private void UpdateConnectButton(bool isConnected, bool isBusy)
+    {
+        _connectButtonIsConnected = isConnected;
+        _connectButtonIsBusy = isBusy;
+        Dispatcher.UIThread.Post(() =>
+        {
+            var btn = this.FindControl<Button>("btnConnect");
+            if (btn == null) return;
+            btn.Content = isConnected ? L["btn.disconnect"] : L["btn.connect"];
+            ToolTip.SetTip(btn, isConnected ? L["tip.disconnect"] : L["tip.connect"]);
+            btn.IsEnabled = !isBusy;
+        });
+    }
+
+    private void UpdateRemoteCreateFolderButton(bool isConnected)
+    {
+        Dispatcher.UIThread.Post(() =>
+        {
+            var btn = this.FindControl<Button>("btnRemoteCreateFolder");
+            if (btn != null) btn.IsEnabled = isConnected;
+        });
     }
 
     // ── Reconnect ─────────────────────────────────────────────────────────────
@@ -157,6 +297,8 @@ public partial class MainWindow
                 _ = await snap!.ListAsync("");
 
                 SetConnStatus(L["conn.reconnectedWord"], BrushConnected);
+                UpdateConnectButton(isConnected: true, isBusy: false);
+                UpdateRemoteCreateFolderButton(isConnected: true);
                 SetStatus(L["st.reconnected"]);
                 return true;
             }
@@ -172,6 +314,8 @@ public partial class MainWindow
         }
 
         SetConnStatus(L["conn.disconnectedWord"], BrushError);
+        UpdateConnectButton(isConnected: false, isBusy: false);
+        UpdateRemoteCreateFolderButton(isConnected: false);
         SetStatus(L["st.reconnectFailed"]);
         return false;
     }

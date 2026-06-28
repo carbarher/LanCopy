@@ -310,7 +310,7 @@
   "btn.qr": "QR",
   "tip.qr": "Visa parkopplings-QR / -länk",
   "btn.pastelink": "Klistra in länk",
-  "tip.pastelink": "Klistra in en lancopy://-länk eller ip:port för att fylla i anslutningen",
+  "tip.pastelink": "Klistra in från urklipp en lancopy://-länk eller ip:port för att fylla i anslutningen",
   "btn.broadcast": "Skicka till alla",
   "tip.broadcast": "Skicka de valda filerna till alla upptäckta enheter",
   "btn.sendto": "Lägg till i \"Skicka till\"",

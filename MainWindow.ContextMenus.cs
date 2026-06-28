@@ -31,6 +31,10 @@ namespace LanCopy;
 
 public partial class MainWindow
 {
+    private MenuItem? ResolveMenuItem(ContextMenu? menu, string name) =>
+        menu?.Items?.OfType<MenuItem>().FirstOrDefault(x => string.Equals(x.Name, name, StringComparison.Ordinal))
+        ?? this.FindControl<MenuItem>(name);
+
     // ══ Context menus — Local ═════════════════════════════════════════════════════
 
     private void LocalCtx_Opening(object? sender, System.ComponentModel.CancelEventArgs e)
@@ -71,7 +75,9 @@ public partial class MainWindow
         _ = dlg.ShowDialog(this);
         var newName = await dlg.GetResultAsync();
         if (string.IsNullOrWhiteSpace(newName) || newName == item.Name) return;
-        if (newName is "." or ".." || newName.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0) { SetStatus(L["st.invalidName"]); return; }
+        if (newName is "." or ".." || newName.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0
+            || newName.StartsWith(" ") || newName.EndsWith(" ") || newName.EndsWith("."))
+            { SetStatus(L["st.invalidName"]); return; }
 
         if (SafeFileOps.IsOnCooldown($"local-rename:{sourcePath}", 2))
         {
@@ -294,11 +300,27 @@ public partial class MainWindow
         bool any = items.Count > 0;
         bool single = items.Count == 1;
         bool connected = _client != null;
+        var menu = sender as ContextMenu;
 
-        this.FindControl<MenuItem>("ctxRemoteReceive")!.IsEnabled = any && connected;
-        this.FindControl<MenuItem>("ctxRemoteRename")!.IsEnabled = single && connected;
-        this.FindControl<MenuItem>("ctxRemoteDelete")!.IsEnabled = any && connected;
-        this.FindControl<MenuItem>("ctxRemoteVerify")!.IsEnabled = any && !items.Any(x => x.IsDirectory) && connected;
+        var receive = ResolveMenuItem(menu, "ctxRemoteReceive");
+        if (receive != null) receive.IsEnabled = any && connected;
+
+        var createFolder = ResolveMenuItem(menu, "ctxRemoteCreateFolder");
+        if (createFolder != null)
+        {
+            createFolder.IsVisible = true;
+            createFolder.Header = string.IsNullOrWhiteSpace(L["ctx.newfolder"]) ? "Create folder" : L["ctx.newfolder"];
+            createFolder.IsEnabled = connected;
+        }
+
+        var rename = ResolveMenuItem(menu, "ctxRemoteRename");
+        if (rename != null) rename.IsEnabled = single && connected;
+
+        var delete = ResolveMenuItem(menu, "ctxRemoteDelete");
+        if (delete != null) delete.IsEnabled = any && connected;
+
+        var verify = ResolveMenuItem(menu, "ctxRemoteVerify");
+        if (verify != null) verify.IsEnabled = any && !items.Any(x => x.IsDirectory) && connected;
     }
 
     private async void RemoteCtx_Receive(object? sender, RoutedEventArgs e)
@@ -320,7 +342,9 @@ public partial class MainWindow
         _ = dlg.ShowDialog(this);
         var newName = await dlg.GetResultAsync();
         if (string.IsNullOrWhiteSpace(newName) || newName == item.Name) return;
-        if (newName is "." or ".." || newName.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0) { SetStatus(L["st.invalidName"]); return; }
+        if (newName is "." or ".." || newName.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0
+            || newName.StartsWith(" ") || newName.EndsWith(" ") || newName.EndsWith("."))
+            { SetStatus(L["st.invalidName"]); return; }
 
         try
         {
@@ -335,6 +359,38 @@ public partial class MainWindow
         {
             SafeFileOps.Audit("remote-rename", item.FullPath, "error", ex.Message);
             SetStatus(L.Format("st.renameError", L[ex.Message]));
+        }
+    }
+
+    private async void RemoteCtx_CreateFolder(object? sender, RoutedEventArgs e)
+    {
+        if (_client == null) { SetStatus(L["st.connectFirst"]); return; }
+
+        var dlg = new InputDialog(L["dlg.newfolder.titleRemote"], L["dlg.newfolder.prompt"], "");
+        _ = dlg.ShowDialog(this);
+        var folderName = await dlg.GetResultAsync();
+        if (string.IsNullOrWhiteSpace(folderName)) return;
+
+        if (folderName is "." or ".." || folderName.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0
+            || folderName.StartsWith(" ") || folderName.EndsWith(" ") || folderName.EndsWith("."))
+            { SetStatus(L["st.invalidName"]); return; }
+
+        var remotePath = string.IsNullOrEmpty(_remotePath)
+            ? folderName
+            : Path.Combine(_remotePath, folderName).Replace('\\', '/');
+
+        try
+        {
+            await _clientLock.WaitAsync();
+            try { await _client.CreateDirectoryAsync(remotePath); }
+            finally { _clientLock.Release(); }
+
+            SetStatus(L.Format("st.folderCreatedRemote", folderName));
+            await RefreshRemoteAsync();
+        }
+        catch (Exception ex)
+        {
+            SetStatus(L.Format("st.createFolderError", L[ex.Message]));
         }
     }
 

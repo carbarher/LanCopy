@@ -52,6 +52,7 @@ public partial class MainWindow
         string __finalMsg = "";
         bool __finalErr = false;
         SetTransferButtonsEnabled(false, cancelEnabled: true);
+        var __sw = System.Diagnostics.Stopwatch.StartNew();
         try
         {
             var fileList = await ExpandItemsAsync(items, isUpload, ct);
@@ -163,7 +164,13 @@ public partial class MainWindow
             __finalMsg = msg;
             __finalErr = (ok < fileList.Count - skip) || skip > 0;
             if (__finalErr) SetStatusAlert(msg); // requiere lectura: parpadeo llamativo
-            if (ok > 0) AddHistory(L.Format("hist.transferred", arrow, ok, FileEntry.FormatSize(doneBytes)), "#28A745");
+            if (ok > 0) {
+                AddHistory(L.Format("hist.transferred", arrow, ok, FileEntry.FormatSize(doneBytes)), "#28A745",
+                    isUpload ? "send" : "receive", remoteIp, doneBytes, true);
+                AuditService.Record(remoteIp, isUpload ? "send" : "receive",
+                    ok == 1 && fileList.Count == 1 ? fileList[0].entry.Name : $"[{ok} files]",
+                    doneBytes, true, __sw.ElapsedMilliseconds);
+            }
 
             if (isUpload) await RefreshRemoteAsync();
             else await RefreshLocalAsync();
@@ -252,22 +259,20 @@ public partial class MainWindow
         try
         {
             await clientLock.WaitAsync(ct);
-            if (isUpload)
+            try
             {
-                if (_client == null) { clientLock.Release(); return false; }
-                snap = _client;
-            }
-            else
-            {
-                if (_clientDown == null)
+                if (isUpload)
                 {
-                    // Crear cliente download si no existe (primera vez o reconexión).
-                    // remoteIp/remotePort vienen capturados en el hilo UI por el llamador.
-                    _clientDown = new LanClient(remoteIp, remotePort);
+                    if (_client == null) return false;
+                    snap = _client;
                 }
-                snap = _clientDown;
+                else
+                {
+                    if (_clientDown == null) _clientDown = new LanClient(remoteIp, remotePort);
+                    snap = _clientDown;
+                }
             }
-            clientLock.Release();
+            finally { clientLock.Release(); }
 
             if (isUpload)
                 await snap.UploadAsync(entry.FullPath, destPath, throttled, ct);
@@ -488,3 +493,5 @@ public partial class MainWindow
     private static string MakeUniqueDest(string dest) => PathSafety.MakeUnique(dest);
 
 }
+
+

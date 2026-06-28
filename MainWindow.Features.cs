@@ -58,7 +58,7 @@ public partial class MainWindow
 
     // Diagnostico "no veo el otro PC": comprueba red y equipos detectados y lo
     // explica en lenguaje llano, sin tecnicismos.
-    private void Diagnose_Click(object? sender, RoutedEventArgs e)
+    private async void Diagnose_Click(object? sender, RoutedEventArgs e)
     {
         var sb = new System.Text.StringBuilder();
         var ip = _server.LocalIp ?? "";
@@ -91,7 +91,33 @@ public partial class MainWindow
         sb.AppendLine();
         sb.AppendLine(L["diag.tips"]);
 
-        try { new InfoDialog(L["diag.title"], sb.ToString()).ShowDialog(this); } catch { }
+        var remoteIp = this.FindControl<TextBox>("txtRemoteIp")?.Text?.Trim() ?? "";
+        var remotePortText = this.FindControl<TextBox>("txtRemotePort")?.Text?.Trim() ?? "8742";
+        if (!string.IsNullOrWhiteSpace(remoteIp) && int.TryParse(remotePortText, out var remotePort))
+        {
+            try
+            {
+                using var cli = MakeClient(remoteIp, remotePort);
+                var health = await cli.GetHealthAsync();
+                if (health != null)
+                {
+                    sb.AppendLine();
+                    sb.AppendLine("── Salud del peer remoto ──");
+                    sb.AppendLine($"Conexiones activas: {health.ConnCurrent}/{health.ConnLimit}");
+                    sb.AppendLine($"Límite por IP: {health.PerIpLimit}, IPs activas: {health.ActiveIps}");
+                    sb.AppendLine($"PIN fails tracked: {health.PinFailsTracked}");
+                    sb.AppendLine($"SHA256 cache: {health.HashCacheEntries}");
+                    sb.AppendLine($"Rate-limit cmd: {health.CommandRateLimit}/{health.CommandRateWindowSeconds}s (tracked: {health.CommandRateTracked})");
+                }
+            }
+            catch (Exception ex)
+            {
+                sb.AppendLine();
+                sb.AppendLine($"(No se pudo consultar salud remota: {ex.Message})");
+            }
+        }
+
+        try { await new InfoDialog(L["diag.title"], sb.ToString()).ShowDialog(this); } catch { }
     }
 
     private void CmbLang_SelectionChanged(object? sender, SelectionChangedEventArgs e)
@@ -103,6 +129,7 @@ public partial class MainWindow
         if (code == L.Current) return;
         L.SetLanguage(code);
         this.FlowDirection = L.IsRtl ? FlowDirection.RightToLeft : FlowDirection.LeftToRight;
+        UpdateConnectButton(isConnected: _connectButtonIsConnected, isBusy: _connectButtonIsBusy);
     }
     private void TxtPin_TextChanged(object? sender, TextChangedEventArgs e)
     {
@@ -273,7 +300,7 @@ public partial class MainWindow
             var show = new NativeMenuItem(L["tray.show"]);
             show.Click += (_, _) => ShowFromTray();
             var exit = new NativeMenuItem(L["tray.exit"]);
-            exit.Click += (_, _) => { _reallyExit = true; Close(); };
+            exit.Click += (_, _) => Close();
             menu.Items.Add(show);
             menu.Items.Add(exit);
             _tray = new TrayIcon { Icon = icon, ToolTipText = "LanCopy", Menu = menu, IsVisible = true };
@@ -289,4 +316,81 @@ public partial class MainWindow
         Activate();
     }
 
+
+    // ── Paralelismo configurable ────────────────────────────────────────
+    private void Parallel_Changed(object? sender, RangeBaseValueChangedEventArgs e)
+    {
+        var n = Math.Max(1, Math.Min(8, (int)Math.Round(e.NewValue)));
+        if (n == _maxParallel) return;
+        _maxParallel = n;
+        _transferSemaphore = new SemaphoreSlim(n, n);
+        var lbl = this.FindControl<TextBlock>("txtParallelValue");
+        if (lbl != null) lbl.Text = n.ToString();
+        SetStatus(L.Format("st.parallelChanged", n));
+    }
+
+
+    // ── Viewer de auditoría ─────────────────────────────────────────────────
+
+    private async void ShowAudit_Click(object? sender, RoutedEventArgs e)
+    {
+        try
+        {
+            var today = AuditService.ReadDay();
+            var yesterday = AuditService.ReadDay(DateTime.UtcNow.AddDays(-1).ToString("yyyyMMdd"));
+            var records = today.Concat(yesterday).OrderByDescending(r => r.Timestamp).Take(200).ToList();
+
+            var sb = new System.Text.StringBuilder();
+            sb.AppendLine($"═══ Auditoría de transferencias — últimas {records.Count} entradas ═══");
+            sb.AppendLine();
+
+            if (records.Count == 0)
+            {
+                sb.AppendLine("(Sin registros de auditoría aún)");
+            }
+            else
+            {
+                foreach (var r in records)
+                {
+                    var ts = DateTime.TryParse(r.Timestamp, null, System.Globalization.DateTimeStyles.RoundtripKind, out var dtParsed)
+                        ? dtParsed.ToLocalTime().ToString("dd/MM HH:mm:ss") : r.Timestamp;
+                    var icon = r.Success ? "✅" : "❌";
+                    var op = r.Operation.ToUpper();
+                    var size = r.Bytes > 0 ? $" ({FileEntry.FormatSize(r.Bytes)})" : "";
+                    var dur = r.DurationMs > 0 ? $" {r.DurationMs}ms" : "";
+                    var err = r.Error != null ? $" ⚠ {r.Error}" : "";
+                    sb.AppendLine($"{icon} {ts}  [{op}]  {r.Ip}  {r.FileName}{size}{dur}{err}");
+                }
+            }
+
+            var scrollContent = new ScrollViewer
+            {
+                HorizontalScrollBarVisibility = Avalonia.Controls.Primitives.ScrollBarVisibility.Auto,
+                VerticalScrollBarVisibility   = Avalonia.Controls.Primitives.ScrollBarVisibility.Auto,
+                Content = new TextBlock
+                {
+                    Text = sb.ToString(),
+                    FontFamily = new Avalonia.Media.FontFamily("Consolas,Courier New,monospace"),
+                    FontSize = 12,
+                    Margin = new Avalonia.Thickness(16),
+                    Foreground = new Avalonia.Media.SolidColorBrush(Avalonia.Media.Color.Parse("#CCCCCC")),
+                    TextWrapping = Avalonia.Media.TextWrapping.NoWrap
+                }
+            };
+
+            var dlg = new Window
+            {
+                Title = "Auditoría LanCopy",
+                Width = 720, Height = 480,
+                Content = scrollContent,
+                WindowStartupLocation = WindowStartupLocation.CenterOwner,
+                Background = new Avalonia.Media.SolidColorBrush(Avalonia.Media.Color.Parse("#1E1E1E"))
+            };
+            await dlg.ShowDialog(this);
+        }
+        catch (Exception ex)
+        {
+            SetStatus($"Error abriendo auditoría: {ex.Message}");
+        }
+    }
 }

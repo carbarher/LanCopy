@@ -310,7 +310,7 @@
   "btn.qr": "QR",
   "tip.qr": "페어링 QR / 링크 표시",
   "btn.pastelink": "링크 붙여넣기",
-  "tip.pastelink": "연결을 채우려면 lancopy:// 링크 또는 ip:포트를 붙여넣으세요",
+  "tip.pastelink": "클립보드에서 lancopy:// 링크 또는 ip:포트를 붙여넣어 연결을 채우세요",
   "btn.broadcast": "모두에게 보내기",
   "tip.broadcast": "선택한 파일을 발견된 모든 피어에 보내기",
   "btn.sendto": "\"보내기\"에 추가",

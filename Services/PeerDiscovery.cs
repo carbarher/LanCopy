@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Concurrent;
 using System.Net;
+using System.Net.NetworkInformation;
 using System.Net.Sockets;
 using System.Text;
 using System.Text.Json;
@@ -10,10 +11,12 @@ using System.Threading.Tasks;
 namespace LanCopy.Services;
 
 // Feature 12: auto-descubrimiento UDP
-// Emite broadcast cada 5s con nombre/IP/puerto; escucha anuncios ajenos.
+// Emite broadcast cada 5s y escucha anuncios ajenos.
 public sealed class PeerDiscovery : IDisposable
 {
     public const int UdpPort = 8743;
+    private const int MaxUdpPayload = 1024;
+    private const int MaxPeerNameLen = 64;
 
     public record PeerInfo(string Name, string Ip, int Port, long LastSeen);
 
@@ -21,6 +24,7 @@ public sealed class PeerDiscovery : IDisposable
     private CancellationTokenSource? _cts;
     private readonly string _localIp;
     private readonly int _tcpPort;
+    private readonly string _instanceId = Guid.NewGuid().ToString("N");
 
     public event Action? PeersChanged;
 
@@ -51,22 +55,72 @@ public sealed class PeerDiscovery : IDisposable
         return [.. _peers.Values.Where(p => now - p.LastSeen < 20_000)];
     }
 
+    private static string SanitizePeerName(string input)
+    {
+        if (string.IsNullOrEmpty(input)) return "?";
+        var sb = new StringBuilder(input.Length);
+        foreach (var ch in input)
+        {
+            if (!char.IsControl(ch)) sb.Append(ch);
+            if (sb.Length >= MaxPeerNameLen) break;
+        }
+        return sb.Length == 0 ? "?" : sb.ToString();
+    }
+
+    internal static bool IsSameInstanceId(string? incomingInstanceId, string instanceId)
+        => !string.IsNullOrWhiteSpace(incomingInstanceId)
+           && string.Equals(incomingInstanceId, instanceId, StringComparison.Ordinal);
+
+    internal static bool IsLocalIpv4Address(string ip, ISet<string> localIpv4Addresses)
+    {
+        if (string.IsNullOrWhiteSpace(ip)) return false;
+        if (!IPAddress.TryParse(ip, out var address) || address.AddressFamily != AddressFamily.InterNetwork) return false;
+        return localIpv4Addresses.Contains(address.ToString());
+    }
+
+    internal static HashSet<string> GetLocalIpv4Addresses(string? primaryLocalIp = null)
+    {
+        var ips = new HashSet<string>(StringComparer.Ordinal) { IPAddress.Loopback.ToString() };
+        if (!string.IsNullOrWhiteSpace(primaryLocalIp)
+            && IPAddress.TryParse(primaryLocalIp, out var primary)
+            && primary.AddressFamily == AddressFamily.InterNetwork)
+        {
+            ips.Add(primary.ToString());
+        }
+
+        try
+        {
+            foreach (var nic in NetworkInterface.GetAllNetworkInterfaces())
+            {
+                foreach (var unicast in nic.GetIPProperties().UnicastAddresses)
+                {
+                    if (unicast.Address.AddressFamily == AddressFamily.InterNetwork)
+                        ips.Add(unicast.Address.ToString());
+                }
+            }
+        }
+        catch { }
+
+        return ips;
+    }
+
     private async Task BroadcastLoopAsync(CancellationToken ct)
     {
         using var udp = new UdpClient();
         udp.EnableBroadcast = true;
-        var payload = JsonSerializer.SerializeToUtf8Bytes(new
-        {
-            name = Environment.MachineName,
-            ip = _localIp,
-            port = _tcpPort
-        });
         var ep = new IPEndPoint(IPAddress.Broadcast, UdpPort);
 
         while (!ct.IsCancellationRequested)
         {
             try
             {
+                // Recalcular payload en cada ciclo para evitar datos stale tras cambios de red.
+                var payload = JsonSerializer.SerializeToUtf8Bytes(new
+                {
+                    name = Environment.MachineName,
+                    port = _tcpPort,
+                    instanceId = _instanceId
+                });
                 await udp.SendAsync(payload, ep, ct);
                 await Task.Delay(5000, ct);
             }
@@ -84,13 +138,20 @@ public sealed class PeerDiscovery : IDisposable
             try
             {
                 var result = await udp.ReceiveAsync(ct);
-                var json = Encoding.UTF8.GetString(result.Buffer);
-                var doc = JsonSerializer.Deserialize<JsonElement>(json);
-                var name = doc.TryGetProperty("name", out var n) ? n.GetString() ?? "?" : "?";
-                var ip = doc.TryGetProperty("ip", out var i) ? i.GetString() ?? "" : "";
-                var port = doc.TryGetProperty("port", out var p) ? p.GetInt32() : 8742;
+                if (result.Buffer.Length > MaxUdpPayload) continue;
 
-                if (string.IsNullOrEmpty(ip) || ip == _localIp) continue; // ignorar propio
+                var doc = JsonSerializer.Deserialize<JsonElement>(result.Buffer);
+                var rawName = doc.TryGetProperty("name", out var n) ? n.GetString() ?? "?" : "?";
+                var name = SanitizePeerName(rawName);
+                var ip = result.RemoteEndPoint.Address.ToString();
+                var port = doc.TryGetProperty("port", out var p) ? p.GetInt32() : 8742;
+                var incomingInstanceId = doc.TryGetProperty("instanceId", out var iid) ? iid.GetString() : null;
+                if (port < 1 || port > 65535) port = 8742;
+
+                if (IsSameInstanceId(incomingInstanceId, _instanceId)) continue;
+
+                var localIpv4Addresses = GetLocalIpv4Addresses(_localIp);
+                if (string.IsNullOrEmpty(ip) || IsLocalIpv4Address(ip, localIpv4Addresses)) continue;
 
                 var info = new PeerInfo(name, ip, port, Environment.TickCount64);
                 _peers[ip] = info;

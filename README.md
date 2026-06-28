@@ -12,21 +12,6 @@ encrypted channel. No accounts, no servers, no internet round-trips. Built with
 C# / .NET 9 and Avalonia UI. Available in 20 languages.
 
 ---
-## Downloads
-
-**Latest release: [v1.0.0](https://github.com/carbarher/LanCopy/releases/latest)**
-
-| Platform | Download | Notes |
-|----------|----------|-------|
-| **Windows** | [LanCopy-Setup-1.0.0.exe](https://github.com/carbarher/LanCopy/releases/download/v1.0.0/LanCopy-Setup-1.0.0.exe) | Installer — **adds firewall rule, creates shortcuts** |
-| | [LanCopy-win-x64.zip](https://github.com/carbarher/LanCopy/releases/download/v1.0.0/LanCopy-win-x64.zip) | Portable x64 |
-| | [LanCopy-win-arm64.zip](https://github.com/carbarher/LanCopy/releases/download/v1.0.0/LanCopy-win-arm64.zip) | Portable ARM64 (Snapdragon) |
-| **Linux** | [LanCopy-linux-x64.tar.gz](https://github.com/carbarher/LanCopy/releases/download/v1.0.0/LanCopy-linux-x64.tar.gz) | x64 (includes .desktop entry) |
-| | [LanCopy-linux-arm64.tar.gz](https://github.com/carbarher/LanCopy/releases/download/v1.0.0/LanCopy-linux-arm64.tar.gz) | ARM64 (Raspberry Pi 4/5) |
-| **macOS** | [LanCopy-osx-x64.zip](https://github.com/carbarher/LanCopy/releases/download/v1.0.0/LanCopy-osx-x64.zip) | Intel Macs |
-| | [LanCopy-osx-arm64.zip](https://github.com/carbarher/LanCopy/releases/download/v1.0.0/LanCopy-osx-arm64.zip) | Apple Silicon (M1/M2/M3) |
-
-All downloads are **self-contained** single executables — no runtime dependencies.
 
 ## English
 
@@ -42,6 +27,7 @@ All downloads are **self-contained** single executables — no runtime dependenc
   symlink/junction escapes, zip-bombs and oversized headers are blocked.
 - **Folder sync, watch mode, clipboard text send, bandwidth limit.**
 - **20 languages**, including RTL (Arabic).
+- **Optional anonymous telemetry (opt-in)** for adoption metrics only.
 
 ### Requirements
 - .NET SDK 9.0 or later
@@ -91,7 +77,7 @@ See [PUBLISHING.md](PUBLISHING.md) for step-by-step release instructions.
 - **Anti-DoS**: line-length cap (1 MB), concurrent/per-IP connection limits,
   and an anti zip-bomb cap on decompression.
 
-See [SECURITY.md](SECURITY.md) to report vulnerabilities.
+See [SECURITY.md](SECURITY.md) to report vulnerabilities. Privacy details: [PRIVACY.md](PRIVACY.md).
 
 ### Default port
 TCP **8742** (file transfer), UDP **8743** (discovery).
@@ -100,21 +86,6 @@ TCP **8742** (file transfer), UDP **8743** (discovery).
 [MIT](LICENSE) © 2026 carbar. Free to use, modify and distribute.
 
 ---
-## Descargas
-
-**Última versión: [v1.0.0](https://github.com/carbarher/LanCopy/releases/latest)**
-
-| Plataforma | Descargar | Notas |
-|----------|----------|-------|
-| **Windows** | [LanCopy-Setup-1.0.0.exe](https://github.com/carbarher/LanCopy/releases/download/v1.0.0/LanCopy-Setup-1.0.0.exe) | Instalador — **añade regla firewall, crea accesos rápidos** |
-| | [LanCopy-win-x64.zip](https://github.com/carbarher/LanCopy/releases/download/v1.0.0/LanCopy-win-x64.zip) | Portable x64 |
-| | [LanCopy-win-arm64.zip](https://github.com/carbarher/LanCopy/releases/download/v1.0.0/LanCopy-win-arm64.zip) | Portable ARM64 (Snapdragon) |
-| **Linux** | [LanCopy-linux-x64.tar.gz](https://github.com/carbarher/LanCopy/releases/download/v1.0.0/LanCopy-linux-x64.tar.gz) | x64 (incluye entrada .desktop) |
-| | [LanCopy-linux-arm64.tar.gz](https://github.com/carbarher/LanCopy/releases/download/v1.0.0/LanCopy-linux-arm64.tar.gz) | ARM64 (Raspberry Pi 4/5) |
-| **macOS** | [LanCopy-osx-x64.zip](https://github.com/carbarher/LanCopy/releases/download/v1.0.0/LanCopy-osx-x64.zip) | Macs Intel |
-| | [LanCopy-osx-arm64.zip](https://github.com/carbarher/LanCopy/releases/download/v1.0.0/LanCopy-osx-arm64.zip) | Silicon (M1/M2/M3) |
-
-Todos los descargables son **autocontenidos** como único ejecutable — sin dependencias de runtime.
 
 ## Español
 
@@ -189,3 +160,5 @@ git push origin v1.0.0
 
 ### Licencia
 [MIT](LICENSE) © 2026 carbar. Libre para usar, modificar y distribuir.
+
+

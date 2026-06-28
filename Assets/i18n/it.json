@@ -310,7 +310,7 @@
   "btn.qr": "QR",
   "tip.qr": "Mostra QR / link di abbinamento",
   "btn.pastelink": "Incolla link",
-  "tip.pastelink": "Incolla un link lancopy:// o ip:porta per compilare la connessione",
+  "tip.pastelink": "Incolla dagli appunti un link lancopy:// o ip:porta per compilare la connessione",
   "btn.broadcast": "Invia a tutti",
   "tip.broadcast": "Invia i file selezionati a tutti i peer rilevati",
   "btn.sendto": "Aggiungi a «Invia a»",

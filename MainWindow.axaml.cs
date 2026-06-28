@@ -31,11 +31,15 @@ namespace LanCopy;
 
 public partial class MainWindow : Window
 {
+    // Constantes de validación
+    private const int MinPinLength = 4;
+    private const int MaxPinLength = 128;
+    private const int MaxHistoryItems = 500;
+    private const int SettingsSchemaVersion = 1;
     private readonly FileServer _server = new();
     private static Loc L => Loc.Instance;
     private PeerDiscovery? _discovery; // Feature 12: UDP auto-descubrimiento
     private TrayIcon? _tray;            // idea-tray: icono de bandeja
-    private bool _reallyExit;          // true cuando se cierra de verdad (no a bandeja)
     private LanClient? _client;        // upload client
     private LanClient? _clientDown;   // Feature 2: cliente separado para download simultáneo
     private readonly SemaphoreSlim _clientLock = new(1, 1);
@@ -49,12 +53,12 @@ public partial class MainWindow : Window
     private int _isTransferring => (_isUploading | _isDownloading); // compat: 1 si cualquiera activo
     private CancellationTokenSource _uploadCts = new();
     private CancellationTokenSource _downloadCts = new();
-    private CancellationTokenSource _transferCts { get => _isUploading == 1 ? _uploadCts : _downloadCts; set { } }
     private readonly SemaphoreSlim _pauseSemaphore = new(1, 1); // Feature 1: pausa
     private int _isPaused; // 0=no, 1=pausado
 
-    // Feature 13: límite de transferencias paralelas (máx 4 simultáneos)
-    private readonly SemaphoreSlim _transferSemaphore = new(4, 4);
+    // Feature 13: límite de transferencias paralelas (configurable 1-8, por defecto 4)
+    private int _maxParallel = 4;
+    private SemaphoreSlim _transferSemaphore = new(4, 4);
 
     private readonly BulkObservableCollection<FileEntry> _localItems = new();
     private List<FileEntry> _localItemsAll = new(); // Feature 9: filtro
@@ -64,6 +68,7 @@ public partial class MainWindow : Window
 
     // Feature 3: perfiles de conexión
     private List<ConnectionProfile> _profiles = new();
+    private readonly object _profilesLock = new();
 
     // Feature 6: ordenación de columnas
     private string _localSortField = "name";
@@ -94,6 +99,7 @@ public partial class MainWindow : Window
     private bool _compressEnabled;
     private string _theme = "Dark"; // tema UI: Dark|Light
 
+
     private static readonly string SettingsPath = Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
         "LanCopy", "settings.json");
@@ -122,7 +128,12 @@ public partial class MainWindow : Window
     private WindowNotificationManager? _notifManager; // Feature 7: toast
     private ProgressWindow? _progressWin;       // UX: ventana de progreso para procesos largos
     private DispatcherTimer? _statusBlinkTimer; // UX: parpadeo del mensaje de estado que requiere atencion
+    private DispatcherTimer? _connectionWatchdogTimer;
     private bool _statusBlinkOn;
+    private bool _connectButtonIsConnected;
+    private bool _connectButtonIsBusy;
+    private int _isConnectionProbeRunning;
+    private int _isWindowClosing;
 
     public MainWindow()
     {
@@ -153,14 +164,21 @@ public partial class MainWindow : Window
 
         try
         {
-            var savedLocalPort = ReadSavedLocalPort();
+            // Aplicar PIN/TLS/confinamiento ANTES de escuchar: LoadSettingsAsync llega tarde.
+            var startup = StartupSettings.Load(SettingsPath);
+            _tlsEnabled = startup.TlsEnabled;
+            _restrictShareRoot = startup.RestrictShareRoot;
+            _readOnly = startup.ReadOnly;
+            _requireApproval = startup.RequireApproval;
             _server.TlsEnabled = _tlsEnabled;
             _server.RestrictToShareRoot = _restrictShareRoot;
             _server.ReadOnly = _readOnly;
+            _server.RequiredPin = startup.RequiredPin;
             _server.ApproveIncoming = _requireApproval ? OnApproveIncomingAsync : null;
-            _server.Start(savedLocalPort);
+            _server.Start(startup.LocalPort);
             _server.TransferProgress += OnServerTransferProgress;
             _server.TextReceived += OnTextReceived;
+            _server.DisconnectNoticeReceived += OnDisconnectNoticeReceived;
             { var lpBox = this.FindControl<TextBox>("txtLocalPort"); if (lpBox != null) lpBox.Text = _server.Port.ToString(); }
             this.FindControl<TextBlock>("txtMyIp")!.Text = $"{_server.LocalIp}:{_server.Port}";
             SetStatus(L.Format("st.serverActive", $"{_server.LocalIp}:{_server.Port}"));
@@ -189,19 +207,14 @@ public partial class MainWindow : Window
         ApplyUiMode(); // UX: aplica modo simple/avanzado al arrancar
         Closing += (_, ev) =>
         {
-            // idea-tray: cerrar la ventana solo la oculta; el servidor sigue recibiendo en segundo plano.
-            if (!_reallyExit && _tray != null)
-            {
-                ev.Cancel = true;
-                Hide();
-                SetStatus(L["st.minimizedToTray"]);
-                return;
-            }
+            Interlocked.Exchange(ref _isWindowClosing, 1);
+            StopConnectionWatchdog();
             try { SaveSettings(this.FindControl<TextBox>("txtRemoteIp")?.Text ?? "", this.FindControl<TextBox>("txtRemotePort")?.Text ?? "8742"); } catch { }
             _server.Stop(); _discovery?.Stop(); _client?.Dispose(); _clientDown?.Dispose(); _uploadCts.Cancel(); _downloadCts.Cancel();
             try { if (_tray != null) _tray.IsVisible = false; } catch { }
         };
         Opened += OnWindowOpened;
+        StartConnectionWatchdog();
     }
 
     private async void OnWindowOpened(object? sender, EventArgs e)
@@ -221,6 +234,7 @@ public partial class MainWindow : Window
 
         // No bloquear primer render: refresco local y cola pendiente arrancan sin bloquear Opened.
         LoadHistory();
+        RefreshFavoritesCombo();
         _ = ProcessLaunchArgsAsync();
         _ = CheckPendingQueueAsync();
     }
@@ -255,3 +269,5 @@ public partial class MainWindow : Window
 
 // ── Modelo: perfil de conexión (Feature 3) ────────────────────────────────────
 internal record ConnectionProfile(string Name, string Ip, string Port, string Pin = "", bool Tls = false, bool Compress = false);
+
+

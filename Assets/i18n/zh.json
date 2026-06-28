@@ -310,7 +310,7 @@
   "btn.qr": "二维码",
   "tip.qr": "显示配对二维码/链接",
   "btn.pastelink": "粘贴链接",
-  "tip.pastelink": "粘贴 lancopy:// 链接或 ip:端口 以填充连接",
+  "tip.pastelink": "从剪贴板粘贴 lancopy:// 链接或 ip:端口 以填充连接",
   "btn.broadcast": "发送给所有人",
   "tip.broadcast": "将所选文件发送给所有发现的对等设备",
   "btn.sendto": "添加到“发送到”",

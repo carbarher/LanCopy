@@ -310,7 +310,7 @@
   "btn.qr": "QR",
   "tip.qr": "Eşleştirme QR'ı / bağlantısını göster",
   "btn.pastelink": "Bağlantıyı yapıştır",
-  "tip.pastelink": "Bağlantıyı doldurmak için bir lancopy:// bağlantısı veya ip:port yapıştırın",
+  "tip.pastelink": "Bağlantıyı doldurmak için panodan bir lancopy:// bağlantısı veya ip:port yapıştırın",
   "btn.broadcast": "Herkese gönder",
   "tip.broadcast": "Seçili dosyaları keşfedilen tüm eşlere gönder",
   "btn.sendto": "\"Gönder\" menüsüne ekle",

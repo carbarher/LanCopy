@@ -13,6 +13,7 @@ namespace LanCopy.Services;
 public sealed class LanClient : IDisposable
 {
     public sealed record RemoteStat(bool Exists, bool IsDirectory, long Size, long LastWriteUtcTicks);
+    public sealed record RemoteHealth(int ConnCurrent, int ConnLimit, int PerIpLimit, int ActiveIps, int PinFailsTracked, int HashCacheEntries, int CommandRateTracked, int CommandRateLimit, int CommandRateWindowSeconds);
 
     private readonly string _host;
     private readonly int _port;
@@ -286,6 +287,16 @@ public sealed class LanClient : IDisposable
         EnsureOk(JsonSerializer.Deserialize<JsonElement>(line));
     }
 
+    public async Task SendDisconnectNoticeAsync(CancellationToken ct = default)
+    {
+        var (tcp, stream) = await OpenAsync(ct);
+        using var _ = tcp;
+        await Protocol.WriteLineAsync(stream,
+            JsonSerializer.Serialize(new { cmd = "disconnect_notice" }), ct);
+        var line = await Protocol.ReadLineAsync(stream, ct);
+        EnsureOk(JsonSerializer.Deserialize<JsonElement>(line));
+    }
+
     // ── DELETE ────────────────────────────────────────────────────────────────────
 
     public async Task DeleteAsync(string remotePath, CancellationToken ct = default)
@@ -306,6 +317,18 @@ public sealed class LanClient : IDisposable
         using var _ = tcp;
         await Protocol.WriteLineAsync(stream,
             JsonSerializer.Serialize(new { cmd = "rename", path = remotePath, newname = newName }), ct);
+        var line = await Protocol.ReadLineAsync(stream, ct);
+        EnsureOk(JsonSerializer.Deserialize<JsonElement>(line));
+    }
+
+    // ── MKDIR ─────────────────────────────────────────────────────────────────────
+
+    public async Task CreateDirectoryAsync(string remotePath, CancellationToken ct = default)
+    {
+        var (tcp, stream) = await OpenAsync(ct);
+        using var _ = tcp;
+        await Protocol.WriteLineAsync(stream,
+            JsonSerializer.Serialize(new { cmd = "mkdir", path = remotePath }), ct);
         var line = await Protocol.ReadLineAsync(stream, ct);
         EnsureOk(JsonSerializer.Deserialize<JsonElement>(line));
     }
@@ -372,6 +395,30 @@ public sealed class LanClient : IDisposable
         var size = resp.TryGetProperty("size", out var sizeEl) ? sizeEl.GetInt64() : 0L;
         var ticks = resp.TryGetProperty("lastWriteUtcTicks", out var ticksEl) ? ticksEl.GetInt64() : 0L;
         return new RemoteStat(true, isDirectory, size, ticks);
+    }
+
+
+    // ── HEALTH ───────────────────────────────────────────────────────────────────
+    public async Task<RemoteHealth?> GetHealthAsync(CancellationToken ct = default)
+    {
+        var (tcp, stream) = await OpenAsync(ct);
+        using var _ = tcp;
+        await Protocol.WriteLineAsync(stream, JsonSerializer.Serialize(new { cmd = "health" }), ct);
+        var line = await Protocol.ReadLineAsync(stream, ct);
+        var resp = JsonSerializer.Deserialize<JsonElement>(line);
+        EnsureOk(resp);
+
+        int GetInt(string name, int def = 0) => resp.TryGetProperty(name, out var el) && el.TryGetInt32(out var n) ? n : def;
+        return new RemoteHealth(
+            GetInt("connCurrent"),
+            GetInt("connLimit"),
+            GetInt("perIpLimit"),
+            GetInt("activeIps"),
+            GetInt("pinFailsTracked"),
+            GetInt("hashCacheEntries"),
+            GetInt("commandRateTracked"),
+            GetInt("commandRateLimit"),
+            GetInt("commandRateWindowSeconds"));
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────────────

@@ -195,20 +195,31 @@ public partial class MainWindow
         {
             _watchDebounce?.Dispose();
             var timer = new System.Timers.Timer(700) { AutoReset = false };
-            timer.Elapsed += async (_, _) =>
+            // Bug fix: no async void en Timer.Elapsed — las excepciones no capturadas crashean.
+            // Usamos Task.Run para que el async sea manejable.
+            timer.Elapsed += (_, _) =>
             {
-                if (!File.Exists(changedPath)) return;
-                try
+                _ = Task.Run(async () =>
                 {
-                    var fi = new FileInfo(changedPath);
-                    var entry = new FileEntry { Name = fi.Name, FullPath = fi.FullName, Size = fi.Length };
-                    await Dispatcher.UIThread.InvokeAsync(() =>
+                    if (!File.Exists(changedPath)) return;
+                    // SEGURIDAD: no transferir ficheros bajo junctions (podrían ser externos a la carpeta watched).
+                    if (SafeFileOps.ContainsReparsePoint(changedPath)) return;
+                    try
                     {
-                        SetStatus(L.Format("st.changeDetected", fi.Name));
-                        _ = TransferAsync(new List<FileEntry> { entry }, isUpload: true);
-                    });
-                }
-                catch { }
+                        var fi = new FileInfo(changedPath);
+                        var entry = new FileEntry { Name = fi.Name, FullPath = fi.FullName, Size = fi.Length };
+                        await Dispatcher.UIThread.InvokeAsync(() =>
+                        {
+                            SetStatus(L.Format("st.changeDetected", fi.Name));
+                            _ = TransferAsync(new List<FileEntry> { entry }, isUpload: true);
+                        });
+                    }
+                    catch (Exception ex)
+                    {
+                        System.Diagnostics.Debug.WriteLine($"[Watch] {ex.Message}");
+                        SetStatus(L.Format("st.watchError", ex.Message));
+                    }
+                });
             };
             _watchDebounce = timer;
             timer.Start();
@@ -236,13 +247,14 @@ public partial class MainWindow
             try { remoteFiles = await snap.ListRecursiveAsync(_remotePath); }
             finally { _clientLock.Release(); }
 
-            var remoteDict = remoteFiles.ToDictionary(f => f.Name, f => f);
+            var remoteDict = remoteFiles.ToDictionary(f => f.Name, f => f, StringComparer.OrdinalIgnoreCase);
 
             // Lista local
             var localFiles = await Task.Run(() =>
             {
                 if (!Directory.Exists(_localPath)) return new List<FileEntry>();
                 return Directory.EnumerateFiles(_localPath, "*", SearchOption.AllDirectories)
+                    .Where(f => !SafeFileOps.ContainsReparsePoint(f))
                     .Select(f =>
                     {
                         var fi = new FileInfo(f);
@@ -255,7 +267,7 @@ public partial class MainWindow
                         };
                     }).ToList();
             });
-            var localDict = localFiles.ToDictionary(f => f.Name, f => f);
+            var localDict = localFiles.ToDictionary(f => f.Name, f => f, StringComparer.OrdinalIgnoreCase);
 
             static bool IsDiff(FileEntry a, FileEntry b) =>
                 a.Size != b.Size || Math.Abs(a.LastWriteUtcTicks - b.LastWriteUtcTicks) > TimeSpan.TicksPerSecond;
@@ -358,3 +370,5 @@ public partial class MainWindow
         SetStatus(_compressEnabled ? L["st.compressOn"] : L["st.compressOff"]);
     }
 }
+
+

@@ -310,7 +310,7 @@
   "btn.qr": "QR",
   "tip.qr": "Zobrazit QR / odkaz pro spárování",
   "btn.pastelink": "Vložit odkaz",
-  "tip.pastelink": "Vložte odkaz lancopy:// nebo ip:port pro vyplnění připojení",
+  "tip.pastelink": "Vložte z clipboardu odkaz lancopy:// nebo ip:port pro vyplnění připojení",
   "btn.broadcast": "Odeslat všem",
   "tip.broadcast": "Odeslat vybrané soubory všem nalezeným zařízením",
   "btn.sendto": "Přidat do „Odeslat“",

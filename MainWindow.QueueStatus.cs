@@ -33,7 +33,7 @@ public partial class MainWindow
 {
     // ── Cola persistente (Feature 3) ─────────────────────────────────────────
 
-    private void SaveQueue(List<(FileEntry entry, string destPath)> files, bool isUpload, string ip, int port)
+    private void SaveQueue(List<(FileEntry entry, string destPath)> files, bool isUpload, string ip, int port, int attempt = 0)
     {
         try
         {
@@ -41,10 +41,16 @@ public partial class MainWindow
             var item = new Models.QueueItem(
                 files.Select(f => f.entry.FullPath).ToArray(),
                 files.Select(f => f.destPath).ToArray(),
-                isUpload, ip, port);
-            File.WriteAllText(QueuePath, System.Text.Json.JsonSerializer.Serialize(item));
+                isUpload, ip, port, DateTime.UtcNow.ToString("O"), attempt);
+
+            var tmp = QueuePath + ".tmp";
+            File.WriteAllText(tmp, System.Text.Json.JsonSerializer.Serialize(item));
+            File.Move(tmp, QueuePath, overwrite: true);
         }
-        catch { /* no bloquear transferencia por error de cola */ }
+        catch
+        {
+            // no bloquear transferencia por error de cola
+        }
     }
 
     private static void ClearQueue()
@@ -59,21 +65,34 @@ public partial class MainWindow
         {
             var json = await File.ReadAllTextAsync(QueuePath);
             var item = System.Text.Json.JsonSerializer.Deserialize<Models.QueueItem>(json);
-            if (item == null || item.FilePaths.Length == 0) { ClearQueue(); return; }
+            if (item == null || item.FilePaths.Length == 0 || item.FilePaths.Length != item.DestPaths.Length)
+            {
+                ClearQueue();
+                return;
+            }
+
+            var valid = item.FilePaths
+                .Select((p, i) => new { Path = p, Dest = item.DestPaths[i] })
+                .Where(x => !string.IsNullOrWhiteSpace(x.Path) && !string.IsNullOrWhiteSpace(x.Dest))
+                .Where(x => item.IsUpload ? File.Exists(x.Path) : true)
+                .ToList();
+            if (valid.Count == 0) { ClearQueue(); return; }
 
             var result = await Dispatcher.UIThread.InvokeAsync(async () =>
             {
                 var dlg = new Avalonia.Controls.Window
                 {
                     Title = L["queue.title"],
-                    Width = 440,
-                    Height = 160,
+                    Width = 460,
+                    Height = 180,
                     Background = new Avalonia.Media.SolidColorBrush(Avalonia.Media.Color.Parse("#2D2D30")),
                     WindowStartupLocation = Avalonia.Controls.WindowStartupLocation.CenterOwner
                 };
+                var whenTxt = DateTime.TryParse(item.CreatedUtc, null, System.Globalization.DateTimeStyles.RoundtripKind, out var ts)
+                    ? ts.ToLocalTime().ToString("dd/MM HH:mm") : "?";
                 var msg = new TextBlock
                 {
-                    Text = L.Format("queue.body", item.FilePaths.Length, item.IsUpload ? L["word.upload"] : L["word.download"], $"{item.RemoteIp}:{item.RemotePort}"),
+                    Text = L.Format("queue.body", valid.Count, item.IsUpload ? L["word.upload"] : L["word.download"], $"{item.RemoteIp}:{item.RemotePort}") + $"\n(guardada: {whenTxt}, intento #{Math.Max(1, item.Attempt + 1)})",
                     Foreground = Avalonia.Media.Brushes.White,
                     TextWrapping = Avalonia.Media.TextWrapping.Wrap,
                     Margin = new Avalonia.Thickness(16, 16, 16, 8)
@@ -91,35 +110,38 @@ public partial class MainWindow
 
             if (!result) { ClearQueue(); return; }
 
-            // Restaurar IP/puerto y lanzar transferencia
+            if (item.Attempt >= 3)
+            {
+                SetStatus("Cola pendiente descartada: superó el máximo de reintentos");
+                ClearQueue();
+                return;
+            }
+
+            // actualizar intento antes de relanzar
+            SaveQueue(valid.Select(v => (new FileEntry { Name = Path.GetFileName(v.Path), FullPath = v.Path }, v.Dest)).ToList(), item.IsUpload, item.RemoteIp, item.RemotePort, item.Attempt + 1);
+
             this.FindControl<TextBox>("txtRemoteIp")!.Text = item.RemoteIp;
             this.FindControl<TextBox>("txtRemotePort")!.Text = item.RemotePort.ToString();
             await ConnectAsync(item.RemoteIp, item.RemotePort);
 
-            var entries = item.FilePaths.Select((p, i) =>
-                new FileEntry { Name = Path.GetFileName(p), FullPath = p }).ToList();
+            var entries = valid.Select(v => new FileEntry { Name = Path.GetFileName(v.Path), FullPath = v.Path }).ToList();
             _ = TransferAsync(entries, item.IsUpload);
         }
-        catch { ClearQueue(); }
+        catch
+        {
+            try
+            {
+                var bad = QueuePath + ".bad-" + DateTime.UtcNow.ToString("yyyyMMddHHmmss");
+                if (File.Exists(QueuePath)) File.Move(QueuePath, bad, overwrite: true);
+            }
+            catch { ClearQueue(); }
+        }
     }
 
     // ── UDP Peer Discovery (Feature 12) ──────────────────────────────────────
 
     private static int ReadSavedLocalPort()
-    {
-        try
-        {
-            if (!File.Exists(SettingsPath)) return 8742;
-            var doc = JsonSerializer.Deserialize<JsonElement>(File.ReadAllText(SettingsPath));
-            if (doc.TryGetProperty("localPort", out var lp))
-            {
-                if (lp.ValueKind == JsonValueKind.Number && lp.TryGetInt32(out var n) && n is >= 1 and <= 65535) return n;
-                if (lp.ValueKind == JsonValueKind.String && int.TryParse(lp.GetString(), out var s) && s is >= 1 and <= 65535) return s;
-            }
-        }
-        catch { }
-        return 8742;
-    }
+        => StartupSettings.Load(SettingsPath).LocalPort;
 
     private void TxtLocalPort_KeyDown(object? sender, KeyEventArgs e)
     {
@@ -143,11 +165,17 @@ public partial class MainWindow
 
         try
         {
-            _discovery?.Stop();
+            // Bug fix: desuscribir antes de recrear para evitar eventos duplicados
+            _server.TextReceived -= OnTextReceived;
+            _server.DisconnectNoticeReceived -= OnDisconnectNoticeReceived;
             _server.TransferProgress -= OnServerTransferProgress;
+            if (_discovery != null) _discovery.PeersChanged -= UpdatePeersCombo;
+            _discovery?.Stop();
             _server.Stop();
             _server.Start(port);
             _server.TransferProgress += OnServerTransferProgress;
+            _server.TextReceived += OnTextReceived;
+            _server.DisconnectNoticeReceived += OnDisconnectNoticeReceived;
             this.FindControl<TextBlock>("txtMyIp")!.Text = $"{_server.LocalIp}:{_server.Port}";
 
             _discovery = new PeerDiscovery(_server.LocalIp, _server.Port);
@@ -164,6 +192,8 @@ public partial class MainWindow
             SetStatus(L.Format("st.portChangeFailed", ex.Message));
         }
     }
+    private List<string> _knownPeerIps = [];
+
     private void UpdatePeersCombo()
     {
         Dispatcher.UIThread.Post(() =>
@@ -172,9 +202,18 @@ public partial class MainWindow
             if (combo == null) return;
             var peers = _discovery?.GetPeers() ?? [];
             combo.ItemsSource = peers.Select(p => $"{p.Name} ({p.Ip}:{p.Port})").ToList();
+
+            // Notificar cuando aparece un nuevo peer
+            var newPeers = peers.Where(p => !_knownPeerIps.Contains(p.Ip)).ToList();
+            foreach (var p in newPeers)
+            {
+                var msg = $"🖥 {p.Name} ({p.Ip}) disponible en la red";
+                SetStatus(msg);
+                _notifManager?.Show(new Notification("LanCopy", msg, NotificationType.Information));
+            }
+            _knownPeerIps = peers.Select(p => p.Ip).ToList();
         });
     }
-
     private void CmbPeers_SelectionChanged(object? sender, SelectionChangedEventArgs e)
     {
         var combo = (ComboBox)sender!;

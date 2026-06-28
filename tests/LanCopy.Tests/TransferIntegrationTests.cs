@@ -153,6 +153,24 @@ public class TransferIntegrationTests : IDisposable
     }
 
     [Fact]
+    public async Task Mkdir_Creates_Remote_Directory()
+    {
+        await Client().CreateDirectoryAsync("new-folder");
+        Assert.True(Directory.Exists(Path.Combine(_shared, "new-folder")));
+    }
+
+    [Fact]
+    public async Task Mkdir_OutsideRoot_IsBlocked()
+    {
+        var outDir = Path.Combine(Path.GetTempPath(), "lc_out_mkdir_" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(outDir);
+        var target = Path.Combine(outDir, "nope");
+        await Assert.ThrowsAnyAsync<Exception>(async () =>
+            await Client().CreateDirectoryAsync(target));
+        Assert.False(Directory.Exists(target));
+    }
+
+    [Fact]
     public async Task CompressedExtension_RoundTrip_PreservesContent()
     {
         var srcDir = Path.Combine(Path.GetTempPath(), "lc_zext_" + Guid.NewGuid().ToString("N"));
@@ -215,6 +233,17 @@ public class TransferIntegrationTests : IDisposable
         await Client().SendTextAsync("hola mundo");
         await Task.WhenAny(tcs.Task, Task.Delay(3000));
         Assert.Equal("hola mundo", gotText);
+    }
+
+    [Fact]
+    public async Task SendDisconnectNotice_Triggers_DisconnectNoticeReceived()
+    {
+        string? gotIp = null;
+        var tcs = new TaskCompletionSource();
+        _server.DisconnectNoticeReceived += ip => { gotIp = ip; tcs.TrySetResult(); };
+        await Client().SendDisconnectNoticeAsync();
+        await Task.WhenAny(tcs.Task, Task.Delay(3000));
+        Assert.False(string.IsNullOrWhiteSpace(gotIp));
     }
 
     [Fact]

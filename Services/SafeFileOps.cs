@@ -10,6 +10,7 @@ internal static class SafeFileOps
         "LanCopy", "audit-log.jsonl");
 
     private static readonly ConcurrentDictionary<string, DateTime> _cooldowns = new(StringComparer.OrdinalIgnoreCase);
+    private static readonly object _auditLock = new();
 
     // Stat cache: evita re-stat en batch verify (TTL 5s)
     private static readonly ConcurrentDictionary<string, (DateTime Ts, long Size, long LastWriteUtcTicks, bool Exists, bool IsDir)> _statCache
@@ -220,7 +221,7 @@ internal static class SafeFileOps
                 details,
                 actor
             });
-            File.AppendAllText(AuditPath, line + Environment.NewLine);
+            lock (_auditLock) File.AppendAllText(AuditPath, line + Environment.NewLine);
         }
         catch
         {
