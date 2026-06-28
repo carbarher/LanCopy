@@ -33,6 +33,9 @@ public class TransferIntegrationTests : IDisposable
 
     private LanClient Client() => new("127.0.0.1", _port);
 
+    private string OutsideRootPath(string fileName = "outside.txt")
+        => Path.GetFullPath(Path.Combine(_shared, "..", fileName));
+
     [Fact]
     public async Task Upload_Then_Download_PreservesContent()
     {
@@ -71,16 +74,18 @@ public class TransferIntegrationTests : IDisposable
     [Fact]
     public async Task List_OutsideRoot_IsBlocked()
     {
+        var outsideDir = Path.GetFullPath(Path.Combine(_shared, ".."));
         await Assert.ThrowsAnyAsync<Exception>(async () =>
-            await Client().ListAsync(@"C:\Windows"));
+            await Client().ListAsync(outsideDir));
     }
 
     [Fact]
     public async Task Download_OutsideRoot_IsBlocked()
     {
         var outFile = Path.Combine(Path.GetTempPath(), "leak_" + Guid.NewGuid().ToString("N") + ".ini");
+        var outsideFile = OutsideRootPath("outside-download.txt");
         await Assert.ThrowsAnyAsync<Exception>(async () =>
-            await Client().DownloadAsync(@"C:\Windows\win.ini", outFile));
+            await Client().DownloadAsync(outsideFile, outFile));
     }
 
     [Fact]
@@ -90,8 +95,9 @@ public class TransferIntegrationTests : IDisposable
         Directory.CreateDirectory(srcDir);
         var srcFile = Path.Combine(srcDir, "evil.txt");
         await File.WriteAllTextAsync(srcFile, "x");
+        var outsideTarget = OutsideRootPath("evil.txt");
         await Assert.ThrowsAnyAsync<Exception>(async () =>
-            await Client().UploadAsync(srcFile, @"C:\Users\Public\evil.txt"));
+            await Client().UploadAsync(srcFile, outsideTarget));
     }
 
     [Fact]
