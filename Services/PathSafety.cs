@@ -34,6 +34,7 @@ public static class PathSafety
                     combined = Path.Combine(combined, seg);
                 }
             }
+
             var full = Path.GetFullPath(combined);
             var rootWithSep = rootFull.EndsWith(Path.DirectorySeparatorChar)
                 ? rootFull : rootFull + Path.DirectorySeparatorChar;
@@ -62,5 +63,29 @@ public static class PathSafety
         }
         // Fallback: GUID para evitar sobrescritura silenciosa.
         return Path.Combine(dir, $"{name} ({Guid.NewGuid():N}){ext}");
+    }
+
+    /// <summary>
+    /// Detección de enlaces/reparse robusta y aware del SO.
+    /// En Unix preferimos LinkTarget/ResolveLinkTarget para evitar falsos positivos.
+    /// </summary>
+    public static bool IsLinkOrReparsePoint(string path)
+    {
+        try
+        {
+            var info = Directory.Exists(path) ? (FileSystemInfo)new DirectoryInfo(path) : new FileInfo(path);
+            if (!info.Exists) return false;
+
+            if (OperatingSystem.IsWindows())
+                return (info.Attributes & FileAttributes.ReparsePoint) != 0;
+
+            // macOS/Linux: LinkTarget identifica symlinks reales sin depender de atributos Windows.
+            if (!string.IsNullOrEmpty(info.LinkTarget)) return true;
+            return info.ResolveLinkTarget(returnFinalTarget: false) is not null;
+        }
+        catch
+        {
+            return true;
+        }
     }
 }

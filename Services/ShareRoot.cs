@@ -111,7 +111,7 @@ public static class ShareRoot
             {
                 if (File.Exists(current) || Directory.Exists(current))
                 {
-                    if ((File.GetAttributes(current) & FileAttributes.ReparsePoint) != 0) return true;
+                    if (PathSafety.IsLinkOrReparsePoint(current)) return true;
                 }
                 var parent = Directory.GetParent(current)?.FullName;
                 if (string.IsNullOrEmpty(parent) || parent == current) break;

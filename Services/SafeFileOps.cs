@@ -119,7 +119,7 @@ internal static class SafeFileOps
                 if (stopAt is not null && current.Equals(stopAt, PathComparison))
                     break;
 
-                if ((File.GetAttributes(current) & FileAttributes.ReparsePoint) != 0)
+                if (PathSafety.IsLinkOrReparsePoint(current))
                     return true;
 
                 var parent = Directory.GetParent(current)?.FullName;
