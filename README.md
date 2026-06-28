@@ -14,14 +14,14 @@ C# / .NET 9 and Avalonia UI. Available in 20 languages.
 
 ## Downloads
 
-### Direct download links (v1.0.15)
-- [Windows installer (.exe)](https://github.com/carbarher/LanCopy/releases/download/v1.0.15/LanCopy-Setup-v1.0.15.exe)
-- [Windows x64 (.zip)](https://github.com/carbarher/LanCopy/releases/download/v1.0.15/LanCopy-win-x64.zip)
-- [Windows ARM64 (.zip)](https://github.com/carbarher/LanCopy/releases/download/v1.0.15/LanCopy-win-arm64.zip)
-- [Linux x64 (.tar.gz)](https://github.com/carbarher/LanCopy/releases/download/v1.0.15/LanCopy-linux-x64.tar.gz)
-- [Linux ARM64 (.tar.gz)](https://github.com/carbarher/LanCopy/releases/download/v1.0.15/LanCopy-linux-arm64.tar.gz)
-- [macOS Apple Silicon (.zip)](https://github.com/carbarher/LanCopy/releases/download/v1.0.15/LanCopy-osx-arm64.zip)
-- [macOS Intel (.zip)](https://github.com/carbarher/LanCopy/releases/download/v1.0.15/LanCopy-osx-x64.zip)
+### Direct download links (latest)
+- [Windows installer (.exe)](https://github.com/carbarher/LanCopy/releases/latest/download/LanCopy-Setup-v1.0.15.exe)
+- [Windows x64 (.zip)](https://github.com/carbarher/LanCopy/releases/latest/download/LanCopy-win-x64.zip)
+- [Windows ARM64 (.zip)](https://github.com/carbarher/LanCopy/releases/latest/download/LanCopy-win-arm64.zip)
+- [Linux x64 (.tar.gz)](https://github.com/carbarher/LanCopy/releases/latest/download/LanCopy-linux-x64.tar.gz)
+- [Linux ARM64 (.tar.gz)](https://github.com/carbarher/LanCopy/releases/latest/download/LanCopy-linux-arm64.tar.gz)
+- [macOS Apple Silicon (.zip)](https://github.com/carbarher/LanCopy/releases/latest/download/LanCopy-osx-arm64.zip)
+- [macOS Intel (.zip)](https://github.com/carbarher/LanCopy/releases/latest/download/LanCopy-osx-x64.zip)
 
 ---
 
