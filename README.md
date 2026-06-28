@@ -14,9 +14,6 @@ C# / .NET 9 and Avalonia UI. Available in 20 languages.
 
 ## Downloads
 
-- [All releases (all versions)](https://github.com/carbarher/LanCopy/releases)
-- [Latest release](https://github.com/carbarher/LanCopy/releases/latest)
-
 ### Direct download links (v1.0.15)
 - [Windows installer (.exe)](https://github.com/carbarher/LanCopy/releases/download/v1.0.15/LanCopy-Setup-v1.0.15.exe)
 - [Windows x64 (.zip)](https://github.com/carbarher/LanCopy/releases/download/v1.0.15/LanCopy-win-x64.zip)
