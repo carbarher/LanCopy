@@ -153,25 +153,37 @@ public partial class MainWindow
                 doneBytes = totalTransfer - failedFiles.Sum(x => (long)x.entry.Size);
             ok = fileList.Count - skip - failedFiles.Count;
 
-            // -- Pase 2: reintentar archivos fallidos -------------------------
-            if (failedFiles.Count > 0 && !ct.IsCancellationRequested)
+            // -- Pase 2+: reintentar archivos fallidos (múltiples intentos) ------
+            const int maxRetryPasses = 4;
+            int retryPass = 0;
+            int recoveredOnRetries = 0;
+            while (failedFiles.Count > 0 && !ct.IsCancellationRequested && retryPass < maxRetryPasses)
             {
-                SetStatus(L.Format("st.retrying", failedFiles.Count));
-                try { await Task.Delay(2000, ct); } catch { goto cleanup; }
+                retryPass++;
+                var pending = failedFiles.ToList();
+                failedFiles.Clear();
+
+                SetStatus(L.Format("st.retrying", pending.Count));
+                var backoffMs = Math.Min(2000 * retryPass, 8000);
+                try { await Task.Delay(backoffMs, ct); } catch { goto cleanup; }
 
                 bool reconnected2 = await TryReconnectAsync(remoteIp, remotePort, ct);
-                if (!reconnected2) goto cleanup;
+                if (!reconnected2)
+                {
+                    foreach (var f in pending) failedFiles.Add(f);
+                    break;
+                }
 
                 var retryBag = new System.Collections.Concurrent.ConcurrentBag<(FileEntry entry, string destPath)>();
                 var retryTasks = new List<Task>();
                 int ri = 0;
-                foreach (var (entry, destPath) in failedFiles)
+                foreach (var (entry, destPath) in pending)
                 {
                     if (ct.IsCancellationRequested) break;
 
                     var taskRi = ri++;
                     var task = ParallelTransferFileAsync(
-                        entry, destPath, isUpload, taskRi, failedFiles.Count,
+                        entry, destPath, isUpload, taskRi, pending.Count,
                         totalTransfer, $"↺{arrow}", retryBag, lockDoneBytes, aggregate, remoteIp, remotePort, ct);
                     retryTasks.Add(task);
                 }
@@ -179,24 +191,24 @@ public partial class MainWindow
                 if (retryTasks.Count > 0)
                     await Task.WhenAll(retryTasks);
 
-                // Re-contar qué pasó
-                ok += failedFiles.Count - retryBag.Count;
-                failedFiles.Clear();
+                var recoveredThisPass = pending.Count - retryBag.Count;
+                ok += recoveredThisPass;
+                recoveredOnRetries += recoveredThisPass;
                 foreach (var f in retryBag) failedFiles.Add(f);
-
-                if (failedFiles.Count > 0)
-                {
-                    var names = string.Join(", ", failedFiles.Select(x => x.entry.Name).Take(3));
-                    var extra = failedFiles.Count > 3 ? $" +{failedFiles.Count - 3}" : "";
-                    AddHistory(L.Format("hist.incomplete", failedFiles.Count, $"{names}{extra}"), "#FF6B6B");
-                }
-                else
-                {
-                    AddHistory(L.Format("hist.retryOk", failedFiles.Count), "#FFD700");
-                }
 
                 lock (lockDoneBytes)
                     doneBytes = totalTransfer - failedFiles.Sum(x => (long)x.entry.Size);
+            }
+
+            if (failedFiles.Count > 0)
+            {
+                var names = string.Join(", ", failedFiles.Select(x => x.entry.Name).Take(3));
+                var extra = failedFiles.Count > 3 ? $" +{failedFiles.Count - 3}" : "";
+                AddHistory(L.Format("hist.incomplete", failedFiles.Count, $"{names}{extra}"), "#FF6B6B");
+            }
+            else if (retryPass > 0 && recoveredOnRetries > 0)
+            {
+                AddHistory(L.Format("hist.retryOk", recoveredOnRetries), "#FFD700");
             }
 
         cleanup:
