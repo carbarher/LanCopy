@@ -330,15 +330,18 @@ public partial class MainWindow
         TransferProgressAggregate aggregate,
         string remoteIp, int remotePort, CancellationToken ct)
     {
-        // Feature 1: punto de pausa
-        await _pauseSemaphore.WaitAsync(ct);
-        if (!ct.IsCancellationRequested) _pauseSemaphore.Release();
-        if (ct.IsCancellationRequested) return;
-
-        // Limitar a máx 4 simultáneas
-        await _transferSemaphore.WaitAsync(ct);
+        bool semaphoreHeld = false;
         try
         {
+            // Feature 1: punto de pausa
+            await _pauseSemaphore.WaitAsync(ct);
+            if (!ct.IsCancellationRequested) _pauseSemaphore.Release();
+            if (ct.IsCancellationRequested) return;
+
+            // Limitar a máx 4 simultáneas
+            await _transferSemaphore.WaitAsync(ct);
+            semaphoreHeld = true;
+
             var progressKey = fi;
 
             bool fileOk = await DoTransferFileAsync(
@@ -371,9 +374,14 @@ public partial class MainWindow
                 failedBag.Add((entry, destPath));
             }
         }
+        catch (OperationCanceledException)
+        {
+            // Cancelación normal del usuario/reintento: no propagar a async void (evita crash de la app).
+        }
         finally
         {
-            _transferSemaphore.Release();
+            if (semaphoreHeld)
+                _transferSemaphore.Release();
         }
     }
 
