@@ -125,7 +125,7 @@ public partial class MainWindow
             await ConnectAsync(item.RemoteIp, item.RemotePort);
             if (!await IsConnectedAsync())
             {
-                SetStatus(L.Format("st.connectFailed", $"{item.RemoteIp}:{item.RemotePort}", L["st.reconnectFailed"]));
+                SetStatusAlert(L.Format("st.queueConnectFailedKept", $"{item.RemoteIp}:{item.RemotePort}", L["st.reconnectFailed"]));
                 return;
             }
 

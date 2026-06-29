@@ -264,6 +264,8 @@ public partial class MainWindow
             Interlocked.Exchange(ref flagEnd, 0);
             if (!__finalErr && !ct.IsCancellationRequested)
                 ClearQueue(); // completada correctamente
+            else
+                SetStatusAlert(L["st.queueKeptRetry"]);
         }
     }
 
