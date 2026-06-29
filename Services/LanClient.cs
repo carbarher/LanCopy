@@ -254,7 +254,8 @@ public sealed class LanClient : IDisposable
     public async Task UploadAsync(
         string localPath, string remotePath,
         IProgress<(long done, long total)>? progress = null,
-        CancellationToken ct = default)
+        CancellationToken ct = default,
+        Action<long, long>? onResumeAccepted = null)
     {
         try
         {
@@ -325,6 +326,8 @@ public sealed class LanClient : IDisposable
                 var accepted = preAck.TryGetProperty("range_from", out var rf) && rf.TryGetInt64(out var rv)
                     ? rv : 0L;
                 if (accepted < 0 || accepted > size) accepted = 0;
+                if (accepted > 0)
+                    onResumeAccepted?.Invoke(accepted, size);
 
                 fs.Seek(accepted, SeekOrigin.Begin);
                 var remaining = size - accepted;

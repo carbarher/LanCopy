@@ -288,7 +288,17 @@ public partial class MainWindow
             finally { clientLock.Release(); }
 
             if (isUpload)
-                await snap.UploadAsync(entry.FullPath, destPath, throttled, ct);
+                await snap.UploadAsync(
+                    entry.FullPath,
+                    destPath,
+                    throttled,
+                    ct,
+                    (accepted, total) =>
+                    {
+                        var fromText = FileEntry.FormatSize(accepted);
+                        var totalText = FileEntry.FormatSize(total);
+                        SetStatus($"Reanudando desde {fromText} / {totalText} ({entry.Name})");
+                    });
             else
                 await snap.DownloadAsync(entry.FullPath, destPath, throttled, ct);
 
