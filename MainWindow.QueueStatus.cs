@@ -123,9 +123,33 @@ public partial class MainWindow
             this.FindControl<TextBox>("txtRemoteIp")!.Text = item.RemoteIp;
             this.FindControl<TextBox>("txtRemotePort")!.Text = item.RemotePort.ToString();
             await ConnectAsync(item.RemoteIp, item.RemotePort);
+            if (!await IsConnectedAsync())
+            {
+                SetStatus(L.Format("st.connectFailed", $"{item.RemoteIp}:{item.RemotePort}", L["st.reconnectFailed"]));
+                return;
+            }
 
-            var entries = valid.Select(v => new FileEntry { Name = Path.GetFileName(v.Path), FullPath = v.Path }).ToList();
-            _ = TransferAsync(entries, item.IsUpload);
+            var queuedFiles = valid.Select(v =>
+            {
+                long size = 0;
+                if (item.IsUpload)
+                {
+                    try { size = new FileInfo(v.Path).Length; } catch { size = 0; }
+                }
+
+                return (
+                    new FileEntry
+                    {
+                        Name = Path.GetFileName(v.Path),
+                        FullPath = v.Path,
+                        Size = size
+                    },
+                    v.Dest
+                );
+            }).ToList();
+
+            var entries = queuedFiles.Select(x => x.Item1).ToList();
+            await TransferAsync(entries, item.IsUpload, queuedFiles);
         }
         catch
         {

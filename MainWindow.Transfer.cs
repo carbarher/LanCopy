@@ -79,7 +79,10 @@ public partial class MainWindow
         }
     }
 
-    private async Task TransferAsync(List<FileEntry> items, bool isUpload)
+    private async Task TransferAsync(
+        List<FileEntry> items,
+        bool isUpload,
+        List<(FileEntry entry, string destPath)>? replayQueueFiles = null)
     {
         ref int isFlag = ref (isUpload ? ref _isUploading : ref _isDownloading);
         if (Interlocked.CompareExchange(ref isFlag, 1, 0) == 1) return;
@@ -111,11 +114,12 @@ public partial class MainWindow
                 return;
             }
 
-            var fileList = await ExpandItemsAsync(items, isUpload, ct);
+            var fileList = replayQueueFiles ?? await ExpandItemsAsync(items, isUpload, ct);
             if (fileList == null || ct.IsCancellationRequested) return;
 
             // Feature 3: guardar cola persistente al iniciar
-            SaveQueue(fileList, isUpload, remoteIp, remotePort);
+            if (replayQueueFiles == null)
+                SaveQueue(fileList, isUpload, remoteIp, remotePort);
 
             var totalBytes = fileList.Sum(x => x.entry.Size);
             var arrow = isUpload ? ">>" : "<<";
@@ -258,7 +262,8 @@ public partial class MainWindow
             SetTransferButtonsEnabled(true, cancelEnabled: false);
             ref int flagEnd = ref (isUpload ? ref _isUploading : ref _isDownloading);
             Interlocked.Exchange(ref flagEnd, 0);
-            ClearQueue(); // Feature 3: transferencia completada (o cancelada)
+            if (!__finalErr && !ct.IsCancellationRequested)
+                ClearQueue(); // completada correctamente
         }
     }
 
