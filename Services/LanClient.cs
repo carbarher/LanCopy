@@ -18,6 +18,7 @@ public sealed class LanClient : IDisposable
     private readonly string _host;
     private readonly int _port;
     private const long MaxCompressInMemory = 200L * 1024 * 1024;
+    private static readonly TimeSpan TransferIdleTimeout = TimeSpan.FromSeconds(20);
     public string? Pin { get; set; }      // Feature 10: PIN de autenticación
     public bool UseTls { get; set; }      // Feature 9: TLS
     public bool UseCompress { get; set; } // Feature 2: compresión deflate
@@ -108,6 +109,8 @@ public sealed class LanClient : IDisposable
         IProgress<(long done, long total)>? progress = null,
         CancellationToken ct = default)
     {
+        try
+        {
         // Descarga atomica con reanudacion (idea-resume): se escribe a un .part y se promueve
         // al destino final solo al verificar el hash. Si existe un .part previo, se reanuda.
         var partPath = localPath + ".part";
@@ -118,11 +121,16 @@ public sealed class LanClient : IDisposable
         }
         bool wantCompress = UseCompress && resume == 0; // no se comprime al reanudar
 
-        var (tcp, stream) = await OpenAsync(ct);
+        using var idleCts = StartIdleTimeout(ct);
+        var ioCt = idleCts.Token;
+
+        var (tcp, stream) = await OpenAsync(ioCt);
         using var _ = tcp;
         await Protocol.WriteLineAsync(stream,
-            JsonSerializer.Serialize(new { cmd = "get", path = remotePath, compress = wantCompress, offset = resume }), ct);
-        var headerLine = await Protocol.ReadLineAsync(stream, ct);
+            JsonSerializer.Serialize(new { cmd = "get", path = remotePath, compress = wantCompress, offset = resume }), ioCt);
+        TouchIdleTimeout(idleCts);
+        var headerLine = await Protocol.ReadLineAsync(stream, ioCt);
+        TouchIdleTimeout(idleCts);
         var header = JsonSerializer.Deserialize<JsonElement>(headerLine);
         EnsureOk(header);
         var size = header.GetProperty("size").GetInt64();
@@ -151,7 +159,11 @@ public sealed class LanClient : IDisposable
                 var pre = new byte[Protocol.BufferSize];
                 long left = rangeFrom; int pr;
                 while (left > 0 && (pr = await fs.ReadAsync(pre.AsMemory(0, (int)Math.Min(pre.Length, left)), ct)) > 0)
-                { hasher.AppendData(pre, 0, pr); left -= pr; }
+                {
+                    hasher.AppendData(pre, 0, pr);
+                    left -= pr;
+                    TouchIdleTimeout(idleCts);
+                }
                 fs.Seek(0, SeekOrigin.End);
             }
 
@@ -161,16 +173,18 @@ public sealed class LanClient : IDisposable
                 if (compressedSize < 0 || compressedSize > MaxCompressInMemory)
                     throw new InvalidDataException("compressed_size excede el limite permitido");
                 using var compBuf = new MemoryStream();
-                await Protocol.CopyExactAsync(stream, compBuf, compressedSize, null, ct);
+                await Protocol.CopyExactAsync(stream, compBuf, compressedSize, null, ioCt);
+                TouchIdleTimeout(idleCts);
                 compBuf.Seek(0, SeekOrigin.Begin);
                 await using var ds = new DeflateStream(compBuf, CompressionMode.Decompress);
                 var dbuf = new byte[Protocol.BufferSize];
                 int dr; long written = 0;
-                while ((dr = await ds.ReadAsync(dbuf, ct)) > 0)
+                while ((dr = await ds.ReadAsync(dbuf, ioCt)) > 0)
                 {
                     written += dr;
                     if (written > size) throw new InvalidDataException("Descompresion excede el tamano declarado (posible zip-bomb)");
-                    await fs.WriteAsync(dbuf.AsMemory(0, dr), ct);
+                    await fs.WriteAsync(dbuf.AsMemory(0, dr), ioCt);
+                    TouchIdleTimeout(idleCts);
                     hasher.AppendData(dbuf, 0, dr);
                 }
             }
@@ -182,12 +196,13 @@ public sealed class LanClient : IDisposable
                 while (remaining > 0)
                 {
                     var toRead = (int)Math.Min(remaining, buf.Length);
-                    var read = await stream.ReadAsync(buf.AsMemory(0, toRead), ct);
+                    var read = await stream.ReadAsync(buf.AsMemory(0, toRead), ioCt);
                     if (read == 0) throw new EndOfStreamException("svc.connCut");
-                    await fs.WriteAsync(buf.AsMemory(0, read), ct);
+                    await fs.WriteAsync(buf.AsMemory(0, read), ioCt);
                     hasher.AppendData(buf, 0, read);
-                    await RateLimiter.Global.ThrottleAsync(read, ct);
+                    await RateLimiter.Global.ThrottleAsync(read, ioCt);
                     remaining -= read; done += read;
+                    TouchIdleTimeout(idleCts);
                     progress?.Report((done, size));
                 }
             }
@@ -204,7 +219,7 @@ public sealed class LanClient : IDisposable
             {
                 var expected = sha1El.GetString() ?? "";
                 fs.Seek(0, SeekOrigin.Begin);
-                var actual = Convert.ToHexString(await SHA1.HashDataAsync(fs, ct)).ToLowerInvariant();
+                var actual = Convert.ToHexString(await SHA1.HashDataAsync(fs, ioCt)).ToLowerInvariant();
                 if (!string.Equals(expected, actual, StringComparison.OrdinalIgnoreCase))
                     mismatch = "SHA1";
             }
@@ -223,6 +238,11 @@ public sealed class LanClient : IDisposable
 
         // Exito: promover .part al destino final (sobrescribe si existe).
         File.Move(partPath, localPath, overwrite: true);
+        }
+        catch (OperationCanceledException ex)
+        {
+            throw MapIdleTimeout(ex, ct);
+        }
     }
 
     // -- PUT --
@@ -232,46 +252,68 @@ public sealed class LanClient : IDisposable
         IProgress<(long done, long total)>? progress = null,
         CancellationToken ct = default)
     {
-        var (tcp, stream) = await OpenAsync(ct);
-        using var _ = tcp;
-
-        // Abre archivo primero para tamaño real → evita race condition (#4)
-        await using var fs = File.OpenRead(localPath);
-        var size = fs.Length;
-
-        // Integridad: SHA-256 (una sola lectura).
-        var sha256Local = Convert.ToHexString(await SHA256.HashDataAsync(fs, ct)).ToLowerInvariant();
-        fs.Seek(0, SeekOrigin.Begin);
-
-        // Feature 2: compresión deflate opcional (solo archivos <= 200 MB)
-        bool doCompress = UseCompress && size > 0 && size <= 200L * 1024 * 1024 && !Protocol.IsCompressedExtension(localPath);
-        if (doCompress)
+        try
         {
-            using var ms = new MemoryStream();
-            await using (var ds = new DeflateStream(ms, CompressionLevel.Fastest, leaveOpen: true))
-                await fs.CopyToAsync(ds, ct);
-            var compressedSize = ms.Length;
-            ms.Seek(0, SeekOrigin.Begin);
-            await Protocol.WriteLineAsync(stream,
-                JsonSerializer.Serialize(new { cmd = "put", path = remotePath, size, compress = true, compressed_size = compressedSize }), ct);
-            await Protocol.CopyExactAsync(ms, stream, compressedSize, progress, ct);
+            // Abre archivo primero para tamaño real → evita race condition (#4)
+            await using var fs = File.OpenRead(localPath);
+            var size = fs.Length;
+
+            // Integridad: SHA-256 (una sola lectura local).
+            var sha256Local = Convert.ToHexString(await SHA256.HashDataAsync(fs, ct)).ToLowerInvariant();
+            fs.Seek(0, SeekOrigin.Begin);
+
+            // Feature 2: compresión deflate opcional (solo archivos <= 200 MB)
+            bool doCompress = UseCompress && size > 0 && size <= 200L * 1024 * 1024 && !Protocol.IsCompressedExtension(localPath);
+            MemoryStream? compressedPayload = null;
+            long compressedSize = 0;
+            if (doCompress)
+            {
+                compressedPayload = new MemoryStream();
+                await using (var ds = new DeflateStream(compressedPayload, CompressionLevel.Fastest, leaveOpen: true))
+                    await fs.CopyToAsync(ds, ct);
+                compressedSize = compressedPayload.Length;
+                compressedPayload.Seek(0, SeekOrigin.Begin);
+            }
+
+            using var idleCts = StartIdleTimeout(ct);
+            var ioCt = idleCts.Token;
+
+            var (tcp, stream) = await OpenAsync(ioCt);
+            using var _ = tcp;
+
+            if (doCompress && compressedPayload != null)
+            {
+                await Protocol.WriteLineAsync(stream,
+                    JsonSerializer.Serialize(new { cmd = "put", path = remotePath, size, compress = true, compressed_size = compressedSize }), ioCt);
+                TouchIdleTimeout(idleCts);
+                await Protocol.CopyExactAsync(compressedPayload, stream, compressedSize, progress, ioCt);
+                TouchIdleTimeout(idleCts);
+            }
+            else
+            {
+                await Protocol.WriteLineAsync(stream,
+                    JsonSerializer.Serialize(new { cmd = "put", path = remotePath, size }), ioCt);
+                TouchIdleTimeout(idleCts);
+                await Protocol.CopyExactAsync(fs, stream, size, progress, ioCt);
+                TouchIdleTimeout(idleCts);
+            }
+
+            var ackLine = await Protocol.ReadLineAsync(stream, ioCt);
+            TouchIdleTimeout(idleCts);
+            var ack = JsonSerializer.Deserialize<JsonElement>(ackLine);
+            EnsureOk(ack);
+
+            // Verificar integridad SHA-256 reportada por el servidor.
+            if (ack.TryGetProperty("sha256", out var sha256El))
+            {
+                var serverSha256 = sha256El.GetString() ?? "";
+                if (!string.Equals(sha256Local, serverSha256, StringComparison.OrdinalIgnoreCase))
+                    throw new Exception($"Checksum SHA256 no coincide para {Path.GetFileName(localPath)}");
+            }
         }
-        else
+        catch (OperationCanceledException ex)
         {
-            await Protocol.WriteLineAsync(stream,
-                JsonSerializer.Serialize(new { cmd = "put", path = remotePath, size }), ct);
-            await Protocol.CopyExactAsync(fs, stream, size, progress, ct);
-        }
-        var ackLine = await Protocol.ReadLineAsync(stream, ct);
-        var ack = JsonSerializer.Deserialize<JsonElement>(ackLine);
-        EnsureOk(ack);
-
-        // Verificar integridad SHA-256 reportada por el servidor.
-        if (ack.TryGetProperty("sha256", out var sha256El))
-        {
-            var serverSha256 = sha256El.GetString() ?? "";
-            if (!string.Equals(sha256Local, serverSha256, StringComparison.OrdinalIgnoreCase))
-                throw new Exception($"Checksum SHA256 no coincide para {Path.GetFileName(localPath)}");
+            throw MapIdleTimeout(ex, ct);
         }
     }
 
@@ -422,6 +464,24 @@ public sealed class LanClient : IDisposable
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────────────
+
+    private static CancellationTokenSource StartIdleTimeout(CancellationToken ct)
+    {
+        var linked = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        linked.CancelAfter(TransferIdleTimeout);
+        return linked;
+    }
+
+    private static void TouchIdleTimeout(CancellationTokenSource cts)
+    {
+        if (!cts.IsCancellationRequested)
+            cts.CancelAfter(TransferIdleTimeout);
+    }
+
+    private static Exception MapIdleTimeout(OperationCanceledException ex, CancellationToken callerToken)
+        => callerToken.IsCancellationRequested
+            ? ex
+            : new IOException("svc.connCut", ex);
 
     private static void EnsureOk(JsonElement resp)
     {
