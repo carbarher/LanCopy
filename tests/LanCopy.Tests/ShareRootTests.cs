@@ -6,6 +6,12 @@ namespace LanCopy.Tests;
 
 public class ShareRootTests
 {
+    private static string OutsideRootDir()
+        => OperatingSystem.IsWindows() ? @"C:\Windows" : "/etc";
+
+    private static string DotDotTraversalAttempt()
+        => OperatingSystem.IsWindows() ? @"..\..\..\Windows" : "../../../etc";
+
     private static string NewTempRoot()
     {
         var p = Path.Combine(Path.GetTempPath(), "LanCopyTest_" + Guid.NewGuid().ToString("N"));
@@ -36,7 +42,7 @@ public class ShareRootTests
     {
         var root = NewTempRoot();
         ShareRoot.SetRoot(root);
-        Assert.False(ShareRoot.TryResolve("..\\..\\..\\Windows", out _, out var reason));
+        Assert.False(ShareRoot.TryResolve(DotDotTraversalAttempt(), out _, out var reason));
         Assert.False(string.IsNullOrEmpty(reason));
     }
 
@@ -45,7 +51,7 @@ public class ShareRootTests
     {
         var root = NewTempRoot();
         ShareRoot.SetRoot(root);
-        Assert.False(ShareRoot.TryResolve(@"C:\Windows\win.ini", out _, out _));
+        Assert.False(ShareRoot.TryResolve(OutsideRootDir(), out _, out _));
     }
 
     [Fact]
