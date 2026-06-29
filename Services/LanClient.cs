@@ -262,12 +262,26 @@ public sealed class LanClient : IDisposable
             await using var fs = File.OpenRead(localPath);
             var size = fs.Length;
 
-            // Integridad: SHA-256 (una sola lectura local).
+            // Feature 2: compresión deflate opcional (solo archivos <= 200 MB)
+            bool doCompress = UseCompress && size > 0 && size <= 200L * 1024 * 1024 && !Protocol.IsCompressedExtension(localPath);
+
+            long resumeOffset = 0;
+            if (!doCompress && size > 0)
+            {
+                try
+                {
+                    var st = await GetStatAsync(remotePath, ct);
+                    if (st is { Exists: true, IsDirectory: false } && st.Size > 0 && st.Size < size)
+                        resumeOffset = st.Size;
+                }
+                catch { }
+            }
+
+            // Integridad: SHA-256 local (una sola lectura).
+            // Nota: en reanudación, puede costar, pero mantenemos verificación completa extremo a extremo.
             var sha256Local = Convert.ToHexString(await SHA256.HashDataAsync(fs, ct)).ToLowerInvariant();
             fs.Seek(0, SeekOrigin.Begin);
 
-            // Feature 2: compresión deflate opcional (solo archivos <= 200 MB)
-            bool doCompress = UseCompress && size > 0 && size <= 200L * 1024 * 1024 && !Protocol.IsCompressedExtension(localPath);
             MemoryStream? compressedPayload = null;
             long compressedSize = 0;
             if (doCompress)
@@ -291,6 +305,32 @@ public sealed class LanClient : IDisposable
                     JsonSerializer.Serialize(new { cmd = "put", path = remotePath, size, compress = true, compressed_size = compressedSize }), ioCt);
                 TouchIdleTimeout(idleCts);
                 await Protocol.CopyExactAsync(compressedPayload, stream, compressedSize, progress, ioCt);
+                TouchIdleTimeout(idleCts);
+            }
+            else if (resumeOffset > 0)
+            {
+                await Protocol.WriteLineAsync(stream,
+                    JsonSerializer.Serialize(new { cmd = "put_resume", path = remotePath, size, offset = resumeOffset }), ioCt);
+                TouchIdleTimeout(idleCts);
+
+                var preAckLine = await Protocol.ReadLineAsync(stream, ioCt);
+                TouchIdleTimeout(idleCts);
+                var preAck = JsonSerializer.Deserialize<JsonElement>(preAckLine);
+                EnsureOk(preAck);
+
+                var accepted = preAck.TryGetProperty("range_from", out var rf) && rf.TryGetInt64(out var rv)
+                    ? rv : 0L;
+                if (accepted < 0 || accepted > size) accepted = 0;
+
+                fs.Seek(accepted, SeekOrigin.Begin);
+                var remaining = size - accepted;
+
+                IProgress<(long done, long total)>? adjustedProgress = progress is null
+                    ? null
+                    : new Progress<(long done, long total)>(v => progress.Report((accepted + v.done, size)));
+
+                if (remaining > 0)
+                    await Protocol.CopyExactAsync(fs, stream, remaining, adjustedProgress, ioCt);
                 TouchIdleTimeout(idleCts);
             }
             else

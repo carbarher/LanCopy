@@ -416,6 +416,7 @@ public sealed class FileServer
                         break;
                     case "get": await HandleGetAsync(req, stream, ct); break;
                     case "put":
+                    case "put_resume":
                     case "delete":
                     case "rename":
                     case "mkdir":
@@ -425,6 +426,7 @@ public sealed class FileServer
                             break;
                         }
                         if (cmd == "put") await HandlePutAsync(req, stream, ip, ct);
+                        else if (cmd == "put_resume") await HandlePutResumeAsync(req, stream, ip, ct);
                         else if (cmd == "delete") await HandleDeleteAsync(req, stream, ct);
                         else if (cmd == "rename") await HandleRenameAsync(req, stream, ct);
                         else await HandleMkdirAsync(req, stream, ct);
@@ -690,12 +692,87 @@ public sealed class FileServer
         }
         catch
         {
-            try { if (File.Exists(path)) File.Delete(path); } catch { }
+            // Conservar parcial para permitir reanudación tras reconexión.
             throw;
         }
 
         StoreCachedSha256(path, File.GetLastWriteTimeUtc(path), size, sha256);
         await Protocol.WriteLineAsync(stream, JsonSerializer.Serialize(new { status = "ok", sha256 }), ct);
+    }
+
+    private async Task HandlePutResumeAsync(JsonElement req, Stream stream, string ip, CancellationToken ct)
+    {
+        using var transferCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        transferCts.CancelAfter(TransferDataTimeout);
+        ct = transferCts.Token;
+
+        if (!TryGetInt64Property(req, "size", out var size)) { await WriteBadRequestAsync(stream, ct); return; }
+        if (size < 0 || size > MaxPutBytes)
+        {
+            await Protocol.WriteLineAsync(stream, JsonSerializer.Serialize(new { status = "error", error = "svc.badSize" }), ct);
+            return;
+        }
+        if (!TryGetStringProperty(req, "path", out var reqPath)) { await WriteBadRequestAsync(stream, ct); return; }
+        if (!TryGetInt64Property(req, "offset", out var offset)) { await WriteBadRequestAsync(stream, ct); return; }
+
+        if (!TryGuardWrite(reqPath, out var path, out var gReason))
+        {
+            await Protocol.WriteLineAsync(stream, JsonSerializer.Serialize(new { status = "error", error = gReason }), ct);
+            return;
+        }
+
+        if (offset < 0 || offset > size)
+        {
+            await Protocol.WriteLineAsync(stream, JsonSerializer.Serialize(new { status = "error", error = "svc.badSize" }), ct);
+            return;
+        }
+
+        if (ApproveIncoming is { } approve)
+        {
+            bool ok;
+            try { ok = await approve(new IncomingTransfer(ip, Path.GetFileName(path), size), ct); }
+            catch { ok = false; }
+            if (!ok)
+            {
+                await Protocol.WriteLineAsync(stream, JsonSerializer.Serialize(new { status = "error", error = "svc.rejected" }), ct);
+                return;
+            }
+        }
+
+        var dir = Path.GetDirectoryName(path);
+        if (!string.IsNullOrEmpty(dir)) Directory.CreateDirectory(dir);
+
+        long accepted = 0;
+        try
+        {
+            await using var fs = new FileStream(path, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
+            var current = fs.Length;
+            accepted = Math.Min(Math.Min(offset, current), size);
+            if (current > accepted) fs.SetLength(accepted);
+            fs.Seek(accepted, SeekOrigin.Begin);
+
+            await Protocol.WriteLineAsync(stream, JsonSerializer.Serialize(new { status = "ok", range_from = accepted }), ct);
+
+            var remaining = size - accepted;
+            if (remaining > 0)
+            {
+                var baseProgress = MakeProgress(true, Path.GetFileName(path));
+                var adjustedProgress = new Progress<(long done, long total)>(p =>
+                    baseProgress.Report((accepted + p.done, size)));
+                await Protocol.CopyExactAsync(stream, fs, remaining, adjustedProgress, ct);
+            }
+
+            fs.Flush();
+            fs.Seek(0, SeekOrigin.Begin);
+            var sha256 = Convert.ToHexString(await SHA256.HashDataAsync(fs, ct)).ToLowerInvariant();
+            StoreCachedSha256(path, File.GetLastWriteTimeUtc(path), size, sha256);
+            await Protocol.WriteLineAsync(stream, JsonSerializer.Serialize(new { status = "ok", sha256, range_from = accepted }), ct);
+        }
+        catch
+        {
+            // Conservar parcial para una próxima reanudación.
+            throw;
+        }
     }
 
     private async Task HandleDeleteAsync(JsonElement req, Stream stream, CancellationToken ct)
