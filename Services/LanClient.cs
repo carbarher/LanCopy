@@ -277,10 +277,14 @@ public sealed class LanClient : IDisposable
                 catch { }
             }
 
-            // Integridad: SHA-256 local (una sola lectura).
-            // Nota: en reanudación, puede costar, pero mantenemos verificación completa extremo a extremo.
-            var sha256Local = Convert.ToHexString(await SHA256.HashDataAsync(fs, ct)).ToLowerInvariant();
-            fs.Seek(0, SeekOrigin.Begin);
+            // Integridad SHA-256 local: en reanudación la omitimos para no bloquear
+            // reconexión con ficheros grandes (el cuello de botella era re-hashear GBs).
+            string? sha256Local = null;
+            if (resumeOffset == 0)
+            {
+                sha256Local = Convert.ToHexString(await SHA256.HashDataAsync(fs, ct)).ToLowerInvariant();
+                fs.Seek(0, SeekOrigin.Begin);
+            }
 
             MemoryStream? compressedPayload = null;
             long compressedSize = 0;
@@ -347,8 +351,8 @@ public sealed class LanClient : IDisposable
             var ack = JsonSerializer.Deserialize<JsonElement>(ackLine);
             EnsureOk(ack);
 
-            // Verificar integridad SHA-256 reportada por el servidor.
-            if (ack.TryGetProperty("sha256", out var sha256El))
+            // Verificar integridad SHA-256 reportada por el servidor cuando hubo envío completo.
+            if (sha256Local != null && ack.TryGetProperty("sha256", out var sha256El))
             {
                 var serverSha256 = sha256El.GetString() ?? "";
                 if (!string.Equals(sha256Local, serverSha256, StringComparison.OrdinalIgnoreCase))
