@@ -25,13 +25,14 @@ jobs:
             exit 0
           fi
 
-      - name: Bump csproj version (patch)
+      - name: Bump csproj version (smart semver)
         id: bump
         shell: bash
         run: |
           python - <<'PY'
           import os
           import re
+          import subprocess
           from pathlib import Path
 
           csproj = Path("LanCopy.csproj")
@@ -42,7 +43,33 @@ jobs:
               raise SystemExit("Could not find <Version>x.y.z</Version> in LanCopy.csproj")
 
           major, minor, patch = map(int, m.groups())
-          new_version = f"{major}.{minor}.{patch + 1}"
+
+          def run_git(*args):
+              return subprocess.check_output(["git", *args], text=True, encoding="utf-8").strip()
+
+          # Default to patch; raise to minor/major based on commit messages since last tag.
+          bump = "patch"
+          try:
+              last_tag = run_git("describe", "--tags", "--abbrev=0")
+              log_range = f"{last_tag}..HEAD"
+          except Exception:
+              log_range = "HEAD"
+
+          commits = run_git("log", log_range, "--pretty=%s%n%b<<<END>>>")
+          tokens = commits.lower()
+          if "breaking change" in tokens or re.search(r"\w+!:", commits):
+              bump = "major"
+          elif re.search(r"^feat(\(.+\))?:", commits, flags=re.IGNORECASE | re.MULTILINE):
+              bump = "minor"
+
+          if bump == "major":
+              major, minor, patch = major + 1, 0, 0
+          elif bump == "minor":
+              minor, patch = minor + 1, 0
+          else:
+              patch += 1
+
+          new_version = f"{major}.{minor}.{patch}"
 
           text = re.sub(r"<Version>\d+\.\d+\.\d+</Version>", f"<Version>{new_version}</Version>", text)
           text = re.sub(r"<AssemblyVersion>\d+\.\d+\.\d+</AssemblyVersion>", f"<AssemblyVersion>{new_version}</AssemblyVersion>", text)
@@ -51,6 +78,7 @@ jobs:
 
           with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as fh:
               fh.write(f"version={new_version}\n")
+              fh.write(f"bump={bump}\n")
           PY
 
       - name: Commit bump
@@ -59,7 +87,7 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add LanCopy.csproj
-          git commit -m "[skip ci] chore(release): bump version to ${{ steps.bump.outputs.version }}"
+          git commit -m "[skip ci] chore(release): bump ${{ steps.bump.outputs.bump }} version to ${{ steps.bump.outputs.version }}"
 
       - name: Create and push tag
         shell: bash

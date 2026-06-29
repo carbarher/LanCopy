@@ -28,9 +28,35 @@ jobs:
       - name: Test
         run: dotnet test tests/LanCopy.Tests/LanCopy.Tests.csproj -c Release
 
+  performance-guard:
+    name: Performance Guard (ubuntu)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '9.0.x'
+      - name: Restore
+        run: dotnet restore LanCopy.csproj
+      - name: Build
+        run: dotnet build LanCopy.csproj -c Release --no-restore
+      - name: Throughput smoke benchmark
+        shell: bash
+        run: |
+          start=$(date +%s)
+          dotnet test tests/LanCopy.Tests/LanCopy.Tests.csproj -c Release --no-build --filter "FullyQualifiedName~LanCopy.Tests.TransferIntegrationTests.Upload_Then_Download_PreservesContent"
+          elapsed=$(( $(date +%s) - start ))
+          echo "Smoke perf elapsed: ${elapsed}s"
+          # Guardrail against severe regressions only (keep threshold generous to avoid flakiness).
+          if [ "$elapsed" -gt 25 ]; then
+            echo "Performance guard failed: elapsed ${elapsed}s > 25s"
+            exit 1
+          fi
+
   publish:
     name: Publish ${{ matrix.rid }}
-    needs: build-test
+    needs: [build-test, performance-guard]
     if: startsWith(github.ref, 'refs/tags/v')
     strategy:
       fail-fast: false
