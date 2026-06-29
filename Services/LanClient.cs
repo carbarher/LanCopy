@@ -19,7 +19,7 @@ public sealed class LanClient : IDisposable
     private readonly int _port;
     private const long MaxCompressInMemory = 200L * 1024 * 1024;
     private const long MaxLocalHashBeforeUploadBytes = 512L * 1024 * 1024; // 512 MB
-    private static readonly TimeSpan TransferIdleTimeout = TimeSpan.FromSeconds(20);
+    private static readonly TimeSpan TransferIdleTimeout = TimeSpan.FromSeconds(60);
     private const int KeepAliveIdleSeconds = 15;
     private const int KeepAliveIntervalSeconds = 5;
     private const int KeepAliveRetryCount = 3;

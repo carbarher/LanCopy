@@ -103,6 +103,14 @@ public partial class MainWindow
         var __sw = System.Diagnostics.Stopwatch.StartNew();
         try
         {
+            if (!await EnsureHealthyTransferConnectionAsync(remoteIp, remotePort, ct))
+            {
+                __finalMsg = L["st.reconnectFailed"];
+                __finalErr = true;
+                SetStatusAlert(__finalMsg);
+                return;
+            }
+
             var fileList = await ExpandItemsAsync(items, isUpload, ct);
             if (fileList == null || ct.IsCancellationRequested) return;
 
@@ -252,6 +260,33 @@ public partial class MainWindow
             Interlocked.Exchange(ref flagEnd, 0);
             ClearQueue(); // Feature 3: transferencia completada (o cancelada)
         }
+    }
+
+    private async Task<bool> EnsureHealthyTransferConnectionAsync(string ip, int port, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(ip) || port < 1) return false;
+
+        LanClient? snap;
+        await _clientLock.WaitAsync(ct);
+        try { snap = _client; }
+        finally { _clientLock.Release(); }
+
+        if (snap != null)
+        {
+            try
+            {
+                using var probeCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+                probeCts.CancelAfter(TimeSpan.FromSeconds(3));
+                _ = await snap.ListAsync(_remotePath, probeCts.Token);
+                return true;
+            }
+            catch
+            {
+                // conexión inválida; intentar reconectar abajo
+            }
+        }
+
+        return await TryReconnectAsync(ip, port, ct);
     }
 
     /// <summary>
