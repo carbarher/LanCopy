@@ -18,6 +18,7 @@ public sealed class LanClient : IDisposable
     private readonly string _host;
     private readonly int _port;
     private const long MaxCompressInMemory = 200L * 1024 * 1024;
+    private const long MaxLocalHashBeforeUploadBytes = 512L * 1024 * 1024; // 512 MB
     private static readonly TimeSpan TransferIdleTimeout = TimeSpan.FromSeconds(20);
     private const int KeepAliveIdleSeconds = 15;
     private const int KeepAliveIntervalSeconds = 5;
@@ -281,7 +282,7 @@ public sealed class LanClient : IDisposable
             // Integridad SHA-256 local: en reanudación la omitimos para no bloquear
             // reconexión con ficheros grandes (el cuello de botella era re-hashear GBs).
             string? sha256Local = null;
-            if (resumeOffset == 0)
+            if (resumeOffset == 0 && size <= MaxLocalHashBeforeUploadBytes)
             {
                 sha256Local = Convert.ToHexString(await SHA256.HashDataAsync(fs, ct)).ToLowerInvariant();
                 fs.Seek(0, SeekOrigin.Begin);
