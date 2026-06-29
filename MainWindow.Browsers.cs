@@ -271,7 +271,19 @@ public partial class MainWindow
         if (_client == null) { SetStatus(L["st.connectFirst"]); return; }
         var items = GetSelectedItems("localList");
         if (items.Count == 0) { SetStatus(L["st.selectFiles"]); return; }
-        await TransferAsync(items, isUpload: true);
+        try
+        {
+            await TransferAsync(items, isUpload: true);
+        }
+        catch (OperationCanceledException)
+        {
+            // TransferAsync already updates status/cancellation state.
+        }
+        catch (Exception ex)
+        {
+            Log.Error("transfer", "copy-to-remote-unhandled", new { error = ex.Message });
+            SetStatus(L.Format("st.remoteError", ex.Message));
+        }
     }
 
     private async void CopyToLocal(object? sender, RoutedEventArgs e)
@@ -279,7 +291,19 @@ public partial class MainWindow
         if (_client == null) { SetStatus(L["st.connectFirst"]); return; }
         var items = GetSelectedItems("remoteList");
         if (items.Count == 0) { SetStatus(L["st.selectRemote"]); return; }
-        await TransferAsync(items, isUpload: false);
+        try
+        {
+            await TransferAsync(items, isUpload: false);
+        }
+        catch (OperationCanceledException)
+        {
+            // TransferAsync already updates status/cancellation state.
+        }
+        catch (Exception ex)
+        {
+            Log.Error("transfer", "copy-to-local-unhandled", new { error = ex.Message });
+            SetStatus(L.Format("st.remoteError", ex.Message));
+        }
     }
 
     private void CancelTransfer_Click(object? sender, RoutedEventArgs e)
