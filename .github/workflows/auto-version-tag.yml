@@ -9,13 +9,21 @@ permissions:
 
 jobs:
   bump-and-tag:
-    if: ${{ github.actor != 'github-actions[bot]' && !contains(github.event.head_commit.message, 'chore(release): bump version') }}
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+
+      - name: Skip auto-bump commit
+        shell: bash
+        run: |
+          msg="$(git log -1 --pretty=%s)"
+          if [[ "$msg" == *"chore(release): bump version"* ]]; then
+            echo "Auto-bump commit detected, skipping."
+            exit 0
+          fi
 
       - name: Bump csproj version (patch)
         id: bump
