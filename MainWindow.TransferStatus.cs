@@ -28,7 +28,11 @@ public partial class MainWindow
         {
             _transferPulseOn = !_transferPulseOn;
             var snapshot = CreateTransferUiSnapshot();
-            if (snapshot is TransferUiSnapshot current) ApplyTransferUiSnapshot(current);
+            if (snapshot is TransferUiSnapshot current)
+            {
+                ApplyTransferUiSnapshot(current);
+                TryAutoRecoverFromStall(current);
+            }
             if (snapshot is null || snapshot.Value.IsCompleted || snapshot.Value.IsTerminal)
                 _transferUiTimer?.Stop();
         };
@@ -245,6 +249,8 @@ public partial class MainWindow
                 brush,
                 statusBrush,
                 speed,
+                isStalled,
+                stalledSeconds,
                 state.IsCompleted,
                 state.IsTerminal);
         }
@@ -275,6 +281,39 @@ public partial class MainWindow
 
         UpdateSparkline(snapshot.SpeedBytesPerSecond);
         _progressWin?.SetProgress(snapshot.ProgressPercent, snapshot.DetailText);
+    }
+
+    private void TryAutoRecoverFromStall(TransferUiSnapshot snapshot)
+    {
+        if (!snapshot.IsStalled || snapshot.StalledSeconds < 25) return;
+
+        var now = DateTimeOffset.UtcNow;
+        if (now - _lastStallRecoverAt < TimeSpan.FromSeconds(20)) return;
+        if (Interlocked.CompareExchange(ref _stallRecoverInProgress, 1, 0) != 0) return;
+
+        _lastStallRecoverAt = now;
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                SetStatus("Auto-reconectando por estancamiento…");
+                await _clientLock.WaitAsync();
+                try { _client?.Dispose(); _client = null; }
+                finally { _clientLock.Release(); }
+
+                await _clientLockDown.WaitAsync();
+                try { _clientDown?.Dispose(); _clientDown = null; }
+                finally { _clientLockDown.Release(); }
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"[LanCopy] Stall auto-recover failed: {ex.Message}");
+            }
+            finally
+            {
+                Interlocked.Exchange(ref _stallRecoverInProgress, 0);
+            }
+        });
     }
 
     private static void TrimSpeedSamples(TransferUiState state, DateTimeOffset now)
@@ -332,6 +371,8 @@ public partial class MainWindow
         IBrush BarBrush,
         IBrush? StatusBrush,
         double SpeedBytesPerSecond,
+        bool IsStalled,
+        int StalledSeconds,
         bool IsCompleted,
         bool IsTerminal);
 }

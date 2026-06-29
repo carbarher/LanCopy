@@ -134,6 +134,8 @@ public partial class MainWindow : Window
     private bool _connectButtonIsConnected;
     private bool _connectButtonIsBusy;
     private int _isConnectionProbeRunning;
+    private int _stallRecoverInProgress;
+    private DateTimeOffset _lastStallRecoverAt;
     private int _isWindowClosing;
 
     public MainWindow()
