@@ -762,11 +762,11 @@ public sealed class FileServer
                 await Protocol.CopyExactAsync(stream, fs, remaining, adjustedProgress, ct);
             }
 
+            // Importante: en reanudación NO recalculamos hash de todo el archivo (puede tardar
+            // minutos en archivos grandes y provocar timeout/"error" en el emisor tras enviar).
+            // Confirmamos recepción inmediatamente; el cliente ya no exige sha256 en este camino.
             fs.Flush();
-            fs.Seek(0, SeekOrigin.Begin);
-            var sha256 = Convert.ToHexString(await SHA256.HashDataAsync(fs, ct)).ToLowerInvariant();
-            StoreCachedSha256(path, File.GetLastWriteTimeUtc(path), size, sha256);
-            await Protocol.WriteLineAsync(stream, JsonSerializer.Serialize(new { status = "ok", sha256, range_from = accepted }), ct);
+            await Protocol.WriteLineAsync(stream, JsonSerializer.Serialize(new { status = "ok", range_from = accepted }), ct);
         }
         catch
         {
