@@ -130,10 +130,14 @@ public partial class MainWindow : Window
     private ProgressWindow? _progressWin;       // UX: ventana de progreso para procesos largos
     private DispatcherTimer? _statusBlinkTimer; // UX: parpadeo del mensaje de estado que requiere atencion
     private DispatcherTimer? _connectionWatchdogTimer;
+    private DispatcherTimer? _browserRefreshTimer;
     private bool _statusBlinkOn;
     private bool _connectButtonIsConnected;
     private bool _connectButtonIsBusy;
     private int _isConnectionProbeRunning;
+    private int _isBrowserAutoRefreshRunning;
+    private long _localEntriesSignature;
+    private long _remoteEntriesSignature;
     private int _stallRecoverInProgress;
     private DateTimeOffset _lastStallRecoverAt;
     private int _isWindowClosing;
@@ -214,12 +218,14 @@ public partial class MainWindow : Window
         {
             Interlocked.Exchange(ref _isWindowClosing, 1);
             StopConnectionWatchdog();
+            StopBrowserAutoRefresh();
             try { SaveSettings(this.FindControl<TextBox>("txtRemoteIp")?.Text ?? "", this.FindControl<TextBox>("txtRemotePort")?.Text ?? "8742"); } catch { }
             _server.Stop(); _discovery?.Stop(); _client?.Dispose(); _clientDown?.Dispose(); _uploadCts.Cancel(); _downloadCts.Cancel();
             try { if (_tray != null) _tray.IsVisible = false; } catch { }
         };
         Opened += OnWindowOpened;
         StartConnectionWatchdog();
+        StartBrowserAutoRefresh();
     }
 
     private async void OnWindowOpened(object? sender, EventArgs e)
@@ -274,4 +280,3 @@ public partial class MainWindow : Window
 
 // ── Modelo: perfil de conexión (Feature 3) ────────────────────────────────────
 internal record ConnectionProfile(string Name, string Ip, string Port, string Pin = "", bool Tls = false, bool Compress = false);
-

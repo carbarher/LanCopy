@@ -31,6 +31,43 @@ namespace LanCopy;
 
 public partial class MainWindow
 {
+    private void StartBrowserAutoRefresh()
+    {
+        if (_browserRefreshTimer != null) return;
+        _browserRefreshTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(3) };
+        _browserRefreshTimer.Tick += BrowserAutoRefresh_Tick;
+        _browserRefreshTimer.Start();
+    }
+
+    private void StopBrowserAutoRefresh()
+    {
+        if (_browserRefreshTimer == null) return;
+        _browserRefreshTimer.Stop();
+        _browserRefreshTimer.Tick -= BrowserAutoRefresh_Tick;
+        _browserRefreshTimer = null;
+    }
+
+    private async void BrowserAutoRefresh_Tick(object? sender, EventArgs e)
+    {
+        if (Volatile.Read(ref _isWindowClosing) == 1) return;
+        if (_isTransferring == 1 || _connectButtonIsBusy) return;
+        if (Interlocked.CompareExchange(ref _isBrowserAutoRefreshRunning, 1, 0) != 0) return;
+
+        try
+        {
+            await RefreshLocalAsync(autoRefresh: true);
+            await RefreshRemoteAsync(autoRefresh: true);
+        }
+        catch (Exception ex)
+        {
+            Log.Error("browser", "auto-refresh-tick", new { error = ex.Message });
+        }
+        finally
+        {
+            Interlocked.Exchange(ref _isBrowserAutoRefreshRunning, 0);
+        }
+    }
+
     // ── Local navigation ─────────────────────────────────────────────────────
 
     private async void LocalList_DoubleTapped(object? sender, TappedEventArgs e)
@@ -99,11 +136,14 @@ public partial class MainWindow
     private async void RefreshLocal_Click(object? sender, RoutedEventArgs e) =>
         await RefreshLocalAsync();
 
-    private async Task RefreshLocalAsync()
+    private async Task RefreshLocalAsync(bool autoRefresh = false)
     {
         try
         {
             var entries = await Task.Run(() => GetLocalEntries(_localPath));
+            var signature = ComputeEntriesSignature(entries);
+            if (autoRefresh && signature == Interlocked.Read(ref _localEntriesSignature)) return;
+            Interlocked.Exchange(ref _localEntriesSignature, signature);
             _localItemsAll = entries;
             ApplyLocalFilter(this.FindControl<TextBox>("txtLocalFilter")?.Text?.Trim() ?? "");
             Dispatcher.UIThread.Post(UpdateLocalPath);
@@ -214,7 +254,7 @@ public partial class MainWindow
         await RefreshRemoteAsync();
     }
 
-    private async Task RefreshRemoteAsync(bool isRetry = false)
+    private async Task RefreshRemoteAsync(bool isRetry = false, bool autoRefresh = false)
     {
         // No interrumpir transferencia activa (#13)
         if (_isTransferring == 1 && !isRetry) return;
@@ -228,6 +268,9 @@ public partial class MainWindow
         try
         {
             var entries = await snap.ListAsync(_remotePath);
+            var signature = ComputeEntriesSignature(entries);
+            if (autoRefresh && signature == Interlocked.Read(ref _remoteEntriesSignature)) return;
+            Interlocked.Exchange(ref _remoteEntriesSignature, signature);
             Dispatcher.UIThread.Post(() => { _remoteItemsAll = entries; ApplyRemoteSort(); UpdateRemotePath(); });
         }
         catch (Exception ex)
@@ -243,7 +286,7 @@ public partial class MainWindow
                         await _clientLock.WaitAsync();
                         try { _client?.Dispose(); _client = MakeClient(ip, port); }
                         finally { _clientLock.Release(); }
-                        await RefreshRemoteAsync(isRetry: true);
+                        await RefreshRemoteAsync(isRetry: true, autoRefresh: autoRefresh);
                         // Mostrar "Reconectado" tanto en status como en badge (#19)
                         SetStatus(L["st.reconnected"]);
                         SetConnStatus(L["conn.reconnectedWord"], BrushConnected);
@@ -261,6 +304,23 @@ public partial class MainWindow
             UpdateConnectButton(isConnected: false, isBusy: false);
             UpdateRemoteCreateFolderButton(isConnected: false);
             SetStatus(L.Format("st.remoteError", L[ex.Message]));
+        }
+    }
+
+    private static long ComputeEntriesSignature(List<FileEntry> entries)
+    {
+        unchecked
+        {
+            long hash = 1469598103934665603L;
+            foreach (var entry in entries)
+            {
+                hash = (hash * 1099511628211L) ^ StringComparer.OrdinalIgnoreCase.GetHashCode(entry.Name);
+                hash = (hash * 1099511628211L) ^ StringComparer.OrdinalIgnoreCase.GetHashCode(entry.FullPath);
+                hash = (hash * 1099511628211L) ^ entry.Size.GetHashCode();
+                hash = (hash * 1099511628211L) ^ entry.LastWriteUtcTicks.GetHashCode();
+                hash = (hash * 1099511628211L) ^ entry.IsDirectory.GetHashCode();
+            }
+            return hash;
         }
     }
 

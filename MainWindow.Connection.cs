@@ -211,6 +211,7 @@ public partial class MainWindow
             _remotePath = "";
             _remoteItemsAll = [];
             _remoteItems.ReplaceAll([]);
+            Interlocked.Exchange(ref _remoteEntriesSignature, 0);
             UpdateRemotePath();
         });
 
