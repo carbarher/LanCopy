@@ -19,6 +19,9 @@ public sealed class LanClient : IDisposable
     private readonly int _port;
     private const long MaxCompressInMemory = 200L * 1024 * 1024;
     private static readonly TimeSpan TransferIdleTimeout = TimeSpan.FromSeconds(20);
+    private const int KeepAliveIdleSeconds = 15;
+    private const int KeepAliveIntervalSeconds = 5;
+    private const int KeepAliveRetryCount = 3;
     public string? Pin { get; set; }      // Feature 10: PIN de autenticación
     public bool UseTls { get; set; }      // Feature 9: TLS
     public bool UseCompress { get; set; } // Feature 2: compresión deflate
@@ -36,6 +39,7 @@ public sealed class LanClient : IDisposable
         try
         {
         await tcp.ConnectAsync(_host, _port, ct);
+        ConfigureSocket(tcp.Client);
         Stream stream = tcp.GetStream();
 
         // Feature 9: envolver con SslStream si TLS activo
@@ -464,6 +468,20 @@ public sealed class LanClient : IDisposable
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────────────
+
+    private static void ConfigureSocket(Socket socket)
+    {
+        socket.NoDelay = true;
+        socket.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.KeepAlive, true);
+        try
+        {
+            socket.SetSocketOption(SocketOptionLevel.Tcp, SocketOptionName.TcpKeepAliveTime, KeepAliveIdleSeconds);
+            socket.SetSocketOption(SocketOptionLevel.Tcp, SocketOptionName.TcpKeepAliveInterval, KeepAliveIntervalSeconds);
+            socket.SetSocketOption(SocketOptionLevel.Tcp, SocketOptionName.TcpKeepAliveRetryCount, KeepAliveRetryCount);
+        }
+        catch (SocketException) { }
+        catch (PlatformNotSupportedException) { }
+    }
 
     private static CancellationTokenSource StartIdleTimeout(CancellationToken ct)
     {

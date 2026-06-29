@@ -42,6 +42,9 @@ public sealed class FileServer
     public Func<IncomingTransfer, CancellationToken, Task<bool>>? ApproveIncoming { get; set; }
 
     private readonly SemaphoreSlim _connLimit = new(64, 64);
+    private const int KeepAliveIdleSeconds = 15;
+    private const int KeepAliveIntervalSeconds = 5;
+    private const int KeepAliveRetryCount = 3;
     private readonly System.Collections.Concurrent.ConcurrentDictionary<string, int> _perIp = new();
     public int MaxPerIp { get; set; } = 8;
 
@@ -54,6 +57,20 @@ public sealed class FileServer
     private readonly System.Collections.Concurrent.ConcurrentDictionary<string, (DateTime LastWrite, long Size, string Hash)> _sha256Cache = new(StringComparer.OrdinalIgnoreCase);
     public long PinBackoffMs { get; set; } = 30_000;
     public long PinMaxBackoffMs { get; set; } = 10 * 60_000;
+
+    private static void ConfigureClientSocket(TcpClient tcp)
+    {
+        tcp.NoDelay = true;
+        tcp.Client.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.KeepAlive, true);
+        try
+        {
+            tcp.Client.SetSocketOption(SocketOptionLevel.Tcp, SocketOptionName.TcpKeepAliveTime, KeepAliveIdleSeconds);
+            tcp.Client.SetSocketOption(SocketOptionLevel.Tcp, SocketOptionName.TcpKeepAliveInterval, KeepAliveIntervalSeconds);
+            tcp.Client.SetSocketOption(SocketOptionLevel.Tcp, SocketOptionName.TcpKeepAliveRetryCount, KeepAliveRetryCount);
+        }
+        catch (SocketException) { }
+        catch (PlatformNotSupportedException) { }
+    }
 
     private bool TryGuardRead(string? path, out string full, out string reason)
     {
@@ -73,7 +90,7 @@ public sealed class FileServer
             // No aplicamos SystemProtection (la raiz podria estar legitimamente bajo ProgramData,
             // etc.), pero SI bloqueamos enlaces/reparse points que escapen de la raiz.
             if (!ShareRoot.TryResolve(path, out full, out reason)) return false;
-            if (SafeFileOps.ContainsReparsePoint(full, ShareRoot.Root)) { reason = "La ruta contiene un enlace/reparse point"; return false; }
+            if (SafeFileOps.ContainsReparsePoint(full)) { reason = "La ruta contiene un enlace/reparse point"; return false; }
             return true;
         }
 
@@ -309,7 +326,7 @@ public sealed class FileServer
     {
         using (tcp)
         {
-            tcp.NoDelay = true;
+            ConfigureClientSocket(tcp);
             using var hsCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
             hsCts.CancelAfter(TimeSpan.FromSeconds(60));
             var hs = hsCts.Token;
@@ -692,7 +709,7 @@ public sealed class FileServer
             SafeFileOps.Audit("delete", path, "blocked", gReason, "remote");
             return;
         }
-        if (!SafeFileOps.TryValidateMutationPath(guarded, out var normalized, out var reason, trustedRoot: RestrictToShareRoot ? ShareRoot.Root : null))
+        if (!SafeFileOps.TryValidateMutationPath(guarded, out var normalized, out var reason))
         {
             await Protocol.WriteLineAsync(stream,
                 JsonSerializer.Serialize(new { status = "error", error = reason }), ct);
@@ -746,7 +763,7 @@ public sealed class FileServer
             return;
         }
 
-        if (!SafeFileOps.TryValidateMutationPath(guarded, out var normalized, out var reason, trustedRoot: RestrictToShareRoot ? ShareRoot.Root : null))
+        if (!SafeFileOps.TryValidateMutationPath(guarded, out var normalized, out var reason))
         {
             await Protocol.WriteLineAsync(stream,
                 JsonSerializer.Serialize(new { status = "error", error = reason }), ct);
@@ -781,7 +798,7 @@ public sealed class FileServer
                 SafeFileOps.Audit("rename", normalized, "blocked", $"dest:{destGuard}", "remote");
                 return;
             }
-            if (!SafeFileOps.TryValidateMutationPath(newPath, out _, out var targetReason, requireExists: false, trustedRoot: RestrictToShareRoot ? ShareRoot.Root : null))
+            if (!SafeFileOps.TryValidateMutationPath(newPath, out _, out var targetReason, requireExists: false))
             {
                 await Protocol.WriteLineAsync(stream,
                     JsonSerializer.Serialize(new { status = "error", error = $"Destino bloqueado: {targetReason}" }), ct);
