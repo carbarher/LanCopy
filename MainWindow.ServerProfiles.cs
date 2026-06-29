@@ -332,6 +332,16 @@ public partial class MainWindow
         SetStatus(_readOnly ? L["st.readOnlyOn"] : L["st.readOnlyOff"]);
     }
 
+    private void ChkSafeModeNoDelete_Changed(object? sender, RoutedEventArgs e)
+    {
+        _safeModeNoRemoteDelete = (sender as CheckBox)?.IsChecked == true;
+        _server.SafeModeNoRemoteDelete = _safeModeNoRemoteDelete;
+        SaveSettings(
+            this.FindControl<TextBox>("txtRemoteIp")?.Text?.Trim() ?? "",
+            this.FindControl<TextBox>("txtRemotePort")?.Text?.Trim() ?? "8742");
+        SetStatus(_safeModeNoRemoteDelete ? L["st.safeModeNoDeleteOn"] : L["st.safeModeNoDeleteOff"]);
+    }
+
     private void ChkRequireApproval_Changed(object? sender, RoutedEventArgs e)
     {
         _requireApproval = (sender as CheckBox)?.IsChecked == true;
@@ -370,5 +380,4 @@ public partial class MainWindow
         SetStatus(_compressEnabled ? L["st.compressOn"] : L["st.compressOff"]);
     }
 }
-
 

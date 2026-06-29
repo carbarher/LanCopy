@@ -119,6 +119,7 @@
                               ToolTip.Tip="{l:Tr tip.tls}"/>
                     <CheckBox x:Name="chkShareRoot" Content="{l:Tr chk.shareRoot}" Foreground="{DynamicResource TextFg}" FontSize="12" IsChecked="True" IsCheckedChanged="ChkShareRoot_Changed" ToolTip.Tip="{l:Tr tip.shareRoot}"/>
                     <CheckBox x:Name="chkReadOnly" Content="{l:Tr chk.readOnly}" Foreground="{DynamicResource TextFg}" FontSize="12" IsCheckedChanged="ChkReadOnly_Changed" ToolTip.Tip="{l:Tr tip.readOnly}"/>
+                    <CheckBox x:Name="chkSafeModeNoDelete" Content="{l:Tr chk.safeModeNoDelete}" Foreground="{DynamicResource TextFg}" FontSize="12" IsCheckedChanged="ChkSafeModeNoDelete_Changed" ToolTip.Tip="{l:Tr tip.safeModeNoDelete}"/>
                     <CheckBox x:Name="chkRequireApproval" Content="{l:Tr chk.requireApproval}" Foreground="{DynamicResource TextFg}" FontSize="12" IsCheckedChanged="ChkRequireApproval_Changed" ToolTip.Tip="{l:Tr tip.requireApproval}"/>
                     <CheckBox x:Name="chkCompress" Content="{l:Tr chk.compress}" Foreground="{DynamicResource TextFg}" FontSize="12"
                               IsCheckedChanged="ChkCompress_Changed"
@@ -428,4 +429,3 @@
         </Border>
     </Grid>
 </Window>
-

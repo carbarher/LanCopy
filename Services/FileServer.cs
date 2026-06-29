@@ -32,6 +32,8 @@ public sealed class FileServer
 
     // Modo solo lectura: rechaza put/delete/rename. Util para compartir sin riesgo de escritura.
     public bool ReadOnly { get; set; }
+    // Modo seguro: permite subir/renombrar/crear, pero bloquea borrado remoto.
+    public bool SafeModeNoRemoteDelete { get; set; }
 
     // Si true, escucha solo en la IP LAN detectada en vez de IPAddress.Any (reduce exposicion).
     public bool BindLanOnly { get; set; }
@@ -269,7 +271,16 @@ public sealed class FileServer
             bindAddr = lan;
         _listener = new TcpListener(bindAddr, port);
         _listener.Start();
-        Log.Info("server", "started", new { port, ip = LocalIp, tls = TlsEnabled, restrictShareRoot = RestrictToShareRoot, readOnly = ReadOnly, bindLanOnly = BindLanOnly });
+        Log.Info("server", "started", new
+        {
+            port,
+            ip = LocalIp,
+            tls = TlsEnabled,
+            restrictShareRoot = RestrictToShareRoot,
+            readOnly = ReadOnly,
+            safeModeNoRemoteDelete = SafeModeNoRemoteDelete,
+            bindLanOnly = BindLanOnly
+        });
         _ = AcceptLoopAsync(_cts.Token);
     }
 
@@ -499,7 +510,17 @@ public sealed class FileServer
     private async Task HandleCapsAsync(JsonElement req, Stream stream, CancellationToken ct)
     {
         await Protocol.WriteLineAsync(stream,
-            JsonSerializer.Serialize(new { status = "ok", compress = true, tls = TlsEnabled, version = Protocol.Version, minVersion = Protocol.MinSupportedVersion, readOnly = ReadOnly, text = true }), ct);
+            JsonSerializer.Serialize(new
+            {
+                status = "ok",
+                compress = true,
+                tls = TlsEnabled,
+                version = Protocol.Version,
+                minVersion = Protocol.MinSupportedVersion,
+                readOnly = ReadOnly,
+                safeModeNoRemoteDelete = SafeModeNoRemoteDelete,
+                text = true
+            }), ct);
     }
 
     private async Task HandleHealthAsync(JsonElement req, Stream stream, CancellationToken ct)
@@ -777,6 +798,13 @@ public sealed class FileServer
 
     private async Task HandleDeleteAsync(JsonElement req, Stream stream, CancellationToken ct)
     {
+        if (SafeModeNoRemoteDelete)
+        {
+            await Protocol.WriteLineAsync(stream,
+                JsonSerializer.Serialize(new { status = "error", error = "svc.remoteDeleteDisabled" }), ct);
+            return;
+        }
+
         if (!TryGetStringProperty(req, "path", out var path)) { await WriteBadRequestAsync(stream, ct); return; }
         // Confina a la carpeta compartida cuando RestrictToShareRoot esta activo.
         if (!TryGuardWrite(path, out var guarded, out var gReason))

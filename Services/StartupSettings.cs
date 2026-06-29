@@ -18,7 +18,8 @@ public static class StartupSettings
         bool TlsEnabled,
         bool RestrictShareRoot,
         bool ReadOnly,
-        bool RequireApproval);
+        bool RequireApproval,
+        bool SafeModeNoRemoteDelete);
 
     public static ServerConfig Load(string settingsPath)
     {
@@ -34,7 +35,8 @@ public static class StartupSettings
                 TlsEnabled: ReadBool(doc, "tlsEnabled", defaultValue: true),
                 RestrictShareRoot: ReadBool(doc, "restrictShareRoot", defaultValue: true),
                 ReadOnly: ReadBool(doc, "readOnly", defaultValue: false),
-                RequireApproval: ReadBool(doc, "requireApproval", defaultValue: false));
+                RequireApproval: ReadBool(doc, "requireApproval", defaultValue: false),
+                SafeModeNoRemoteDelete: ReadBool(doc, "safeModeNoRemoteDelete", defaultValue: false));
         }
         catch
         {
@@ -43,7 +45,7 @@ public static class StartupSettings
     }
 
     public static ServerConfig Defaults()
-        => new(DefaultLocalPort, null, true, true, false, false);
+        => new(DefaultLocalPort, null, true, true, false, false, false);
 
     private static int ReadLocalPort(JsonElement doc)
     {

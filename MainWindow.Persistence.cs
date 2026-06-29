@@ -133,6 +133,16 @@ public partial class MainWindow
                     if (chk != null) chk.IsChecked = _readOnly;
                 });
             }
+            if (doc.TryGetProperty("safeModeNoRemoteDelete", out var safeEl))
+            {
+                _safeModeNoRemoteDelete = safeEl.GetBoolean();
+                _server.SafeModeNoRemoteDelete = _safeModeNoRemoteDelete;
+                await Dispatcher.UIThread.InvokeAsync(() =>
+                {
+                    var chk = this.FindControl<CheckBox>("chkSafeModeNoDelete");
+                    if (chk != null) chk.IsChecked = _safeModeNoRemoteDelete;
+                });
+            }
             // SEGURIDAD: consentimiento del receptor
             if (doc.TryGetProperty("requireApproval", out var raEl))
             {
@@ -220,6 +230,7 @@ public partial class MainWindow
                 tlsEnabled = _tlsEnabled,
                 restrictShareRoot = _restrictShareRoot,
                 readOnly = _readOnly,
+                safeModeNoRemoteDelete = _safeModeNoRemoteDelete,
                 requireApproval = _requireApproval,
                 compressEnabled = _compressEnabled,
 
@@ -241,7 +252,6 @@ public partial class MainWindow
     }
 
 }
-
 
 
 

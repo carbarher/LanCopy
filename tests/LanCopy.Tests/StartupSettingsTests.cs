@@ -20,6 +20,7 @@ public class StartupSettingsTests
         Assert.True(cfg.RestrictShareRoot);
         Assert.False(cfg.ReadOnly);
         Assert.False(cfg.RequireApproval);
+        Assert.False(cfg.SafeModeNoRemoteDelete);
     }
 
     [Fact]
@@ -36,6 +37,7 @@ public class StartupSettingsTests
                 restrictShareRoot = false,
                 readOnly = true,
                 requireApproval = true,
+                safeModeNoRemoteDelete = true,
             });
             File.WriteAllText(p, json);
 
@@ -46,6 +48,7 @@ public class StartupSettingsTests
             Assert.False(cfg.RestrictShareRoot);
             Assert.True(cfg.ReadOnly);
             Assert.True(cfg.RequireApproval);
+            Assert.True(cfg.SafeModeNoRemoteDelete);
         }
         finally
         {

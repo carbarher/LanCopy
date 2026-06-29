@@ -95,6 +95,7 @@ public partial class MainWindow : Window
     private bool _welcomeShown;      // UX: true tras mostrar el asistente la primera vez
     private bool _restrictShareRoot = true; // SEGURIDAD: confina peers a carpeta compartida
     private bool _readOnly; // SEGURIDAD: si true, el servidor rechaza put/delete/rename
+    private bool _safeModeNoRemoteDelete; // SEGURIDAD: bloquea solo el borrado remoto
     private bool _requireApproval; // SEGURIDAD: pedir consentimiento antes de aceptar ficheros
     private bool _compressEnabled;
     private string _theme = "Dark"; // tema UI: Dark|Light
@@ -178,10 +179,12 @@ public partial class MainWindow : Window
             _tlsEnabled = startup.TlsEnabled;
             _restrictShareRoot = startup.RestrictShareRoot;
             _readOnly = startup.ReadOnly;
+            _safeModeNoRemoteDelete = startup.SafeModeNoRemoteDelete;
             _requireApproval = startup.RequireApproval;
             _server.TlsEnabled = _tlsEnabled;
             _server.RestrictToShareRoot = _restrictShareRoot;
             _server.ReadOnly = _readOnly;
+            _server.SafeModeNoRemoteDelete = _safeModeNoRemoteDelete;
             _server.RequiredPin = startup.RequiredPin;
             _server.ApproveIncoming = _requireApproval ? OnApproveIncomingAsync : null;
             _server.Start(startup.LocalPort);
