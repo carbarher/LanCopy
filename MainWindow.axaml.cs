@@ -120,6 +120,7 @@ public partial class MainWindow : Window
     // Cached controls — evita FindControl<T>() en hot paths (#23)
     private TextBlock? _txtStatus;
     private TextBlock? _txtSpeed;
+    private TextBlock? _txtProgressPercent;
     private TextBlock? _txtLocalPath;
     private TextBlock? _txtRemotePath;
     private TextBlock? _txtConnStatus;
@@ -141,11 +142,13 @@ public partial class MainWindow : Window
 
         _txtStatus = this.FindControl<TextBlock>("txtStatus");
         _txtSpeed = this.FindControl<TextBlock>("txtSpeed");
+        _txtProgressPercent = this.FindControl<TextBlock>("txtProgressPercent");
         _txtLocalPath = this.FindControl<TextBlock>("txtLocalPath");
         _txtRemotePath = this.FindControl<TextBlock>("txtRemotePath");
         _txtConnStatus = this.FindControl<TextBlock>("txtConnStatus");
         _progressBar = this.FindControl<ProgressBar>("transferProgress");
         _historyExpander = this.FindControl<Expander>("historyExpander");
+        InitializeTransferUi();
         _notifManager = new WindowNotificationManager(TopLevel.GetTopLevel(this)!)
         {
             Position = NotificationPosition.BottomRight,
@@ -269,5 +272,4 @@ public partial class MainWindow : Window
 
 // ── Modelo: perfil de conexión (Feature 3) ────────────────────────────────────
 internal record ConnectionProfile(string Name, string Ip, string Port, string Pin = "", bool Tls = false, bool Compress = false);
-
 

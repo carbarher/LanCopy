@@ -31,6 +31,54 @@ namespace LanCopy;
 
 public partial class MainWindow
 {
+    private readonly record struct TransferProgressSnapshot(long DoneBytes, long TotalBytes);
+
+    private sealed class TransferProgressAggregate(long totalBytes)
+    {
+        private readonly object _sync = new();
+        private readonly Dictionary<int, long> _activeBytes = new();
+        private long _completedBytes;
+
+        public TransferProgressSnapshot Update(int key, long doneBytes)
+        {
+            lock (_sync)
+            {
+                _activeBytes[key] = Math.Max(0, doneBytes);
+                return SnapshotLocked();
+            }
+        }
+
+        public TransferProgressSnapshot Complete(int key, long fileBytes)
+        {
+            lock (_sync)
+            {
+                _activeBytes.Remove(key);
+                _completedBytes = Math.Min(totalBytes, _completedBytes + Math.Max(0, fileBytes));
+                return SnapshotLocked();
+            }
+        }
+
+        public TransferProgressSnapshot Fail(int key)
+        {
+            lock (_sync)
+            {
+                _activeBytes.Remove(key);
+                return SnapshotLocked();
+            }
+        }
+
+        public TransferProgressSnapshot Snapshot()
+        {
+            lock (_sync) return SnapshotLocked();
+        }
+
+        private TransferProgressSnapshot SnapshotLocked()
+        {
+            var done = Math.Min(totalBytes, _completedBytes + _activeBytes.Values.Sum());
+            return new TransferProgressSnapshot(done, totalBytes);
+        }
+    }
+
     private async Task TransferAsync(List<FileEntry> items, bool isUpload)
     {
         ref int isFlag = ref (isUpload ? ref _isUploading : ref _isDownloading);
@@ -73,6 +121,8 @@ public partial class MainWindow
             long totalTransfer = fileList
                 .Where((_, i) => !skipSet.Contains(i))
                 .Sum(x => x.entry.Size);
+            var aggregate = new TransferProgressAggregate(totalTransfer);
+            BeginTransferUi(receiving: !isUpload, totalTransfer);
 
             var failedFiles = new System.Collections.Concurrent.ConcurrentBag<(FileEntry entry, string destPath)>();
             var lockDoneBytes = new object();
@@ -90,7 +140,7 @@ public partial class MainWindow
 
                 var task = ParallelTransferFileAsync(
                     entry, destPath, isUpload, taskFi, fileList.Count,
-                    totalTransfer, arrow, failedFiles, lockDoneBytes, remoteIp, remotePort, ct);
+                    totalTransfer, arrow, failedFiles, lockDoneBytes, aggregate, remoteIp, remotePort, ct);
                 transferTasks.Add(task);
             }
 
@@ -122,7 +172,7 @@ public partial class MainWindow
                     var taskRi = ri++;
                     var task = ParallelTransferFileAsync(
                         entry, destPath, isUpload, taskRi, failedFiles.Count,
-                        totalTransfer, $"↺{arrow}", retryBag, lockDoneBytes, remoteIp, remotePort, ct);
+                        totalTransfer, $"↺{arrow}", retryBag, lockDoneBytes, aggregate, remoteIp, remotePort, ct);
                     retryTasks.Add(task);
                 }
 
@@ -150,13 +200,6 @@ public partial class MainWindow
             }
 
         cleanup:
-            Dispatcher.UIThread.Post(() =>
-            {
-                if (_progressBar != null) _progressBar.Value = 0;
-                if (_txtSpeed != null) _txtSpeed.Text = "";
-                UpdateSparkline(0);
-            });
-
             var msg = skip > 0
                 ? L.Format("msg.copiedSkipped", ok, skip, fileList.Count)
                 : L.Format("msg.copiedFiles", ok, fileList.Count, FileEntry.FormatSize(doneBytes));
@@ -164,6 +207,13 @@ public partial class MainWindow
             __finalMsg = msg;
             __finalErr = (ok < fileList.Count - skip) || skip > 0;
             if (__finalErr) SetStatusAlert(msg); // requiere lectura: parpadeo llamativo
+            var finalSnapshot = aggregate.Snapshot();
+            if (!ct.IsCancellationRequested && !__finalErr && ok > 0)
+                CompleteTransferUi(receiving: !isUpload, finalSnapshot.DoneBytes, finalSnapshot.TotalBytes, __sw.Elapsed);
+            else if (!ct.IsCancellationRequested)
+                SuspendTransferUi();
+            else
+                ResetTransferUi();
             if (ok > 0) {
                 AddHistory(L.Format("hist.transferred", arrow, ok, FileEntry.FormatSize(doneBytes)), "#28A745",
                     isUpload ? "send" : "receive", remoteIp, doneBytes, true);
@@ -196,58 +246,21 @@ public partial class MainWindow
     /// Transfiere un único archivo. Devuelve true si éxito, false si error o cancelado.
     /// </summary>
     // Progreso del lado servidor (cuando el OTRO PC inicia la copia): recepcion 'put' / envio 'get'.
-    private long _srvLastDone;
-    private readonly Stopwatch _srvSw = new();
-
     private void OnServerTransferProgress(FileServer.TransferProgressInfo info)
     {
-        if (info.Done <= 0 || info.Done < _srvLastDone) { _srvSw.Restart(); _srvLastDone = 0; }
-        var elapsed = _srvSw.Elapsed.TotalSeconds;
-        var speed = elapsed > 0.01 ? (info.Done - _srvLastDone) / elapsed : 0;
-        _srvLastDone = info.Done;
-        _srvSw.Restart();
-
-        var pct = info.Total > 0 ? info.Done * 100.0 / info.Total : 0.0;
-        var arrow = info.Receiving ? "\u2B07" : "\u2B06";
-        var verb = info.Receiving ? L["verb.receiving"] : L["verb.sending"];
-
-        Dispatcher.UIThread.Post(() =>
-        {
-            if (_progressBar != null) _progressBar.Value = pct;
-            _progressWin?.SetProgress(pct, $"{FileEntry.FormatSize((long)speed)}/s");
-            if (_txtSpeed != null) _txtSpeed.Text = $"{FileEntry.FormatSize((long)speed)}/s";
-            UpdateSparkline(speed);
-        });
-        SetStatus($"{arrow} {verb} {info.FileName}  " +
-                  $"{FileEntry.FormatSize(info.Done)}/{FileEntry.FormatSize(info.Total)}  " +
-                  $"@ {FileEntry.FormatSize((long)speed)}/s");
+        ReportTransferUi(info.Receiving, info.Done, info.Total);
+        if (info.Total > 0 && info.Done >= info.Total)
+            CompleteTransferUi(info.Receiving, info.Done, info.Total, TimeSpan.Zero);
     }
     private async Task<bool> DoTransferFileAsync(
         FileEntry entry, string destPath, bool isUpload,
-        int fi, int total, long fileStart, long totalTransfer,
-        string arrow, string remoteIp, int remotePort, CancellationToken ct)
+        int fi, int total, long totalTransfer, TransferProgressAggregate aggregate, int progressKey,
+        string remoteIp, int remotePort, CancellationToken ct)
     {
-        var lastDone = 0L;
-        var sw = Stopwatch.StartNew();
-
         var prog = new Progress<(long done, long total)>(v =>
         {
-            var elapsed = sw.Elapsed.TotalSeconds;
-            var speed = elapsed > 0.01 ? (v.done - lastDone) / elapsed : 0;
-            lastDone = v.done;
-            sw.Restart();
-
-            var pct = totalTransfer > 0 ? (fileStart + v.done) * 100.0 / totalTransfer : 0.0;
-            Dispatcher.UIThread.Post(() =>
-            {
-                if (_progressBar != null) _progressBar.Value = pct;
-                _progressWin?.SetProgress(pct, $"[{fi + 1}/{total}] {FileEntry.FormatSize((long)speed)}/s");
-                if (_txtSpeed != null) _txtSpeed.Text = $"{FileEntry.FormatSize((long)speed)}/s";
-                UpdateSparkline(speed);
-            });
-            SetStatus($"{arrow} [{fi + 1}/{total}] {entry.Name}  " +
-                      $"{FileEntry.FormatSize(v.done)}/{FileEntry.FormatSize(v.total)}  " +
-                      $"@ {FileEntry.FormatSize((long)speed)}/s");
+            var snapshot = aggregate.Update(progressKey, v.done);
+            ReportTransferUi(receiving: !isUpload, snapshot.DoneBytes, totalTransfer > 0 ? totalTransfer : v.total);
         });
 
         var throttled = new ThrottledProgress<(long, long)>(prog, intervalMs: 200);
@@ -304,6 +317,7 @@ public partial class MainWindow
         int fi, int total, long totalTransfer, string arrow,
         System.Collections.Concurrent.ConcurrentBag<(FileEntry, string)> failedBag,
         object lockDoneBytes,
+        TransferProgressAggregate aggregate,
         string remoteIp, int remotePort, CancellationToken ct)
     {
         // Feature 1: punto de pausa
@@ -315,42 +329,35 @@ public partial class MainWindow
         await _transferSemaphore.WaitAsync(ct);
         try
         {
-            long fileStart = 0L;
-            lock (lockDoneBytes)
-            {
-                // Calcular doneBytes actual desde totalTransfer - failedBag
-                var failed = failedBag.Sum(x => (long)x.Item1.Size);
-                fileStart = totalTransfer - failed;
-            }
+            var progressKey = fi;
 
             bool fileOk = await DoTransferFileAsync(
-                entry, destPath, isUpload, fi, total, fileStart, totalTransfer, arrow, remoteIp, remotePort, ct);
+                entry, destPath, isUpload, fi, total, totalTransfer, aggregate, progressKey, remoteIp, remotePort, ct);
 
             if (!fileOk && !ct.IsCancellationRequested)
             {
+                aggregate.Fail(progressKey);
                 SetStatus(L.Format("st.errorReconnecting", entry.Name));
                 bool reconnected = await TryReconnectAsync(remoteIp, remotePort, ct);
                 if (reconnected)
                     fileOk = await DoTransferFileAsync(
-                        entry, destPath, isUpload, fi, total, fileStart, totalTransfer, arrow, remoteIp, remotePort, ct);
+                        entry, destPath, isUpload, fi, total, totalTransfer, aggregate, progressKey, remoteIp, remotePort, ct);
             }
 
             if (fileOk)
             {
+                var snapshot = aggregate.Complete(progressKey, entry.Size);
+                ReportTransferUi(receiving: !isUpload, snapshot.DoneBytes, snapshot.TotalBytes);
                 lock (lockDoneBytes)
                 {
                     var failed = failedBag.Sum(x => (long)x.Item1.Size);
                     var doneNow = totalTransfer - failed;
-                    Dispatcher.UIThread.Post(() =>
-                    {
-                        if (_progressBar != null)
-                            _progressBar.Value = totalTransfer > 0 ? doneNow * 100.0 / totalTransfer : 100;
-                            _progressWin?.SetProgress(totalTransfer > 0 ? doneNow * 100.0 / totalTransfer : 100);
-                    });
                 }
             }
             else if (!ct.IsCancellationRequested)
             {
+                aggregate.Fail(progressKey);
+                ReportTransferUi(receiving: !isUpload, aggregate.Snapshot().DoneBytes, aggregate.Snapshot().TotalBytes);
                 failedBag.Add((entry, destPath));
             }
         }
@@ -493,5 +500,3 @@ public partial class MainWindow
     private static string MakeUniqueDest(string dest) => PathSafety.MakeUnique(dest);
 
 }
-
-

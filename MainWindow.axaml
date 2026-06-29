@@ -388,13 +388,17 @@
         <Border Grid.Row="2" Background="{DynamicResource ToolbarBg}" Padding="12,6" BorderBrush="{DynamicResource DividerBg}" BorderThickness="0,1,0,0">
             <Grid RowDefinitions="Auto,Auto,Auto">
                 <!-- Progreso + velocidad (#12) -->
-                <Grid Grid.Row="0" ColumnDefinitions="*,Auto" Margin="0,0,0,4">
+                <Grid Grid.Row="0" ColumnDefinitions="*,Auto,Auto" Margin="0,0,0,4">
                     <ProgressBar Grid.Column="0" x:Name="transferProgress"
                                  Minimum="0" Maximum="100" Value="0"
-                                 Height="4" Foreground="#28A745" ToolTip.Tip="{l:Tr tip.progress}"/>
-                    <TextBlock Grid.Column="1" x:Name="txtSpeed"
+                                 Height="6" Foreground="#28A745" ToolTip.Tip="{l:Tr tip.progress}"/>
+                    <TextBlock Grid.Column="1" x:Name="txtProgressPercent"
+                               Text="0%" Foreground="{DynamicResource TextFg}" FontSize="12"
+                               FontWeight="SemiBold" VerticalAlignment="Center" Margin="10,0,0,0"
+                               MinWidth="42" ToolTip.Tip="{l:Tr tip.progress}"/>
+                    <TextBlock Grid.Column="2" x:Name="txtSpeed"
                                Text="" Foreground="{DynamicResource MutedFg}" FontSize="12"
-                               VerticalAlignment="Center" Margin="8,0,0,0" MinWidth="75" ToolTip.Tip="{l:Tr tip.speed}"/>
+                               VerticalAlignment="Center" Margin="8,0,0,0" MinWidth="95" ToolTip.Tip="{l:Tr tip.speed}"/>
                 </Grid>
                 <!-- Texto de estado -->
                 <TextBlock Grid.Row="1" x:Name="txtStatus"
@@ -424,5 +428,4 @@
         </Border>
     </Grid>
 </Window>
-
 
