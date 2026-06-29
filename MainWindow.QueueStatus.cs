@@ -33,29 +33,43 @@ public partial class MainWindow
 {
     // ── Cola persistente (Feature 3) ─────────────────────────────────────────
 
+    private static List<(string Path, string Dest)> DeduplicateQueuePairs(IEnumerable<(string Path, string Dest)> items)
+        => items
+            .Where(x => !string.IsNullOrWhiteSpace(x.Path) && !string.IsNullOrWhiteSpace(x.Dest))
+            .GroupBy(x => $"{x.Path}|{x.Dest}", StringComparer.OrdinalIgnoreCase)
+            .Select(g => g.Last())
+            .ToList();
+
     private void SaveQueue(List<(FileEntry entry, string destPath)> files, bool isUpload, string ip, int port, int attempt = 0)
     {
         try
         {
             Directory.CreateDirectory(Path.GetDirectoryName(QueuePath)!);
+            var uniquePairs = DeduplicateQueuePairs(files.Select(f => (f.entry.FullPath, f.destPath)));
+            if (uniquePairs.Count == 0)
+            {
+                ClearQueue();
+                return;
+            }
             var item = new Models.QueueItem(
-                files.Select(f => f.entry.FullPath).ToArray(),
-                files.Select(f => f.destPath).ToArray(),
+                uniquePairs.Select(x => x.Path).ToArray(),
+                uniquePairs.Select(x => x.Dest).ToArray(),
                 isUpload, ip, port, DateTime.UtcNow.ToString("O"), attempt);
 
             var tmp = QueuePath + ".tmp";
             File.WriteAllText(tmp, System.Text.Json.JsonSerializer.Serialize(item));
             File.Move(tmp, QueuePath, overwrite: true);
         }
-        catch
+        catch (Exception ex)
         {
-            // no bloquear transferencia por error de cola
+            Log.Warn("queue", "save-failed", new { error = ex.Message, isUpload, ip, port, attempt, count = files.Count });
         }
     }
 
     private static void ClearQueue()
     {
-        try { if (File.Exists(QueuePath)) File.Delete(QueuePath); } catch { }
+        try { if (File.Exists(QueuePath)) File.Delete(QueuePath); }
+        catch (Exception ex) { Log.Warn("queue", "clear-failed", new { error = ex.Message }); }
     }
 
     private async Task CheckPendingQueueAsync()
@@ -71,10 +85,12 @@ public partial class MainWindow
                 return;
             }
 
-            var valid = item.FilePaths
+            var valid = DeduplicateQueuePairs(item.FilePaths
                 .Select((p, i) => new { Path = p, Dest = item.DestPaths[i] })
                 .Where(x => !string.IsNullOrWhiteSpace(x.Path) && !string.IsNullOrWhiteSpace(x.Dest))
                 .Where(x => item.IsUpload ? File.Exists(x.Path) : true)
+                .Select(x => (x.Path, x.Dest)))
+                .Select(x => new { Path = x.Path, Dest = x.Dest })
                 .ToList();
             if (valid.Count == 0) { ClearQueue(); return; }
 
@@ -151,14 +167,19 @@ public partial class MainWindow
             var entries = queuedFiles.Select(x => x.Item1).ToList();
             await TransferAsync(entries, item.IsUpload, queuedFiles);
         }
-        catch
+        catch (Exception ex)
         {
+            Log.Warn("queue", "check-pending-failed", new { error = ex.Message });
             try
             {
                 var bad = QueuePath + ".bad-" + DateTime.UtcNow.ToString("yyyyMMddHHmmss");
                 if (File.Exists(QueuePath)) File.Move(QueuePath, bad, overwrite: true);
             }
-            catch { ClearQueue(); }
+            catch (Exception moveEx)
+            {
+                Log.Warn("queue", "mark-bad-failed", new { error = moveEx.Message });
+                ClearQueue();
+            }
         }
     }
 
@@ -265,7 +286,10 @@ public partial class MainWindow
             if (e.DataTransfer is IAsyncDataTransfer asyncTransfer)
                 files = await asyncTransfer.TryGetFilesAsync();
         }
-        catch { }
+        catch (Exception ex)
+        {
+            Log.Warn("browser", "dragdrop-read-failed", new { error = ex.Message });
+        }
         var fileList = files?.ToList();
         if (fileList == null || fileList.Count == 0) return;
 

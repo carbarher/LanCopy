@@ -357,5 +357,10 @@
   "st.sendtoReady": "{0} archivo(s) listos — conéctate y pulsa Enviar",
   "hist.textReceived": "Texto recibido de {0}",
   "hist.broadcast": "Difusión a {0} peer(s)",
+  "btn.diagexport": "🩺 Exportar diagnóstico",
+  "tip.diagexport": "Genera un ZIP con resumen, logs y configuración para soporte (copia la ruta al portapapeles).",
+  "st.diagExported": "Diagnóstico exportado: {0} (ruta copiada)",
+  "st.diagExportFailed": "No se pudo exportar diagnóstico: {0}",
+  "hist.diagExported": "Diagnóstico exportado: {0}",
   "svc.pathExistsFile": "Ya existe un archivo con ese nombre"
 }

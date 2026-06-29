@@ -563,6 +563,41 @@ public sealed class FileServer
 
     // Feature 2: límite de compresión en memoria (200 MB)
     private const long MaxCompressInMemory = 200L * 1024 * 1024;
+    private static bool IsLikelyIncompressibleForGet(string path, long size)
+    {
+        const int sampleSize = 64 * 1024;
+        if (size < sampleSize) return false;
+        try
+        {
+            using var fs = File.OpenRead(path);
+            var sample = new byte[sampleSize];
+            var read = fs.Read(sample, 0, sample.Length);
+            if (read <= 0) return false;
+
+            using var ms = new MemoryStream();
+            using (var ds = new DeflateStream(ms, CompressionLevel.Fastest, leaveOpen: true))
+                ds.Write(sample, 0, read);
+            var compressed = ms.Length;
+            var ratio = compressed <= 0 ? 1.0 : compressed / (double)read;
+
+            int distinct = 0;
+            var seen = new bool[256];
+            for (int i = 0; i < read; i++)
+            {
+                var b = sample[i];
+                if (!seen[b])
+                {
+                    seen[b] = true;
+                    distinct++;
+                }
+            }
+            return distinct >= 240 && ratio >= 0.97;
+        }
+        catch
+        {
+            return false;
+        }
+    }
 
     private async Task HandleGetAsync(JsonElement req, Stream stream, CancellationToken ct)
     {
@@ -601,7 +636,8 @@ public sealed class FileServer
         bool wantCompress = req.TryGetProperty("compress", out var ce) && ce.GetBoolean()
                             && offset == 0
                             && size > 0 && size <= MaxCompressInMemory
-                            && !Protocol.IsCompressedExtension(path);
+                            && !Protocol.IsCompressedExtension(path)
+                            && !IsLikelyIncompressibleForGet(path, size);
         if (wantCompress)
         {
             using var ms = new MemoryStream();

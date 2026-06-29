@@ -6,22 +6,10 @@
 [![CI](https://github.com/carbarher/LanCopy/actions/workflows/ci.yml/badge.svg)](https://github.com/carbarher/LanCopy/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![.NET 9](https://img.shields.io/badge/.NET-9.0-512BD4.svg)](https://dotnet.microsoft.com/)
-[![Download Latest](https://img.shields.io/badge/Download-Latest%20Release-2ea44f?logo=github)](https://github.com/carbarher/LanCopy/releases/latest)
 
 LanCopy moves files directly between devices on your local network over an
 encrypted channel. No accounts, no servers, no internet round-trips. Built with
 C# / .NET 9 and Avalonia UI. Available in 20 languages.
-
-## Downloads
-
-### Direct download links (latest)
-- [Windows installer (.exe)](https://github.com/carbarher/LanCopy/releases/latest/download/LanCopy-Setup-v1.0.15.exe)
-- [Windows x64 (.zip)](https://github.com/carbarher/LanCopy/releases/latest/download/LanCopy-win-x64.zip)
-- [Windows ARM64 (.zip)](https://github.com/carbarher/LanCopy/releases/latest/download/LanCopy-win-arm64.zip)
-- [Linux x64 (.tar.gz)](https://github.com/carbarher/LanCopy/releases/latest/download/LanCopy-linux-x64.tar.gz)
-- [Linux ARM64 (.tar.gz)](https://github.com/carbarher/LanCopy/releases/latest/download/LanCopy-linux-arm64.tar.gz)
-- [macOS Apple Silicon (.zip)](https://github.com/carbarher/LanCopy/releases/latest/download/LanCopy-osx-arm64.zip)
-- [macOS Intel (.zip)](https://github.com/carbarher/LanCopy/releases/latest/download/LanCopy-osx-x64.zip)
 
 ---
 

@@ -50,7 +50,7 @@ public partial class MainWindow
     private async void BrowserAutoRefresh_Tick(object? sender, EventArgs e)
     {
         if (Volatile.Read(ref _isWindowClosing) == 1) return;
-        if (_isTransferring == 1 || _connectButtonIsBusy) return;
+        if (_isTransferring == 1 || _connectButtonIsBusy || Volatile.Read(ref _isReconnectInProgress) == 1) return;
         if (Interlocked.CompareExchange(ref _isBrowserAutoRefreshRunning, 1, 0) != 0) return;
 
         try
@@ -258,6 +258,7 @@ public partial class MainWindow
     {
         // No interrumpir transferencia activa (#13)
         if (_isTransferring == 1 && !isRetry) return;
+        if (Volatile.Read(ref _isReconnectInProgress) == 1 && !isRetry) return;
 
         LanClient? snap;
         await _clientLock.WaitAsync();
@@ -283,18 +284,16 @@ public partial class MainWindow
                 {
                     try
                     {
-                        await _clientLock.WaitAsync();
-                        try { _client?.Dispose(); _client = MakeClient(ip, port); }
-                        finally { _clientLock.Release(); }
-                        await RefreshRemoteAsync(isRetry: true, autoRefresh: autoRefresh);
-                        // Mostrar "Reconectado" tanto en status como en badge (#19)
-                        SetStatus(L["st.reconnected"]);
-                        SetConnStatus(L["conn.reconnectedWord"], BrushConnected);
-                        UpdateConnectButton(isConnected: true, isBusy: false);
-                        UpdateRemoteCreateFolderButton(isConnected: true);
-                        return;
+                        if (await TryReconnectAsync(ip, port, CancellationToken.None))
+                        {
+                            await RefreshRemoteAsync(isRetry: true, autoRefresh: autoRefresh);
+                            return;
+                        }
                     }
-                    catch { }
+                    catch (Exception reconnectEx)
+                    {
+                        Log.Warn("browser", "refresh-reconnect-failed", new { error = reconnectEx.Message, ip, port });
+                    }
                 }
             }
             await _clientLock.WaitAsync();

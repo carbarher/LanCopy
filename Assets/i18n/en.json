@@ -357,5 +357,10 @@
   "svc.pathExistsFile": "A file already exists with that name",
   "st.sendtoReady": "{0} file(s) ready — connect and press Send",
   "hist.textReceived": "Text received from {0}",
-  "hist.broadcast": "Broadcast to {0} peer(s)"
+  "hist.broadcast": "Broadcast to {0} peer(s)",
+  "btn.diagexport": "🩺 Export diagnostics",
+  "tip.diagexport": "Create a ZIP with summary, logs and settings for support (path copied to clipboard).",
+  "st.diagExported": "Diagnostics exported: {0} (path copied)",
+  "st.diagExportFailed": "Could not export diagnostics: {0}",
+  "hist.diagExported": "Diagnostics exported: {0}"
 }

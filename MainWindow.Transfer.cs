@@ -140,6 +140,12 @@ public partial class MainWindow
             var lockDoneBytes = new object();
             long doneBytes = 0; // actualizada dentro de lockDoneBytes
 
+            static List<(FileEntry entry, string destPath)> DeduplicateFailures(IEnumerable<(FileEntry entry, string destPath)> items)
+                => items
+                    .GroupBy(x => $"{x.entry.FullPath}|{x.destPath}", StringComparer.OrdinalIgnoreCase)
+                    .Select(g => g.Last())
+                    .ToList();
+
             // -- Pase 1: transferencias paralelas (máx 4 simultáneas) --------
             var transferTasks = new List<Task>();
             for (int fi = 0; fi < fileList.Count; fi++)
@@ -161,9 +167,10 @@ public partial class MainWindow
                 await Task.WhenAll(transferTasks);
 
             // Contar OK y actualizar doneBytes final
+            var uniqueFailedAfterPass1 = DeduplicateFailures(failedFiles);
             lock (lockDoneBytes)
-                doneBytes = totalTransfer - failedFiles.Sum(x => (long)x.entry.Size);
-            ok = fileList.Count - skip - failedFiles.Count;
+                doneBytes = totalTransfer - uniqueFailedAfterPass1.Sum(x => (long)x.entry.Size);
+            ok = fileList.Count - skip - uniqueFailedAfterPass1.Count;
 
             // -- Pase 2+: reintentar archivos fallidos (múltiples intentos) ------
             const int maxRetryPasses = 4;
@@ -172,7 +179,7 @@ public partial class MainWindow
             while (failedFiles.Count > 0 && !ct.IsCancellationRequested && retryPass < maxRetryPasses)
             {
                 retryPass++;
-                var pending = failedFiles.ToList();
+                var pending = DeduplicateFailures(failedFiles);
                 failedFiles.Clear();
 
                 SetStatus(L.Format("st.retrying", pending.Count));
@@ -208,15 +215,17 @@ public partial class MainWindow
                 recoveredOnRetries += recoveredThisPass;
                 foreach (var f in retryBag) failedFiles.Add(f);
 
+                var uniqueFailed = DeduplicateFailures(failedFiles);
                 lock (lockDoneBytes)
-                    doneBytes = totalTransfer - failedFiles.Sum(x => (long)x.entry.Size);
+                    doneBytes = totalTransfer - uniqueFailed.Sum(x => (long)x.entry.Size);
             }
 
-            if (failedFiles.Count > 0)
+            var finalUniqueFailures = DeduplicateFailures(failedFiles);
+            if (finalUniqueFailures.Count > 0)
             {
-                var names = string.Join(", ", failedFiles.Select(x => x.entry.Name).Take(3));
-                var extra = failedFiles.Count > 3 ? $" +{failedFiles.Count - 3}" : "";
-                AddHistory(L.Format("hist.incomplete", failedFiles.Count, $"{names}{extra}"), "#FF6B6B");
+                var names = string.Join(", ", finalUniqueFailures.Select(x => x.entry.Name).Take(3));
+                var extra = finalUniqueFailures.Count > 3 ? $" +{finalUniqueFailures.Count - 3}" : "";
+                AddHistory(L.Format("hist.incomplete", finalUniqueFailures.Count, $"{names}{extra}"), "#FF6B6B");
             }
             else if (retryPass > 0 && recoveredOnRetries > 0)
             {

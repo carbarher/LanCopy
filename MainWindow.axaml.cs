@@ -137,6 +137,7 @@ public partial class MainWindow : Window
     private bool _connectButtonIsBusy;
     private int _isConnectionProbeRunning;
     private int _isBrowserAutoRefreshRunning;
+    private int _isReconnectInProgress;
     private long _localEntriesSignature;
     private long _remoteEntriesSignature;
     private int _stallRecoverInProgress;
@@ -187,6 +188,7 @@ public partial class MainWindow : Window
             _server.SafeModeNoRemoteDelete = _safeModeNoRemoteDelete;
             _server.RequiredPin = startup.RequiredPin;
             _server.ApproveIncoming = _requireApproval ? OnApproveIncomingAsync : null;
+            { var chkSafe = this.FindControl<CheckBox>("chkSafeModeNoDelete"); if (chkSafe != null) chkSafe.IsChecked = _safeModeNoRemoteDelete; }
             _server.Start(startup.LocalPort);
             _server.TransferProgress += OnServerTransferProgress;
             _server.TextReceived += OnTextReceived;

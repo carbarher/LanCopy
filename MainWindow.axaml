@@ -152,6 +152,9 @@
                     <Button x:Name="btnAudit" Content="📋 Auditoría" Click="ShowAudit_Click"
                             Background="{DynamicResource InputBg}" Foreground="#FFD700" Padding="6,3" FontSize="12"
                             ToolTip.Tip="Ver registros de auditoría de transferencias"/>
+                    <Button x:Name="btnDiagExport" Content="{l:Tr btn.diagexport}" Click="ExportDiagnostics_Click"
+                            Background="{DynamicResource InputBg}" Foreground="#00BCD4" Padding="6,3" FontSize="12"
+                            ToolTip.Tip="{l:Tr tip.diagexport}"/>
                 </StackPanel>
                 <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Spacing="6" Margin="0,2,0,2">
                     <TextBlock Text="{l:Tr bw.label}" Foreground="{DynamicResource TextFg}" VerticalAlignment="Center" FontSize="12"/>

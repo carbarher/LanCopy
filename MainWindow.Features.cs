@@ -120,6 +120,98 @@ public partial class MainWindow
         try { await new InfoDialog(L["diag.title"], sb.ToString()).ShowDialog(this); } catch { }
     }
 
+    private async void ExportDiagnostics_Click(object? sender, RoutedEventArgs e)
+    {
+        try
+        {
+            var stamp = DateTime.Now.ToString("yyyyMMdd-HHmmss");
+            var diagDir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "LanCopy", "diag");
+            Directory.CreateDirectory(diagDir);
+            var zipPath = Path.Combine(diagDir, $"lancopy-diag-{stamp}.zip");
+            var tempDir = Path.Combine(Path.GetTempPath(), "LanCopyDiag_" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(tempDir);
+            try
+            {
+                var summary = new System.Text.StringBuilder();
+                summary.AppendLine($"LanCopy diagnostics generated: {DateTime.Now:O}");
+                summary.AppendLine($"Version: {typeof(MainWindow).Assembly.GetName().Version}");
+                summary.AppendLine($"Local endpoint: {_server.LocalIp}:{_server.Port}");
+                summary.AppendLine($"Connected: {(await IsConnectedAsync() ? "yes" : "no")}");
+                summary.AppendLine($"TLS: {_tlsEnabled}; Compress: {_compressEnabled}; RestrictShareRoot: {_restrictShareRoot}");
+                summary.AppendLine($"SafeModeNoDelete: {_safeModeNoRemoteDelete}; ReadOnly: {_readOnly}; RequireApproval: {_requireApproval}");
+                var peers = _discovery?.GetPeers() ?? [];
+                summary.AppendLine($"Discovered peers: {peers.Count}");
+                foreach (var p in peers) summary.AppendLine($"  - {p.Name} ({p.Ip}:{p.Port})");
+
+                var remoteIp = this.FindControl<TextBox>("txtRemoteIp")?.Text?.Trim() ?? "";
+                var remotePortText = this.FindControl<TextBox>("txtRemotePort")?.Text?.Trim() ?? "8742";
+                if (!string.IsNullOrWhiteSpace(remoteIp) && int.TryParse(remotePortText, out var remotePort))
+                {
+                    try
+                    {
+                        using var cli = MakeClient(remoteIp, remotePort);
+                        var health = await cli.GetHealthAsync();
+                        if (health != null)
+                        {
+                            summary.AppendLine($"Remote health for {remoteIp}:{remotePort}");
+                            summary.AppendLine($"  connCurrent={health.ConnCurrent}/{health.ConnLimit}, perIp={health.PerIpLimit}, activeIps={health.ActiveIps}");
+                            summary.AppendLine($"  pinFails={health.PinFailsTracked}, hashCache={health.HashCacheEntries}, rate={health.CommandRateLimit}/{health.CommandRateWindowSeconds}s tracked={health.CommandRateTracked}");
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        summary.AppendLine($"Remote health query failed: {ex.Message}");
+                    }
+                }
+
+                File.WriteAllText(Path.Combine(tempDir, "summary.txt"), summary.ToString());
+
+                void CopyIfExists(string srcPath, string targetName)
+                {
+                    try
+                    {
+                        if (File.Exists(srcPath))
+                            File.Copy(srcPath, Path.Combine(tempDir, targetName), overwrite: true);
+                    }
+                    catch (Exception ex) { Log.Warn("diag", "copy-file-failed", new { srcPath, error = ex.Message }); }
+                }
+
+                CopyIfExists(SettingsPath, "settings.json");
+                CopyIfExists(HistoryPath, "history.json");
+                CopyIfExists(QueuePath, "queue.json");
+                CopyIfExists(Log.CurrentLogFile, Path.GetFileName(Log.CurrentLogFile));
+
+                if (Directory.Exists(Log.Directory_))
+                {
+                    foreach (var logFile in Directory.EnumerateFiles(Log.Directory_, "lancopy-*.log")
+                                 .OrderByDescending(File.GetLastWriteTimeUtc).Take(3))
+                    {
+                        CopyIfExists(logFile, Path.GetFileName(logFile));
+                    }
+                }
+
+                if (File.Exists(zipPath)) File.Delete(zipPath);
+                System.IO.Compression.ZipFile.CreateFromDirectory(tempDir, zipPath, System.IO.Compression.CompressionLevel.Optimal, includeBaseDirectory: false);
+
+                var top = TopLevel.GetTopLevel(this);
+                if (top?.Clipboard != null)
+                    await top.Clipboard.SetTextAsync(zipPath);
+
+                SetStatus(L.Format("st.diagExported", zipPath));
+                AddHistory(L.Format("hist.diagExported", Path.GetFileName(zipPath)), "#00BCD4");
+            }
+            finally
+            {
+                try { Directory.Delete(tempDir, recursive: true); } catch { }
+            }
+        }
+        catch (Exception ex)
+        {
+            Log.Error("diag", "export-failed", new { error = ex.Message });
+            SetStatus(L.Format("st.diagExportFailed", ex.Message));
+        }
+    }
+
     private void CmbLang_SelectionChanged(object? sender, SelectionChangedEventArgs e)
     {
         if (sender is not ComboBox cmb) return;

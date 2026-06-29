@@ -1,6 +1,7 @@
 using System.Net.Sockets;
 using System.Security.Cryptography;
 using System.Text;
+using System.Buffers;
 
 namespace LanCopy.Services;
 
@@ -13,6 +14,8 @@ internal static class Protocol
     internal const int MinSupportedVersion = 1;
 
     internal const int BufferSize = 512 * 1024; // 512 KB -> ~20-30% mas throughput LAN 1Gbps
+    internal const int MinBufferSize = 64 * 1024;
+    internal const int MaxBufferSize = 2 * 1024 * 1024;
 
     // Limite anti-DoS: una linea de cabecera JSON nunca deberia superar esto.
     // Sin tope, un peer malicioso podria enviar bytes sin '\n' hasta agotar la memoria (OOM).
@@ -31,6 +34,15 @@ internal static class Protocol
     // True si el fichero ya esta (probablemente) comprimido y conviene saltar deflate.
     internal static bool IsCompressedExtension(string path)
         => CompressedExt.Contains(System.IO.Path.GetExtension(path));
+
+    internal static int SelectCopyBufferSize(long totalBytes)
+    {
+        if (totalBytes <= 0) return BufferSize;
+        if (totalBytes <= 256L * 1024) return MinBufferSize;
+        if (totalBytes <= 8L * 1024 * 1024) return 256 * 1024;
+        if (totalBytes <= 512L * 1024 * 1024) return BufferSize;
+        return 1024 * 1024;
+    }
 
     // Lee una linea terminada en '\n'. Si el stream es un BufferedLineStream (lo habitual en
     // servidor/cliente), usa su lectura con buffer (sin 1 syscall por byte). Para cualquier otro
@@ -71,18 +83,26 @@ internal static class Protocol
         IProgress<(long done, long total)>? progress,
         CancellationToken ct)
     {
-        var buf = new byte[BufferSize];
-        long remaining = size, done = 0;
-        while (remaining > 0)
+        var rented = ArrayPool<byte>.Shared.Rent(Math.Clamp(SelectCopyBufferSize(size), MinBufferSize, MaxBufferSize));
+        try
         {
-            var toRead = (int)Math.Min(remaining, buf.Length);
-            var read = await src.ReadAsync(buf.AsMemory(0, toRead), ct);
-            if (read == 0) throw new EndOfStreamException("svc.connCut");
-            await dst.WriteAsync(buf.AsMemory(0, read), ct);
-            await RateLimiter.Global.ThrottleAsync(read, ct);
-            remaining -= read;
-            done += read;
-            progress?.Report((done, size));
+            var buf = rented;
+            long remaining = size, done = 0;
+            while (remaining > 0)
+            {
+                var toRead = (int)Math.Min(remaining, buf.Length);
+                var read = await src.ReadAsync(buf.AsMemory(0, toRead), ct);
+                if (read == 0) throw new EndOfStreamException("svc.connCut");
+                await dst.WriteAsync(buf.AsMemory(0, read), ct);
+                await RateLimiter.Global.ThrottleAsync(read, ct);
+                remaining -= read;
+                done += read;
+                progress?.Report((done, size));
+            }
+        }
+        finally
+        {
+            ArrayPool<byte>.Shared.Return(rented);
         }
     }
 
@@ -90,14 +110,22 @@ internal static class Protocol
     // sin escribirlo a disco; evita el RST que perderia el ack de error en el cliente).
     internal static async Task DrainAsync(Stream src, long size, CancellationToken ct)
     {
-        var buf = new byte[BufferSize];
-        long remaining = size;
-        while (remaining > 0)
+        var rented = ArrayPool<byte>.Shared.Rent(Math.Clamp(SelectCopyBufferSize(size), MinBufferSize, MaxBufferSize));
+        try
         {
-            var toRead = (int)Math.Min(remaining, buf.Length);
-            var read = await src.ReadAsync(buf.AsMemory(0, toRead), ct);
-            if (read == 0) break;
-            remaining -= read;
+            var buf = rented;
+            long remaining = size;
+            while (remaining > 0)
+            {
+                var toRead = (int)Math.Min(remaining, buf.Length);
+                var read = await src.ReadAsync(buf.AsMemory(0, toRead), ct);
+                if (read == 0) break;
+                remaining -= read;
+            }
+        }
+        finally
+        {
+            ArrayPool<byte>.Shared.Return(rented);
         }
     }
 
@@ -109,19 +137,27 @@ internal static class Protocol
         CancellationToken ct)
     {
         using var hasher = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
-        var buf = new byte[BufferSize];
-        long remaining = size, done = 0;
-        while (remaining > 0)
+        var rented = ArrayPool<byte>.Shared.Rent(Math.Clamp(SelectCopyBufferSize(size), MinBufferSize, MaxBufferSize));
+        try
         {
-            var toRead = (int)Math.Min(remaining, buf.Length);
-            var read = await src.ReadAsync(buf.AsMemory(0, toRead), ct);
-            if (read == 0) throw new EndOfStreamException("svc.connCut");
-            await dst.WriteAsync(buf.AsMemory(0, read), ct);
-            hasher.AppendData(buf, 0, read);
-            await RateLimiter.Global.ThrottleAsync(read, ct);
-            remaining -= read;
-            done += read;
-            progress?.Report((done, size));
+            var buf = rented;
+            long remaining = size, done = 0;
+            while (remaining > 0)
+            {
+                var toRead = (int)Math.Min(remaining, buf.Length);
+                var read = await src.ReadAsync(buf.AsMemory(0, toRead), ct);
+                if (read == 0) throw new EndOfStreamException("svc.connCut");
+                await dst.WriteAsync(buf.AsMemory(0, read), ct);
+                hasher.AppendData(buf, 0, read);
+                await RateLimiter.Global.ThrottleAsync(read, ct);
+                remaining -= read;
+                done += read;
+                progress?.Report((done, size));
+            }
+        }
+        finally
+        {
+            ArrayPool<byte>.Shared.Return(rented);
         }
         return Convert.ToHexString(hasher.GetHashAndReset()).ToLowerInvariant();
     }

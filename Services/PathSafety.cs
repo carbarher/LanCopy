@@ -9,9 +9,6 @@ namespace LanCopy.Services;
 /// </summary>
 public static class PathSafety
 {
-    private static readonly StringComparison PathComparison =
-        OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
-
     /// <summary>
     /// Combina segmentos bajo baseDir rechazando rutas absolutas y traversal ("..").
     /// Garantiza que el resultado queda contenido dentro de baseDir.
@@ -34,12 +31,11 @@ public static class PathSafety
                     combined = Path.Combine(combined, seg);
                 }
             }
-
             var full = Path.GetFullPath(combined);
             var rootWithSep = rootFull.EndsWith(Path.DirectorySeparatorChar)
                 ? rootFull : rootFull + Path.DirectorySeparatorChar;
-            if (!full.StartsWith(rootWithSep, PathComparison)
-                && !string.Equals(full, rootFull, PathComparison))
+            if (!full.StartsWith(rootWithSep, StringComparison.OrdinalIgnoreCase)
+                && !string.Equals(full, rootFull, StringComparison.OrdinalIgnoreCase))
                 return false;
             dest = full;
             return true;
@@ -63,29 +59,5 @@ public static class PathSafety
         }
         // Fallback: GUID para evitar sobrescritura silenciosa.
         return Path.Combine(dir, $"{name} ({Guid.NewGuid():N}){ext}");
-    }
-
-    /// <summary>
-    /// Detección de enlaces/reparse robusta y aware del SO.
-    /// En Unix preferimos LinkTarget/ResolveLinkTarget para evitar falsos positivos.
-    /// </summary>
-    public static bool IsLinkOrReparsePoint(string path)
-    {
-        try
-        {
-            var info = Directory.Exists(path) ? (FileSystemInfo)new DirectoryInfo(path) : new FileInfo(path);
-            if (!info.Exists) return false;
-
-            if (OperatingSystem.IsWindows())
-                return (info.Attributes & FileAttributes.ReparsePoint) != 0;
-
-            // macOS/Linux: LinkTarget identifica symlinks reales sin depender de atributos Windows.
-            if (!string.IsNullOrEmpty(info.LinkTarget)) return true;
-            return info.ResolveLinkTarget(returnFinalTarget: false) is not null;
-        }
-        catch
-        {
-            return true;
-        }
     }
 }

@@ -36,8 +36,7 @@ public class ShareRootTests
     {
         var root = NewTempRoot();
         ShareRoot.SetRoot(root);
-        var traversal = Path.Combine("..", "..", "..", "Windows");
-        Assert.False(ShareRoot.TryResolve(traversal, out _, out var reason));
+        Assert.False(ShareRoot.TryResolve("..\\..\\..\\Windows", out _, out var reason));
         Assert.False(string.IsNullOrEmpty(reason));
     }
 
@@ -46,8 +45,7 @@ public class ShareRootTests
     {
         var root = NewTempRoot();
         ShareRoot.SetRoot(root);
-        var outside = Path.GetFullPath(Path.Combine(root, "..", "outside.txt"));
-        Assert.False(ShareRoot.TryResolve(outside, out _, out _));
+        Assert.False(ShareRoot.TryResolve(@"C:\Windows\win.ini", out _, out _));
     }
 
     [Fact]

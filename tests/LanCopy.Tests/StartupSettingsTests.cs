@@ -20,7 +20,7 @@ public class StartupSettingsTests
         Assert.True(cfg.RestrictShareRoot);
         Assert.False(cfg.ReadOnly);
         Assert.False(cfg.RequireApproval);
-        Assert.False(cfg.SafeModeNoRemoteDelete);
+        Assert.True(cfg.SafeModeNoRemoteDelete);
     }
 
     [Fact]

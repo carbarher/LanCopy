@@ -26,6 +26,7 @@ using Avalonia.Threading;
 using LanCopy.Models;
 using LanCopy.Localization;
 using LanCopy.Services;
+using Polly;
 
 namespace LanCopy;
 
@@ -52,7 +53,7 @@ public partial class MainWindow
     private async void ConnectionWatchdog_Tick(object? sender, EventArgs e)
     {
         if (Volatile.Read(ref _isWindowClosing) == 1) return;
-        if (_connectButtonIsBusy || _isTransferring == 1) return;
+        if (_connectButtonIsBusy || _isTransferring == 1 || Volatile.Read(ref _isReconnectInProgress) == 1) return;
         if (Interlocked.CompareExchange(ref _isConnectionProbeRunning, 1, 0) != 0) return;
 
         try
@@ -279,46 +280,75 @@ public partial class MainWindow
     private async Task<bool> TryReconnectAsync(string ip, int port, CancellationToken ct)
     {
         if (string.IsNullOrEmpty(ip) || port < 1) return false;
+        if (Interlocked.CompareExchange(ref _isReconnectInProgress, 1, 0) != 0)
+            return await WaitReconnectWindowAsync(ct);
         SetConnStatus(L["conn.reconnecting"], BrushConnecting);
+        var retryPolicy = Policy
+            .Handle<Exception>(ex => ex is not OperationCanceledException)
+            .WaitAndRetryAsync(
+                retryCount: 3,
+                sleepDurationProvider: attempt =>
+                {
+                    var jitter = Random.Shared.Next(150, 550);
+                    return TimeSpan.FromMilliseconds(Math.Min(5000, (int)(Math.Pow(2, attempt) * 350) + jitter));
+                },
+                onRetryAsync: (ex, _, attempt, _) =>
+                {
+                    SetStatus(L.Format("st.reconnecting", attempt));
+                    return Task.CompletedTask;
+                });
 
-        for (int attempt = 1; attempt <= 3; attempt++)
+        try
         {
-            if (ct.IsCancellationRequested) return false;
-            try
+            await retryPolicy.ExecuteAsync(async token =>
             {
-                await _clientLock.WaitAsync(ct);
+                token.ThrowIfCancellationRequested();
+                await _clientLock.WaitAsync(token);
                 try { _client?.Dispose(); _client = MakeClient(ip, port); }
                 finally { _clientLock.Release(); }
 
                 // Ping: verifica que la conexión funciona
                 LanClient? snap;
-                await _clientLock.WaitAsync(ct);
+                await _clientLock.WaitAsync(token);
                 try { snap = _client; }
                 finally { _clientLock.Release(); }
-                _ = await snap!.ListAsync("");
+                _ = await snap!.ListAsync("", token);
+            }, ct);
 
-                SetConnStatus(L["conn.reconnectedWord"], BrushConnected);
-                UpdateConnectButton(isConnected: true, isBusy: false);
-                UpdateRemoteCreateFolderButton(isConnected: true);
-                SetStatus(L["st.reconnected"]);
-                return true;
-            }
-            catch (OperationCanceledException) { return false; }
-            catch
-            {
-                if (attempt < 3)
-                {
-                    SetStatus(L.Format("st.reconnecting", attempt));
-                    try { await Task.Delay(2000, ct); } catch { return false; }
-                }
-            }
+            SetConnStatus(L["conn.reconnectedWord"], BrushConnected);
+            UpdateConnectButton(isConnected: true, isBusy: false);
+            UpdateRemoteCreateFolderButton(isConnected: true);
+            SetStatus(L["st.reconnected"]);
+            return true;
         }
+        catch (OperationCanceledException)
+        {
+            return false;
+        }
+        catch
+        {
+            SetConnStatus(L["conn.disconnectedWord"], BrushError);
+            UpdateConnectButton(isConnected: false, isBusy: false);
+            UpdateRemoteCreateFolderButton(isConnected: false);
+            SetStatus(L["st.reconnectFailed"]);
+            return false;
+        }
+        finally
+        {
+            Interlocked.Exchange(ref _isReconnectInProgress, 0);
+        }
+    }
 
-        SetConnStatus(L["conn.disconnectedWord"], BrushError);
-        UpdateConnectButton(isConnected: false, isBusy: false);
-        UpdateRemoteCreateFolderButton(isConnected: false);
-        SetStatus(L["st.reconnectFailed"]);
-        return false;
+    private async Task<bool> WaitReconnectWindowAsync(CancellationToken ct)
+    {
+        const int maxChecks = 15;
+        for (int i = 0; i < maxChecks; i++)
+        {
+            if (ct.IsCancellationRequested) return false;
+            if (Volatile.Read(ref _isReconnectInProgress) == 0) return await IsConnectedAsync();
+            try { await Task.Delay(200, ct); } catch { return false; }
+        }
+        return await IsConnectedAsync();
     }
 
 }

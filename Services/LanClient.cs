@@ -2,10 +2,12 @@ using System.IO;
 using System.IO.Compression;
 using System.Net.Security;
 using System.Net.Sockets;
+using System.Diagnostics;
 using System.Security.Authentication;
 using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
 using System.Text.Json;
+using System.Collections.Concurrent;
 using LanCopy.Models;
 
 namespace LanCopy.Services;
@@ -19,23 +21,34 @@ public sealed class LanClient : IDisposable
     private readonly int _port;
     private const long MaxCompressInMemory = 200L * 1024 * 1024;
     private const long MaxLocalHashBeforeUploadBytes = 512L * 1024 * 1024; // 512 MB
+    private const long ResumeMapBlockSize = 4L * 1024 * 1024;
     private static readonly TimeSpan TransferIdleTimeout = TimeSpan.FromSeconds(60);
     private const int KeepAliveIdleSeconds = 15;
     private const int KeepAliveIntervalSeconds = 5;
     private const int KeepAliveRetryCount = 3;
+    private static int _adaptiveSocketBufferSize = 512 * 1024;
+    private static readonly ConcurrentDictionary<string, int> _peerSocketBuffers = new(StringComparer.OrdinalIgnoreCase);
+    private static int _peerProfilesLoaded;
+    private static long _lastPeerProfilesPersistTick;
+    private static readonly string PeerProfilesPath = Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+        "LanCopy", "peer-network-profiles.json");
     public string? Pin { get; set; }      // Feature 10: PIN de autenticación
     public bool UseTls { get; set; }      // Feature 9: TLS
     public bool UseCompress { get; set; } // Feature 2: compresión deflate
+
+    private sealed record DownloadResumeMap(long BlockSize, long VerifiedBytes, long TotalSize, DateTime UpdatedUtc);
 
     public LanClient(string host, int port) { _host = host; _port = port; }
 
     private async Task<(TcpClient tcp, Stream stream)> OpenAsync(CancellationToken ct)
     {
+        var adaptiveBuffer = Math.Clamp(GetAdaptiveSocketBufferForHost(_host), 128 * 1024, 2 * 1024 * 1024);
         var tcp = new TcpClient
         {
             NoDelay = true,
-            ReceiveBufferSize = 512 * 1024,
-            SendBufferSize = 512 * 1024,
+            ReceiveBufferSize = adaptiveBuffer,
+            SendBufferSize = adaptiveBuffer,
         };
         try
         {
@@ -114,15 +127,28 @@ public sealed class LanClient : IDisposable
         IProgress<(long done, long total)>? progress = null,
         CancellationToken ct = default)
     {
+        var transferSw = System.Diagnostics.Stopwatch.StartNew();
         try
         {
         // Descarga atomica con reanudacion (idea-resume): se escribe a un .part y se promueve
         // al destino final solo al verificar el hash. Si existe un .part previo, se reanuda.
         var partPath = localPath + ".part";
+        var resumeMapPath = GetResumeMapPath(partPath);
         long resume = 0;
         if (File.Exists(partPath))
         {
             try { resume = new FileInfo(partPath).Length; } catch { resume = 0; }
+        }
+        var mappedResume = LoadVerifiedOffsetFromMap(resumeMapPath, resume);
+        if (mappedResume >= 0 && mappedResume < resume)
+        {
+            try
+            {
+                await using var fsFix = new FileStream(partPath, FileMode.Open, FileAccess.Write, FileShare.Read);
+                fsFix.SetLength(mappedResume);
+                resume = mappedResume;
+            }
+            catch { }
         }
         bool wantCompress = UseCompress && resume == 0; // no se comprime al reanudar
 
@@ -149,7 +175,12 @@ public sealed class LanClient : IDisposable
 
         // Solo reanudamos si el servidor lo honra exactamente y no comprime; si no, empezamos limpio.
         bool doResume = resume > 0 && !serverCompressed && rangeFrom == resume;
-        if (resume > 0 && !doResume) { try { File.Delete(partPath); } catch { } }
+        if (resume > 0 && !doResume)
+        {
+            try { File.Delete(partPath); } catch { }
+            TryDeleteResumeMap(resumeMapPath);
+        }
+        if (serverCompressed) TryDeleteResumeMap(resumeMapPath);
 
         using var hasher = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
         var fs = doResume
@@ -161,7 +192,7 @@ public sealed class LanClient : IDisposable
             {
                 // Pre-hashea los bytes ya descargados para verificar el fichero completo al final.
                 fs.Seek(0, SeekOrigin.Begin);
-                var pre = new byte[Protocol.BufferSize];
+                var pre = new byte[Protocol.SelectCopyBufferSize(rangeFrom)];
                 long left = rangeFrom; int pr;
                 while (left > 0 && (pr = await fs.ReadAsync(pre.AsMemory(0, (int)Math.Min(pre.Length, left)), ct)) > 0)
                 {
@@ -182,7 +213,7 @@ public sealed class LanClient : IDisposable
                 TouchIdleTimeout(idleCts);
                 compBuf.Seek(0, SeekOrigin.Begin);
                 await using var ds = new DeflateStream(compBuf, CompressionMode.Decompress);
-                var dbuf = new byte[Protocol.BufferSize];
+                var dbuf = new byte[Protocol.SelectCopyBufferSize(size)];
                 int dr; long written = 0;
                 while ((dr = await ds.ReadAsync(dbuf, ioCt)) > 0)
                 {
@@ -196,8 +227,9 @@ public sealed class LanClient : IDisposable
             else
             {
                 // Recibe (size - rangeFrom) bytes hasheando el contenido completo.
-                var buf = new byte[Protocol.BufferSize];
+                var buf = new byte[Protocol.SelectCopyBufferSize(size)];
                 long remaining = size - rangeFrom, done = rangeFrom;
+                long nextMapCheckpoint = Math.Max(ResumeMapBlockSize, ((done / ResumeMapBlockSize) + 1) * ResumeMapBlockSize);
                 while (remaining > 0)
                 {
                     var toRead = (int)Math.Min(remaining, buf.Length);
@@ -209,7 +241,13 @@ public sealed class LanClient : IDisposable
                     remaining -= read; done += read;
                     TouchIdleTimeout(idleCts);
                     progress?.Report((done, size));
+                    if (!serverCompressed && done >= nextMapCheckpoint)
+                    {
+                        SaveResumeMap(resumeMapPath, size, done);
+                        nextMapCheckpoint += ResumeMapBlockSize;
+                    }
                 }
+                if (!serverCompressed) SaveResumeMap(resumeMapPath, size, size);
             }
 
             var actualSha256 = Convert.ToHexString(hasher.GetHashAndReset()).ToLowerInvariant();
@@ -233,6 +271,7 @@ public sealed class LanClient : IDisposable
                 // Hash incorrecto: el .part esta corrupto, lo borramos para no reanudar sobre basura.
                 await fs.DisposeAsync();
                 try { File.Delete(partPath); } catch { }
+                TryDeleteResumeMap(resumeMapPath);
                 throw new Exception($"Checksum {mismatch} no coincide para {Path.GetFileName(localPath)}");
             }
         }
@@ -243,6 +282,8 @@ public sealed class LanClient : IDisposable
 
         // Exito: promover .part al destino final (sobrescribe si existe).
         File.Move(partPath, localPath, overwrite: true);
+        TryDeleteResumeMap(resumeMapPath);
+        ReportTransferSample(size, transferSw.Elapsed);
         }
         catch (OperationCanceledException ex)
         {
@@ -258,23 +299,33 @@ public sealed class LanClient : IDisposable
         CancellationToken ct = default,
         Action<long, long>? onResumeAccepted = null)
     {
+        var transferSw = System.Diagnostics.Stopwatch.StartNew();
         try
         {
             // Abre archivo primero para tamaño real → evita race condition (#4)
             await using var fs = File.OpenRead(localPath);
             var size = fs.Length;
 
-            // Feature 2: compresión deflate opcional (solo archivos <= 200 MB)
-            bool doCompress = UseCompress && size > 0 && size <= 200L * 1024 * 1024 && !Protocol.IsCompressedExtension(localPath);
+            // Compresión adaptativa: omite deflate para tipos ya comprimidos y payloads
+            // de alta entropía donde la ganancia suele ser negativa.
+            bool doCompress = UseCompress
+                && size > 0
+                && size <= MaxCompressInMemory
+                && !Protocol.IsCompressedExtension(localPath)
+                && !IsLikelyIncompressible(fs, size);
 
             long resumeOffset = 0;
+            bool usedResumeUpload = false;
             if (!doCompress && size > 0)
             {
                 try
                 {
                     var st = await GetStatAsync(remotePath, ct);
                     if (st is { Exists: true, IsDirectory: false } && st.Size > 0 && st.Size < size)
+                    {
                         resumeOffset = st.Size;
+                        usedResumeUpload = true;
+                    }
                 }
                 catch { }
             }
@@ -362,6 +413,13 @@ public sealed class LanClient : IDisposable
                 if (!string.Equals(sha256Local, serverSha256, StringComparison.OrdinalIgnoreCase))
                     throw new Exception($"Checksum SHA256 no coincide para {Path.GetFileName(localPath)}");
             }
+            else if (usedResumeUpload)
+            {
+                var st = await GetStatAsync(remotePath, ct);
+                if (st is not { Exists: true, IsDirectory: false } || st.Size != size)
+                    throw new IOException("La verificación final de reanudación no coincide en tamaño remoto.");
+            }
+            ReportTransferSample(size, transferSw.Elapsed);
         }
         catch (OperationCanceledException ex)
         {
@@ -548,6 +606,162 @@ public sealed class LanClient : IDisposable
         => callerToken.IsCancellationRequested
             ? ex
             : new IOException("svc.connCut", ex);
+
+    private static bool IsLikelyIncompressible(FileStream fs, long size)
+    {
+        const int sampleSize = 64 * 1024;
+        if (size < sampleSize) return false;
+
+        var originalPos = fs.Position;
+        try
+        {
+            fs.Seek(0, SeekOrigin.Begin);
+            var sample = new byte[sampleSize];
+            var read = fs.Read(sample, 0, sample.Length);
+            if (read <= 0) return false;
+
+            int distinct = 0;
+            var seen = new bool[256];
+            for (int i = 0; i < read; i++)
+            {
+                var b = sample[i];
+                if (!seen[b])
+                {
+                    seen[b] = true;
+                    distinct++;
+                }
+            }
+
+            using var ms = new MemoryStream();
+            using (var ds = new DeflateStream(ms, CompressionLevel.Fastest, leaveOpen: true))
+                ds.Write(sample, 0, read);
+            var compressed = ms.Length;
+            var ratio = compressed <= 0 ? 1.0 : compressed / (double)read;
+
+            var highEntropy = distinct >= 240;
+            return highEntropy && ratio >= 0.97;
+        }
+        finally
+        {
+            fs.Seek(originalPos, SeekOrigin.Begin);
+        }
+    }
+
+    private void ReportTransferSample(long bytes, TimeSpan elapsed)
+    {
+        if (bytes <= 0 || elapsed <= TimeSpan.Zero) return;
+        var mbps = (bytes / 1024d / 1024d) / Math.Max(0.001, elapsed.TotalSeconds);
+        var target = mbps switch
+        {
+            >= 80 => 2 * 1024 * 1024,
+            >= 30 => 1024 * 1024,
+            >= 8 => 512 * 1024,
+            _ => 256 * 1024
+        };
+        Interlocked.Exchange(ref _adaptiveSocketBufferSize, target);
+        _peerSocketBuffers[_host] = target;
+        TryPersistPeerProfiles();
+    }
+
+    private static int GetAdaptiveSocketBufferForHost(string host)
+    {
+        EnsurePeerProfilesLoaded();
+        if (!string.IsNullOrWhiteSpace(host) && _peerSocketBuffers.TryGetValue(host, out var hostValue))
+            return hostValue;
+        return Volatile.Read(ref _adaptiveSocketBufferSize);
+    }
+
+    private static void EnsurePeerProfilesLoaded()
+    {
+        if (Interlocked.CompareExchange(ref _peerProfilesLoaded, 1, 0) != 0) return;
+        try
+        {
+            if (!File.Exists(PeerProfilesPath)) return;
+            var doc = JsonSerializer.Deserialize<Dictionary<string, int>>(File.ReadAllText(PeerProfilesPath));
+            if (doc == null) return;
+            foreach (var kv in doc)
+            {
+                var clamped = Math.Clamp(kv.Value, 128 * 1024, 2 * 1024 * 1024);
+                _peerSocketBuffers[kv.Key] = clamped;
+            }
+        }
+        catch (Exception ex)
+        {
+            Debug.WriteLine($"[LanCopy] peer profile load error: {ex.Message}");
+        }
+    }
+
+    private static void TryPersistPeerProfiles()
+    {
+        try
+        {
+            var now = Environment.TickCount64;
+            if (now - Interlocked.Read(ref _lastPeerProfilesPersistTick) < 5000) return;
+            Interlocked.Exchange(ref _lastPeerProfilesPersistTick, now);
+            var snapshot = _peerSocketBuffers.ToDictionary(kv => kv.Key, kv => kv.Value, StringComparer.OrdinalIgnoreCase);
+            Directory.CreateDirectory(Path.GetDirectoryName(PeerProfilesPath)!);
+            File.WriteAllText(PeerProfilesPath, JsonSerializer.Serialize(snapshot));
+        }
+        catch (Exception ex)
+        {
+            Debug.WriteLine($"[LanCopy] peer profile save error: {ex.Message}");
+        }
+    }
+
+    private static string GetResumeMapPath(string partPath) => partPath + ".lcmap";
+
+    private static long LoadVerifiedOffsetFromMap(string mapPath, long currentPartLength)
+    {
+        if (currentPartLength <= 0 || !File.Exists(mapPath)) return currentPartLength;
+        try
+        {
+            var map = JsonSerializer.Deserialize<DownloadResumeMap>(File.ReadAllText(mapPath));
+            if (map is null) return currentPartLength;
+            if (map.BlockSize <= 0 || map.VerifiedBytes < 0) return currentPartLength;
+            return Math.Min(currentPartLength, map.VerifiedBytes);
+        }
+        catch (IOException ex)
+        {
+            Debug.WriteLine($"[LanCopy] resume-map read IO error: {ex.Message}");
+            return currentPartLength;
+        }
+        catch (UnauthorizedAccessException ex)
+        {
+            Debug.WriteLine($"[LanCopy] resume-map read access error: {ex.Message}");
+            return currentPartLength;
+        }
+        catch (JsonException ex)
+        {
+            Debug.WriteLine($"[LanCopy] resume-map parse error: {ex.Message}");
+            return currentPartLength;
+        }
+    }
+
+    private static void SaveResumeMap(string mapPath, long totalSize, long verifiedBytes)
+    {
+        try
+        {
+            var safeVerified = Math.Max(0, Math.Min(totalSize, verifiedBytes));
+            var json = JsonSerializer.Serialize(new DownloadResumeMap(
+                BlockSize: ResumeMapBlockSize,
+                VerifiedBytes: safeVerified,
+                TotalSize: totalSize,
+                UpdatedUtc: DateTime.UtcNow));
+            File.WriteAllText(mapPath, json);
+        }
+        catch (IOException ex) { Debug.WriteLine($"[LanCopy] resume-map write IO error: {ex.Message}"); }
+        catch (UnauthorizedAccessException ex) { Debug.WriteLine($"[LanCopy] resume-map write access error: {ex.Message}"); }
+    }
+
+    private static void TryDeleteResumeMap(string mapPath)
+    {
+        try
+        {
+            if (File.Exists(mapPath)) File.Delete(mapPath);
+        }
+        catch (IOException ex) { Debug.WriteLine($"[LanCopy] resume-map delete IO error: {ex.Message}"); }
+        catch (UnauthorizedAccessException ex) { Debug.WriteLine($"[LanCopy] resume-map delete access error: {ex.Message}"); }
+    }
 
     private static void EnsureOk(JsonElement resp)
     {

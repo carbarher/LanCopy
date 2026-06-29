@@ -36,7 +36,7 @@ public static class StartupSettings
                 RestrictShareRoot: ReadBool(doc, "restrictShareRoot", defaultValue: true),
                 ReadOnly: ReadBool(doc, "readOnly", defaultValue: false),
                 RequireApproval: ReadBool(doc, "requireApproval", defaultValue: false),
-                SafeModeNoRemoteDelete: ReadBool(doc, "safeModeNoRemoteDelete", defaultValue: false));
+                SafeModeNoRemoteDelete: ReadBool(doc, "safeModeNoRemoteDelete", defaultValue: true));
         }
         catch
         {
@@ -45,7 +45,7 @@ public static class StartupSettings
     }
 
     public static ServerConfig Defaults()
-        => new(DefaultLocalPort, null, true, true, false, false, false);
+        => new(DefaultLocalPort, null, true, true, false, false, true);
 
     private static int ReadLocalPort(JsonElement doc)
     {

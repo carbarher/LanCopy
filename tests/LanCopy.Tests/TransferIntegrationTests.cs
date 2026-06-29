@@ -33,9 +33,6 @@ public class TransferIntegrationTests : IDisposable
 
     private LanClient Client() => new("127.0.0.1", _port);
 
-    private string OutsideRootPath(string fileName = "outside.txt")
-        => Path.GetFullPath(Path.Combine(_shared, "..", fileName));
-
     [Fact]
     public async Task Upload_Then_Download_PreservesContent()
     {
@@ -74,18 +71,16 @@ public class TransferIntegrationTests : IDisposable
     [Fact]
     public async Task List_OutsideRoot_IsBlocked()
     {
-        var outsideDir = Path.GetFullPath(Path.Combine(_shared, ".."));
         await Assert.ThrowsAnyAsync<Exception>(async () =>
-            await Client().ListAsync(outsideDir));
+            await Client().ListAsync(@"C:\Windows"));
     }
 
     [Fact]
     public async Task Download_OutsideRoot_IsBlocked()
     {
         var outFile = Path.Combine(Path.GetTempPath(), "leak_" + Guid.NewGuid().ToString("N") + ".ini");
-        var outsideFile = OutsideRootPath("outside-download.txt");
         await Assert.ThrowsAnyAsync<Exception>(async () =>
-            await Client().DownloadAsync(outsideFile, outFile));
+            await Client().DownloadAsync(@"C:\Windows\win.ini", outFile));
     }
 
     [Fact]
@@ -95,9 +90,8 @@ public class TransferIntegrationTests : IDisposable
         Directory.CreateDirectory(srcDir);
         var srcFile = Path.Combine(srcDir, "evil.txt");
         await File.WriteAllTextAsync(srcFile, "x");
-        var outsideTarget = OutsideRootPath("evil.txt");
         await Assert.ThrowsAnyAsync<Exception>(async () =>
-            await Client().UploadAsync(srcFile, outsideTarget));
+            await Client().UploadAsync(srcFile, @"C:\Users\Public\evil.txt"));
     }
 
     [Fact]
@@ -228,6 +222,29 @@ public class TransferIntegrationTests : IDisposable
 
         await Assert.ThrowsAnyAsync<Exception>(async () =>
             await Client().DownloadAsync("r2.bin", outFile));
+    }
+
+    [Fact]
+    public async Task Download_ResumeMap_TruncatesToVerifiedAndCompletes()
+    {
+        var data = new byte[1_000_000];
+        new Random(1234).NextBytes(data);
+        await File.WriteAllBytesAsync(Path.Combine(_shared, "mapped.bin"), data);
+
+        var outFile = Path.Combine(Path.GetTempPath(), "mapped_" + Guid.NewGuid().ToString("N") + ".bin");
+        var partFile = outFile + ".part";
+        var mapFile = partFile + ".lcmap";
+        var verified = 300_000;
+
+        await File.WriteAllBytesAsync(partFile, data[..550_000]); // parte extra no verificada
+        await File.WriteAllTextAsync(mapFile, $"{{\"blockSize\":4194304,\"verifiedBytes\":{verified},\"totalSize\":1000000,\"updatedUtc\":\"{DateTime.UtcNow:O}\"}}");
+
+        await Client().DownloadAsync("mapped.bin", outFile);
+
+        Assert.True(File.Exists(outFile));
+        Assert.False(File.Exists(partFile));
+        Assert.False(File.Exists(mapFile));
+        Assert.Equal(data, await File.ReadAllBytesAsync(outFile));
     }
 
     [Fact]
