@@ -9,7 +9,7 @@ permissions:
 
 jobs:
   bump-and-tag:
-    if: github.actor != 'github-actions[bot]' && !contains(github.event.head_commit.message, 'chore(release): bump version')
+    if: ${{ github.actor != 'github-actions[bot]' && !contains(github.event.head_commit.message, 'chore(release): bump version') }}
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
