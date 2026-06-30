@@ -84,7 +84,7 @@
                 <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Spacing="6" Margin="0,2,0,2">
                     <TextBlock Text="{l:Tr label.manual}" Foreground="{DynamicResource TextFg}" VerticalAlignment="Center" FontSize="12"/>
                     <TextBox x:Name="txtRemoteIp" Width="120" Background="{DynamicResource InputBg}" Foreground="{DynamicResource InputFg}"
-                             PlaceholderText="{l:Tr remoteip.placeholder}" Padding="6,4" BorderBrush="{DynamicResource BorderFg}" KeyDown="TxtRemoteIp_KeyDown"
+                             PlaceholderText="{l:Tr remoteip.placeholder}" Padding="6,4" BorderBrush="{DynamicResource BorderFg}" KeyDown="TxtRemoteIp_KeyDown" TextChanged="TxtRemoteIp_TextChanged"
                              ToolTip.Tip="{l:Tr tip.remoteip}"/>
                     <TextBlock Text=":" Foreground="{DynamicResource TextFg}" VerticalAlignment="Center"/>
                     <TextBox x:Name="txtRemotePort" Text="8742" Width="58" Background="{DynamicResource InputBg}"

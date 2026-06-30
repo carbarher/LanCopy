@@ -248,7 +248,8 @@ public partial class MainWindow : Window
         {
             _welcomeShown = true;
             try { await new WelcomeDialog().ShowDialog(this); } catch { }
-            try { SaveSettings(this.FindControl<TextBox>("txtRemoteIp")?.Text ?? "", this.FindControl<TextBox>("txtRemotePort")?.Text ?? "8742"); } catch { }
+            // Guardar desde las variables de estado, no desde la UI
+            try { SaveSettings(_lastConnectedIp, _lastConnectedPort); } catch { }
         }
 
         // No bloquear primer render: refresco local y cola pendiente arrancan sin bloquear Opened.

@@ -90,6 +90,19 @@ public partial class MainWindow
         if (e.Key == Key.Enter) await TryConnectAsync();
     }
 
+    private void TxtRemoteIp_TextChanged(object? sender, TextChangedEventArgs e)
+    {
+        // Auto-save IP whenever user types in the field
+        var ip = (sender as TextBox)?.Text?.Trim() ?? "";
+        var port = this.FindControl<TextBox>("txtRemotePort")?.Text?.Trim() ?? "8742";
+        if (!string.IsNullOrEmpty(ip) && ip != _lastConnectedIp)
+        {
+            _lastConnectedIp = ip;
+            _lastConnectedPort = port;
+            SaveSettings(ip, port);
+        }
+    }
+
     private void CopyIp_Click(object? sender, RoutedEventArgs e)
     {
         var full = this.FindControl<TextBlock>("txtMyIp")!.Text ?? "";
