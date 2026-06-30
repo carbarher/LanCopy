@@ -204,11 +204,16 @@ public partial class MainWindow
                 _profiles = JsonSerializer.Deserialize<List<ConnectionProfile>>(profilesEl.GetRawText()) ?? new();
                 await Dispatcher.UIThread.InvokeAsync(() =>
                 {
-                    // Al iniciar, selecciona el perfil que coincida con la conexion restaurada.
-                    var curIp = this.FindControl<TextBox>("txtRemoteIp")?.Text?.Trim() ?? "";
-                    var curPort = this.FindControl<TextBox>("txtRemotePort")?.Text?.Trim() ?? "";
-                    var match = _profiles.FirstOrDefault(p => p.Ip == curIp && p.Port == curPort)?.Name;
-                    RefreshProfilesCombo(match);
+                    // Primero restaura IP/puerto, LUEGO busca el perfil que coincida
+                    var ipTxt = this.FindControl<TextBox>("txtRemoteIp");
+                    var portTxt = this.FindControl<TextBox>("txtRemotePort");
+                    if (ipTxt != null && portTxt != null)
+                    {
+                        var curIp = ipTxt.Text?.Trim() ?? "";
+                        var curPort = portTxt.Text?.Trim() ?? "";
+                        var match = _profiles.FirstOrDefault(p => p.Ip == curIp && p.Port == curPort)?.Name;
+                        RefreshProfilesCombo(match);
+                    }
                 });
             }
         }
