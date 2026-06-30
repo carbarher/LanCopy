@@ -182,8 +182,10 @@ public partial class MainWindow
                 _advancedMode = advEl.GetBoolean();
                 await Dispatcher.UIThread.InvokeAsync(ApplyUiMode);
             }
-            if (doc.TryGetProperty("welcomeShown", out var welEl))
-                _welcomeShown = welEl.GetBoolean();
+            // NOTE: welcomeShown is already loaded in Constructor from StartupSettings.Load
+            // Do NOT override it here, to preserve the logic in OnWindowOpened
+            // if (doc.TryGetProperty("welcomeShown", out var welEl))
+            //     _welcomeShown = welEl.GetBoolean();
             // Tema UI
             if (doc.TryGetProperty("theme", out var themeEl))
             {
