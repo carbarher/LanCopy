@@ -92,6 +92,9 @@ public partial class MainWindow
 
     private void TxtRemoteIp_TextChanged(object? sender, TextChangedEventArgs e)
     {
+        // Skip auto-save during settings restoration
+        if (Volatile.Read(ref _isLoadingSettings) == 1) return;
+        
         // Auto-save IP whenever user types in the field
         var ip = (sender as TextBox)?.Text?.Trim() ?? "";
         var port = this.FindControl<TextBox>("txtRemotePort")?.Text?.Trim() ?? "8742";

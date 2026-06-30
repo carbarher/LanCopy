@@ -49,6 +49,7 @@ public partial class MainWindow : Window
     private string _remotePath = "";
     private string _lastConnectedIp = "";      // Track last IP for profile persistence
     private string _lastConnectedPort = "8742"; // Track last port for profile persistence
+    private int _isLoadingSettings;            // Flag to skip auto-save during restoration
 
     private int _isUploading;    // Feature 2: bidireccional — separado de downloading
     private int _isDownloading;
