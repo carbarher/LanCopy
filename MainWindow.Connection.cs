@@ -147,6 +147,8 @@ public partial class MainWindow
         {
             SetStatus(L["st.invalidPort"]); return;
         }
+        _lastConnectedIp = ip;
+        _lastConnectedPort = portStr;
         SaveSettings(ip, portStr);
         await ConnectAsync(ip, port);
     }

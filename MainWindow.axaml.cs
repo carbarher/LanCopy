@@ -47,6 +47,8 @@ public partial class MainWindow : Window
 
     private string _localPath = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
     private string _remotePath = "";
+    private string _lastConnectedIp = "";      // Track last IP for profile persistence
+    private string _lastConnectedPort = "8742"; // Track last port for profile persistence
 
     private int _isUploading;    // Feature 2: bidireccional — separado de downloading
     private int _isDownloading;
@@ -225,7 +227,7 @@ public partial class MainWindow : Window
             Interlocked.Exchange(ref _isWindowClosing, 1);
             StopConnectionWatchdog();
             StopBrowserAutoRefresh();
-            try { SaveSettings(this.FindControl<TextBox>("txtRemoteIp")?.Text ?? "", this.FindControl<TextBox>("txtRemotePort")?.Text ?? "8742"); } catch { }
+            try { SaveSettings(_lastConnectedIp, _lastConnectedPort); } catch { }
             _server.Stop(); _discovery?.Stop(); _client?.Dispose(); _clientDown?.Dispose(); _uploadCts.Cancel(); _downloadCts.Cancel();
             try { if (_tray != null) _tray.IsVisible = false; } catch { }
         };

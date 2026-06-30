@@ -86,8 +86,18 @@ public partial class MainWindow
             var doc = JsonSerializer.Deserialize<JsonElement>(json);
             await Dispatcher.UIThread.InvokeAsync(() =>
             {
-                if (doc.TryGetProperty("remoteIp", out var ip)) this.FindControl<TextBox>("txtRemoteIp")!.Text = ip.GetString();
-                if (doc.TryGetProperty("remotePort", out var port)) this.FindControl<TextBox>("txtRemotePort")!.Text = port.GetString();
+                if (doc.TryGetProperty("remoteIp", out var ip))
+                {
+                    var ipStr = ip.GetString();
+                    this.FindControl<TextBox>("txtRemoteIp")!.Text = ipStr;
+                    _lastConnectedIp = ipStr ?? "";
+                }
+                if (doc.TryGetProperty("remotePort", out var port))
+                {
+                    var portStr = port.GetString();
+                    this.FindControl<TextBox>("txtRemotePort")!.Text = portStr;
+                    _lastConnectedPort = portStr ?? "8742";
+                }
                 if (doc.TryGetProperty("localPort", out var lport))
                 {
                     var lpTxt = lport.ValueKind == JsonValueKind.Number ? lport.GetInt32().ToString() : lport.GetString();
