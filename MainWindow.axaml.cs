@@ -181,6 +181,7 @@ public partial class MainWindow : Window
             _restrictShareRoot = startup.RestrictShareRoot;
             _readOnly = startup.ReadOnly;
             _safeModeNoRemoteDelete = startup.SafeModeNoRemoteDelete;
+            _welcomeShown = startup.WelcomeShown;
             _requireApproval = startup.RequireApproval;
             _server.TlsEnabled = _tlsEnabled;
             _server.RestrictToShareRoot = _restrictShareRoot;

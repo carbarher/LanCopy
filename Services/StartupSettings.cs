@@ -19,7 +19,8 @@ public static class StartupSettings
         bool RestrictShareRoot,
         bool ReadOnly,
         bool RequireApproval,
-        bool SafeModeNoRemoteDelete);
+        bool SafeModeNoRemoteDelete,
+        bool WelcomeShown);
 
     public static ServerConfig Load(string settingsPath)
     {
@@ -36,7 +37,8 @@ public static class StartupSettings
                 RestrictShareRoot: ReadBool(doc, "restrictShareRoot", defaultValue: true),
                 ReadOnly: ReadBool(doc, "readOnly", defaultValue: false),
                 RequireApproval: ReadBool(doc, "requireApproval", defaultValue: false),
-                SafeModeNoRemoteDelete: ReadBool(doc, "safeModeNoRemoteDelete", defaultValue: true));
+                SafeModeNoRemoteDelete: ReadBool(doc, "safeModeNoRemoteDelete", defaultValue: true),
+                WelcomeShown: ReadBool(doc, "welcomeShown", defaultValue: false));
         }
         catch
         {
@@ -45,7 +47,7 @@ public static class StartupSettings
     }
 
     public static ServerConfig Defaults()
-        => new(DefaultLocalPort, null, true, true, false, false, true);
+        => new(DefaultLocalPort, null, true, true, false, false, true, false);
 
     private static int ReadLocalPort(JsonElement doc)
     {
