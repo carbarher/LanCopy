@@ -50,6 +50,20 @@ public sealed class FileServer
     private readonly System.Collections.Concurrent.ConcurrentDictionary<string, int> _perIp = new();
     public int MaxPerIp { get; set; } = 8;
 
+    // FEAT-005: IP whitelist/blacklist for access control
+    private readonly System.Collections.Concurrent.ConcurrentBag<string> _ipWhitelist = new();
+    private readonly System.Collections.Concurrent.ConcurrentBag<string> _ipBlacklist = new();
+    public IReadOnlyList<string> IpWhitelist => _ipWhitelist.ToList().AsReadOnly();
+    public IReadOnlyList<string> IpBlacklist => _ipBlacklist.ToList().AsReadOnly();
+    public bool UseIpWhitelist { get; set; } = false;
+
+    public void AddIpWhitelist(string ip) => _ipWhitelist.Add(ip);
+    public void AddIpBlacklist(string ip) => _ipBlacklist.Add(ip);
+    public void ClearIpWhitelist() { _ipWhitelist.Clear(); }
+    public void ClearIpBlacklist() { _ipBlacklist.Clear(); }
+    public void RemoveIpWhitelist(string ip) => throw new NotImplementedException("Use ClearIpWhitelist and re-add");
+    public void RemoveIpBlacklist(string ip) => throw new NotImplementedException("Use ClearIpBlacklist and re-add");
+
     private readonly System.Collections.Concurrent.ConcurrentDictionary<string, (int fails, long untilTick)> _pinFails = new();
     private readonly System.Collections.Concurrent.ConcurrentDictionary<string, (long windowStartTick, int count)> _cmdRate = new();
     public int CommandRateWindowSeconds { get; set; } = 10;
@@ -335,6 +349,20 @@ public sealed class FileServer
 
     private async Task HandleAsync(TcpClient tcp, string ip, CancellationToken ct)
     {
+        // FEAT-005: Check IP whitelist/blacklist
+        if (UseIpWhitelist && _ipWhitelist.Count > 0 && !IpInList(_ipWhitelist, ip))
+        {
+            try { tcp.Dispose(); } catch { }
+            Log.Warn("server", "ip-whitelist-rejected", new { ip });
+            return;
+        }
+        if (_ipBlacklist.Count > 0 && IpInList(_ipBlacklist, ip))
+        {
+            try { tcp.Dispose(); } catch { }
+            Log.Warn("server", "ip-blacklist-rejected", new { ip });
+            return;
+        }
+
         using (tcp)
         {
             ConfigureClientSocket(tcp);
@@ -1188,5 +1216,58 @@ public sealed class FileServer
             return ((IPEndPoint)s.LocalEndPoint!).Address.ToString();
         }
         catch { return "localhost"; }
+    }
+
+    private static bool IpInList(System.Collections.Concurrent.ConcurrentBag<string> list, string ip)
+    {
+        foreach (var item in list)
+        {
+            if (item.Equals(ip, StringComparison.OrdinalIgnoreCase))
+                return true;
+            // Support CIDR notation (e.g., 192.168.1.0/24)
+            if (item.Contains('/'))
+            {
+                if (IpInCidr(ip, item))
+                    return true;
+            }
+        }
+        return false;
+    }
+
+    private static bool IpInCidr(string ip, string cidr)
+    {
+        try
+        {
+            var parts = cidr.Split('/');
+            if (parts.Length != 2) return false;
+            if (!IPAddress.TryParse(parts[0], out var network) || !int.TryParse(parts[1], out var maskBits))
+                return false;
+            if (!IPAddress.TryParse(ip, out var address))
+                return false;
+            if (network.AddressFamily != address.AddressFamily)
+                return false;
+
+            var netBytes = network.GetAddressBytes();
+            var addrBytes = address.GetAddressBytes();
+            var maskBytes = new byte[netBytes.Length];
+            int fullBytes = maskBits / 8;
+            int remainder = maskBits % 8;
+
+            for (int i = 0; i < fullBytes; i++)
+                maskBytes[i] = 0xFF;
+            if (remainder > 0)
+                maskBytes[fullBytes] = (byte)(0xFF << (8 - remainder));
+
+            for (int i = 0; i < netBytes.Length; i++)
+            {
+                if ((netBytes[i] & maskBytes[i]) != (addrBytes[i] & maskBytes[i]))
+                    return false;
+            }
+            return true;
+        }
+        catch
+        {
+            return false;
+        }
     }
 }

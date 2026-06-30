@@ -2,24 +2,40 @@ using System.Net;
 
 namespace LanCopy.Services;
 
-// Codigo corto de emparejamiento: empaqueta una IPv4 + puerto en 6 bytes y los codifica en
-// Base32 (Crockford, sin caracteres ambiguos) -> ~10 caracteres faciles de dictar por voz.
+// Codigo corto de emparejamiento: empaqueta una IPv4/IPv6 + puerto en bytes y los codifica en
+// Base32 (Crockford, sin caracteres ambiguos) -> ~10 caracteres (IPv4) o ~25 caracteres (IPv6).
+// FEAT-004: Extended to support IPv6 addresses while maintaining IPv4 backward compatibility.
 public static class PairingCode
 {
     private const string Alphabet = "0123456789ABCDEFGHJKMNPQRSTVWXYZ";
+    private const byte IPv6_Version = 6; // Only used as a marker for IPv6
 
     public static string Encode(string ip, int port)
     {
         if (!IPAddress.TryParse(ip, out var addr))
             throw new ArgumentException("IP invalida", nameof(ip));
-        var ipBytes = addr.MapToIPv4().GetAddressBytes();
         if (port is < 0 or > 65535)
             throw new ArgumentOutOfRangeException(nameof(port));
 
-        var data = new byte[6];
-        Array.Copy(ipBytes, data, 4);
-        data[4] = (byte)(port >> 8);
-        data[5] = (byte)(port & 0xFF);
+        byte[] data;
+        if (addr.AddressFamily == System.Net.Sockets.AddressFamily.InterNetworkV6)
+        {
+            // IPv6: 1 byte version marker (6) + 16 bytes IPv6 + 2 bytes port = 19 bytes
+            data = new byte[19];
+            data[0] = IPv6_Version;
+            Array.Copy(addr.GetAddressBytes(), 0, data, 1, 16);
+            data[17] = (byte)(port >> 8);
+            data[18] = (byte)(port & 0xFF);
+        }
+        else
+        {
+            // IPv4: 4 bytes IPv4 + 2 bytes port = 6 bytes (unchanged for backward compatibility)
+            var ipBytes = addr.MapToIPv4().GetAddressBytes();
+            data = new byte[6];
+            Array.Copy(ipBytes, data, 4);
+            data[4] = (byte)(port >> 8);
+            data[5] = (byte)(port & 0xFF);
+        }
 
         var code = ToBase32(data);
         return code.Length > 4 ? code[..4] + "-" + code[4..] : code;
@@ -30,13 +46,28 @@ public static class PairingCode
         ip = ""; port = 0;
         if (string.IsNullOrWhiteSpace(code)) return false;
         var clean = Normalize(code);
-        if (clean.Length != 10) return false;
+        
         try
         {
             var data = FromBase32(clean);
-            if (data.Length < 6) return false;
-            ip = new IPAddress(new[] { data[0], data[1], data[2], data[3] }).ToString();
-            port = (data[4] << 8) | data[5];
+            
+            // Check if this is IPv6 (data[0] == 6 and length is 19)
+            if (data.Length >= 19 && data[0] == IPv6_Version)
+            {
+                ip = new IPAddress(data[1..17]).ToString();
+                port = (data[17] << 8) | data[18];
+            }
+            // Otherwise treat as IPv4 (original format)
+            else if (data.Length >= 6)
+            {
+                ip = new IPAddress(new[] { data[0], data[1], data[2], data[3] }).ToString();
+                port = (data[4] << 8) | data[5];
+            }
+            else
+            {
+                return false;
+            }
+            
             return port is >= 0 and <= 65535;
         }
         catch { return false; }
