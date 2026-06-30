@@ -34,6 +34,19 @@ internal static class SafeFileOps
             return false;
         }
 
+        // SEC-004: Validate path length (max 4096 chars) and no null bytes
+        if (path.Length > 4096)
+        {
+            reason = "svc.pathTooLong";
+            return false;
+        }
+
+        if (path.Contains('\0'))
+        {
+            reason = "svc.pathInvalidChars";
+            return false;
+        }
+
         try { normalized = Normalize(path); }
         catch
         {

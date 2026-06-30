@@ -63,9 +63,10 @@ internal static class Protocol
             if (buf[0] == (byte)'\n') break;
             if (buf[0] != (byte)'\r')
             {
-                bytes.Add(buf[0]);
-                if (bytes.Count > MaxLineBytes)
+                // BUG-005: Check buffer size before adding to prevent overflow
+                if (bytes.Count >= MaxLineBytes)
                     throw new InvalidDataException("svc.lineTooLong");
+                bytes.Add(buf[0]);
             }
         }
         return Encoding.UTF8.GetString(bytes.ToArray());

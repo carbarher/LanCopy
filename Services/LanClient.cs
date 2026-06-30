@@ -227,6 +227,7 @@ public sealed class LanClient : IDisposable
                 await using var ds = new DeflateStream(compBuf, CompressionMode.Decompress);
                 var dbuf = new byte[Protocol.SelectCopyBufferSize(size)];
                 int dr; long written = 0;
+                // SEC-005: ZIP bomb protection - reject if decompressed size exceeds declared size
                 while ((dr = await ds.ReadAsync(dbuf, ioCt)) > 0)
                 {
                     written += dr;
