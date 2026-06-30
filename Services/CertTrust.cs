@@ -70,23 +70,23 @@ public static class CertTrust
     {
         if (cert == null) return false;
         
-        // SEC-002: Validate that certificate is self-signed and CN matches hostname
-        var x509 = cert as X509Certificate2 ?? new X509Certificate2(cert);
-        bool isSelfSigned = x509.Subject == x509.Issuer;
-        bool cnMatches = x509.Subject.Contains("CN=" + host, StringComparison.OrdinalIgnoreCase);
-        
-        // Allow pinning only if self-signed with matching CN, or if it's already pinned
         var fp = Fingerprint(cert);
         lock (_lock)
         {
             var map = Load();
+            // Si ya está pinneado, verifica que el fingerprint coincida
             if (map.TryGetValue(host, out var known))
                 return string.Equals(known, fp, StringComparison.OrdinalIgnoreCase);
             
-            // For new certificates, enforce self-signed + CN match
-            if (!isSelfSigned || !cnMatches)
-                return false;
+            // SEC-002: Primera conexión - aceptar cualquier certificado auto-firmado (TOFU)
+            // En conexiones posteriores, verificaremos que el fingerprint coincida.
+            // El CN puede no coincidir si te conectas por IP en lugar de hostname.
+            var x509 = cert as X509Certificate2 ?? new X509Certificate2(cert);
+            bool isSelfSigned = x509.Subject == x509.Issuer;
+            if (!isSelfSigned)
+                return false; // Rechazar certificados de CA (no auto-firmados)
             
+            // Pinea el certificado para futuras conexiones
             map[host] = fp;
             Save(map);
             return true;
