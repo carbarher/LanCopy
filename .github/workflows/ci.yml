@@ -27,6 +27,16 @@ jobs:
         run: dotnet build LanCopy.csproj -c Release --no-restore
       - name: Test
         run: dotnet test tests/LanCopy.Tests/LanCopy.Tests.csproj -c Release
+      - name: Copy to Desktop (Windows)
+        if: runner.os == 'Windows' && github.event_name == 'push'
+        shell: pwsh
+        run: |
+          $exePath = "bin\Release\net9.0\win-x64\publish\LanCopy.exe"
+          $desktopPath = "$env:USERPROFILE\Desktop\LanCopy.exe"
+          if (Test-Path $exePath) {
+            Copy-Item -Path $exePath -Destination $desktopPath -Force
+            Write-Host "✅ LanCopy.exe copied to Desktop"
+          }
 
   performance-guard:
     name: Performance Guard (ubuntu)
