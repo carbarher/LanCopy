@@ -84,9 +84,9 @@ public partial class MainWindow
             if (!File.Exists(SettingsPath)) return;
             var json = await File.ReadAllTextAsync(SettingsPath);
             var doc = JsonSerializer.Deserialize<JsonElement>(json);
-            Interlocked.Exchange(ref _isLoadingSettings, 1);
             await Dispatcher.UIThread.InvokeAsync(() =>
             {
+                Interlocked.Exchange(ref _isLoadingSettings, 1);
                 if (doc.TryGetProperty("remoteIp", out var ip))
                 {
                     var ipStr = ip.GetString();
@@ -104,8 +104,8 @@ public partial class MainWindow
                     var lpTxt = lport.ValueKind == JsonValueKind.Number ? lport.GetInt32().ToString() : lport.GetString();
                     var lpc = this.FindControl<TextBox>("txtLocalPort"); if (lpc != null && !string.IsNullOrEmpty(lpTxt)) lpc.Text = lpTxt;
                 }
+                Interlocked.Exchange(ref _isLoadingSettings, 0);
             });
-            Interlocked.Exchange(ref _isLoadingSettings, 0);
             if (doc.TryGetProperty("pin", out var pin))
             {
                 var pinVal = pin.GetString() ?? "";
