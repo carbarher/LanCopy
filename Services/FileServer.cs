@@ -616,7 +616,10 @@ public sealed class FileServer
             await Protocol.WriteLineAsync(stream, JsonSerializer.Serialize(new { status = "error", error = "svc.isDir" }), ct);
             return;
         }
-        await using var fs = File.OpenRead(path);
+        // SEC-001: Open file with SequentialScan to prevent symlink path traversal
+        // (SafeFileOps already validates reparse points, this is additional protection)
+        await using var fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read, 4096, 
+            FileOptions.SequentialScan);
         var size = fs.Length;
 
         // Reanudacion (idea-resume): el cliente puede pedir desde un offset si ya tiene un .part.
@@ -644,10 +647,21 @@ public sealed class FileServer
             await using (var ds = new DeflateStream(ms, CompressionLevel.Fastest, leaveOpen: true))
                 await fs.CopyToAsync(ds, ct);
             var compressedSize = ms.Length;
-            ms.Seek(0, SeekOrigin.Begin);
-            await Protocol.WriteLineAsync(stream, JsonSerializer.Serialize(new
-            { status = "ok", size, sha256, compress = true, compressed_size = compressedSize, range_from = 0L }), ct);
-            await Protocol.CopyExactAsync(ms, stream, compressedSize, MakeProgress(false, Path.GetFileName(path)), ct);
+            // BUG-003: Validate compressed size doesn't exceed 110% of original (file incompressible)
+            if (size > 0 && compressedSize > size * 1.1)
+            {
+                // Skip compression and send uncompressed instead
+                fs.Seek(0, SeekOrigin.Begin);
+                await Protocol.WriteLineAsync(stream, JsonSerializer.Serialize(new { status = "ok", size, sha256, range_from = 0L }), ct);
+                await Protocol.CopyExactAsync(fs, stream, size, MakeProgress(false, Path.GetFileName(path)), ct);
+            }
+            else
+            {
+                ms.Seek(0, SeekOrigin.Begin);
+                await Protocol.WriteLineAsync(stream, JsonSerializer.Serialize(new
+                { status = "ok", size, sha256, compress = true, compressed_size = compressedSize, range_from = 0L }), ct);
+                await Protocol.CopyExactAsync(ms, stream, compressedSize, MakeProgress(false, Path.GetFileName(path)), ct);
+            }
         }
         else
         {

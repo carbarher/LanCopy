@@ -69,12 +69,24 @@ public static class CertTrust
     public static bool ValidateOrPin(string host, X509Certificate? cert)
     {
         if (cert == null) return false;
+        
+        // SEC-002: Validate that certificate is self-signed and CN matches hostname
+        var x509 = cert as X509Certificate2 ?? new X509Certificate2(cert);
+        bool isSelfSigned = x509.Subject == x509.Issuer;
+        bool cnMatches = x509.Subject.Contains("CN=" + host, StringComparison.OrdinalIgnoreCase);
+        
+        // Allow pinning only if self-signed with matching CN, or if it's already pinned
         var fp = Fingerprint(cert);
         lock (_lock)
         {
             var map = Load();
             if (map.TryGetValue(host, out var known))
                 return string.Equals(known, fp, StringComparison.OrdinalIgnoreCase);
+            
+            // For new certificates, enforce self-signed + CN match
+            if (!isSelfSigned || !cnMatches)
+                return false;
+            
             map[host] = fp;
             Save(map);
             return true;

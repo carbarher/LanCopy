@@ -135,9 +135,21 @@ public sealed class LanClient : IDisposable
         var partPath = localPath + ".part";
         var resumeMapPath = GetResumeMapPath(partPath);
         long resume = 0;
-        if (File.Exists(partPath))
+        // BUG-002: Use atomic FileStream.Open() instead of File.Exists() to avoid race condition
+        try
         {
-            try { resume = new FileInfo(partPath).Length; } catch { resume = 0; }
+            using (var fsCheck = new FileStream(partPath, FileMode.Open, FileAccess.Read))
+            {
+                resume = fsCheck.Length;
+            }
+        }
+        catch (FileNotFoundException)
+        {
+            resume = 0;
+        }
+        catch
+        {
+            resume = 0;
         }
         var mappedResume = LoadVerifiedOffsetFromMap(resumeMapPath, resume);
         if (mappedResume >= 0 && mappedResume < resume)
