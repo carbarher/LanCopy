@@ -6,6 +6,7 @@ on:
 
 permissions:
   contents: write
+  actions: write
 
 jobs:
   bump-and-tag:
@@ -109,3 +110,7 @@ jobs:
           git tag -a "v${{ steps.bump.outputs.version }}" -m "LanCopy v${{ steps.bump.outputs.version }}"
           git push origin "HEAD:${{ github.ref_name }}"
           git push origin "v${{ steps.bump.outputs.version }}"
+      - name: Trigger CI release build for new tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run ci.yml --ref "v${{ steps.bump.outputs.version }}"
