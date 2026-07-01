@@ -98,10 +98,10 @@ jobs:
           dotnet publish LanCopy.csproj -c Release -r ${{ matrix.rid }}
           --self-contained true -p:PublishSingleFile=true
           -o publish/${{ matrix.rid }}
-      - name: Package Windows (zip)
+      - name: Package Windows (single-file exe)
         if: startsWith(matrix.rid, 'win-')
         shell: pwsh
-        run: Compress-Archive -Path publish/${{ matrix.rid }}/* -DestinationPath LanCopy-${{ matrix.rid }}.zip
+        run: Copy-Item "publish/${{ matrix.rid }}/LanCopy.exe" "LanCopy-${{ matrix.rid }}.exe" -Force
       - name: Package Linux (tar.gz)
         if: startsWith(matrix.rid, 'linux-')
         run: |
@@ -122,6 +122,7 @@ jobs:
         with:
           name: LanCopy-${{ matrix.rid }}
           path: |
+            LanCopy-${{ matrix.rid }}.exe
             LanCopy-${{ matrix.rid }}.zip
             LanCopy-${{ matrix.rid }}.tar.gz
           if-no-files-found: ignore
@@ -138,9 +139,11 @@ jobs:
         with:
           name: LanCopy-win-x64
           path: dl/win-x64
-      - name: Unzip
+      - name: Prepare installer input
         shell: pwsh
-        run: Expand-Archive -Path dl/win-x64/LanCopy-win-x64.zip -DestinationPath publish/win-x64 -Force
+        run: |
+          New-Item -ItemType Directory -Path publish/win-x64 -Force | Out-Null
+          Copy-Item dl/win-x64/LanCopy-win-x64.exe publish/win-x64/LanCopy.exe -Force
       # --- Firma de codigo (opcional) ---
       # Secretos: WINDOWS_CERT_BASE64 + WINDOWS_CERT_PASSWORD -> descomentar:
       # - name: Sign executable
