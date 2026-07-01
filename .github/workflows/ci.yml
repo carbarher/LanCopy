@@ -140,7 +140,7 @@ jobs:
           cp packaging/linux/lancopy.desktop "$appdir/usr/share/applications/lancopy.desktop"
           cp Assets/app.png "$appdir/usr/share/icons/hicolor/512x512/apps/lancopy.png"
           cp packaging/linux/lancopy.desktop "$appdir/LanCopy.desktop"
-          cp Assets/app.png "$appdir/LanCopy.png"
+          cp Assets/app.png "$appdir/lancopy.png"
           cat > "$appdir/AppRun" <<'EOF'
           #!/usr/bin/env bash
           exec "$APPDIR/usr/bin/lancopy" "$@"
