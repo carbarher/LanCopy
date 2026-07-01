@@ -48,14 +48,16 @@ upload/download validation and hash integrity.
 
 ### Supported platforms
 
-| Platform            | RID          | Notes                          |
-|---------------------|--------------|--------------------------------|
-| Windows x64         | win-x64      | .exe + installer               |
-| Windows ARM64       | win-arm64    | Surface Pro X, Snapdragon PCs  |
-| Linux x64           | linux-x64    | .tar.gz with .desktop entry    |
-| Linux ARM64         | linux-arm64  | Raspberry Pi 4/5, etc.         |
-| macOS Apple Silicon | osx-arm64    | M1/M2/M3 Macs                  |
-| macOS Intel         | osx-x64      | Intel Macs                     |
+| Platform            | RID          | Download                                                                 | Notes                          |
+|---------------------|--------------|--------------------------------------------------------------------------|--------------------------------|
+| Windows x64         | win-x64      | [ZIP](https://github.com/carbarher/LanCopy/releases/latest/download/LanCopy-win-x64.zip) | .exe + installer               |
+| Windows ARM64       | win-arm64    | [ZIP](https://github.com/carbarher/LanCopy/releases/latest/download/LanCopy-win-arm64.zip) | Surface Pro X, Snapdragon PCs  |
+| Linux x64           | linux-x64    | [tar.gz](https://github.com/carbarher/LanCopy/releases/latest/download/LanCopy-linux-x64.tar.gz) | .tar.gz with .desktop entry    |
+| Linux ARM64         | linux-arm64  | [tar.gz](https://github.com/carbarher/LanCopy/releases/latest/download/LanCopy-linux-arm64.tar.gz) | Raspberry Pi 4/5, etc.         |
+| macOS Apple Silicon | osx-arm64    | [ZIP](https://github.com/carbarher/LanCopy/releases/latest/download/LanCopy-osx-arm64.zip) | M1/M2/M3 Macs                  |
+| macOS Intel         | osx-x64      | [ZIP](https://github.com/carbarher/LanCopy/releases/latest/download/LanCopy-osx-x64.zip) | Intel Macs                     |
+
+Windows installer (`.exe`): [Releases page](https://github.com/carbarher/LanCopy/releases/latest)
 
 ### Publish (single self-contained executable)
 ```powershell
@@ -119,14 +121,16 @@ dotnet test tests/LanCopy.Tests/LanCopy.Tests.csproj
 
 ### Plataformas soportadas
 
-| Plataforma           | RID          | Notas                          |
-|----------------------|--------------|--------------------------------|
-| Windows x64          | win-x64      | .exe + instalador              |
-| Windows ARM64        | win-arm64    | Surface Pro X, PCs Snapdragon  |
-| Linux x64            | linux-x64    | .tar.gz con entrada .desktop   |
-| Linux ARM64          | linux-arm64  | Raspberry Pi 4/5, etc.         |
-| macOS Apple Silicon  | osx-arm64    | Macs M1/M2/M3                  |
-| macOS Intel          | osx-x64      | Macs Intel                     |
+| Plataforma           | RID          | Descarga                                                                 | Notas                          |
+|----------------------|--------------|--------------------------------------------------------------------------|--------------------------------|
+| Windows x64          | win-x64      | [ZIP](https://github.com/carbarher/LanCopy/releases/latest/download/LanCopy-win-x64.zip) | .exe + instalador              |
+| Windows ARM64        | win-arm64    | [ZIP](https://github.com/carbarher/LanCopy/releases/latest/download/LanCopy-win-arm64.zip) | Surface Pro X, PCs Snapdragon  |
+| Linux x64            | linux-x64    | [tar.gz](https://github.com/carbarher/LanCopy/releases/latest/download/LanCopy-linux-x64.tar.gz) | .tar.gz con entrada .desktop   |
+| Linux ARM64          | linux-arm64  | [tar.gz](https://github.com/carbarher/LanCopy/releases/latest/download/LanCopy-linux-arm64.tar.gz) | Raspberry Pi 4/5, etc.         |
+| macOS Apple Silicon  | osx-arm64    | [ZIP](https://github.com/carbarher/LanCopy/releases/latest/download/LanCopy-osx-arm64.zip) | Macs M1/M2/M3                  |
+| macOS Intel          | osx-x64      | [ZIP](https://github.com/carbarher/LanCopy/releases/latest/download/LanCopy-osx-x64.zip) | Macs Intel                     |
+
+Instalador de Windows (`.exe`): [página de releases](https://github.com/carbarher/LanCopy/releases/latest)
 
 ### Publicar (ejecutable único autocontenido)
 ```powershell
@@ -160,5 +164,4 @@ git push origin v1.0.0
 
 ### Licencia
 [MIT](LICENSE) © 2026 carbar. Libre para usar, modificar y distribuir.
-
 
