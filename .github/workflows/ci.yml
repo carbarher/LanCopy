@@ -8,8 +8,8 @@ on:
     branches: [ main, master ]
 
 jobs:
-  build-test:
-    name: Build & Test (${{ matrix.os }})
+  build:
+    name: Build (${{ matrix.os }})
     strategy:
       fail-fast: false
       matrix:
@@ -25,6 +25,18 @@ jobs:
         run: dotnet restore LanCopy.csproj
       - name: Build
         run: dotnet build LanCopy.csproj -c Release --no-restore
+
+  test:
+    name: Tests (windows-latest)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '9.0.x'
+      - name: Restore
+        run: dotnet restore LanCopy.csproj
       - name: Test
         run: dotnet test tests/LanCopy.Tests/LanCopy.Tests.csproj -c Release
 
@@ -56,7 +68,7 @@ jobs:
 
   publish:
     name: Publish ${{ matrix.rid }}
-    needs: [build-test, performance-guard]
+    needs: [build, test, performance-guard]
     if: startsWith(github.ref, 'refs/tags/v')
     strategy:
       fail-fast: false
@@ -143,10 +155,10 @@ jobs:
       - name: Install Inno Setup
         run: choco install innosetup --no-progress -y
       - name: Build installer
-        run: >
-          & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
-          /DMyAppVersion=${{ github.ref_name }}
-          installer\LanCopy.iss
+        shell: pwsh
+        run: |
+          $version = "${{ github.ref_name }}".TrimStart('v')
+          & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" /DMyAppVersion=$version installer\LanCopy.iss
       - name: Upload installer
         uses: actions/upload-artifact@v4
         with:

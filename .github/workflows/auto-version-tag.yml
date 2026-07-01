@@ -68,8 +68,22 @@ jobs:
               minor, patch = minor + 1, 0
           else:
               patch += 1
-
+ 
           new_version = f"{major}.{minor}.{patch}"
+
+          def tag_exists(tag_name: str) -> bool:
+              result = subprocess.run(
+                  ["git", "rev-parse", "-q", "--verify", f"refs/tags/{tag_name}"],
+                  stdout=subprocess.DEVNULL,
+                  stderr=subprocess.DEVNULL,
+                  text=True,
+              )
+              return result.returncode == 0
+
+          # Ensure generated version tag does not already exist.
+          while tag_exists(f"v{new_version}"):
+              patch += 1
+              new_version = f"{major}.{minor}.{patch}"
 
           text = re.sub(r"<Version>\d+\.\d+\.\d+</Version>", f"<Version>{new_version}</Version>", text)
           text = re.sub(r"<AssemblyVersion>\d+\.\d+\.\d+</AssemblyVersion>", f"<AssemblyVersion>{new_version}</AssemblyVersion>", text)
