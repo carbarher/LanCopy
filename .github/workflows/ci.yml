@@ -105,18 +105,57 @@ jobs:
       - name: Package Linux (tar.gz)
         if: startsWith(matrix.rid, 'linux-')
         run: |
+          set -euo pipefail
           chmod +x publish/${{ matrix.rid }}/LanCopy
           mkdir -p pkg/usr/bin pkg/usr/share/applications pkg/usr/share/icons/hicolor/512x512/apps
           cp publish/${{ matrix.rid }}/LanCopy pkg/usr/bin/lancopy
           cp packaging/linux/lancopy.desktop pkg/usr/share/applications/lancopy.desktop
           cp Assets/app.png pkg/usr/share/icons/hicolor/512x512/apps/lancopy.png
           tar -C pkg -czf LanCopy-${{ matrix.rid }}.tar.gz .
+          arch="amd64"
+          if [ "${{ matrix.rid }}" = "linux-arm64" ]; then arch="arm64"; fi
+          mkdir -p deb/DEBIAN deb/usr/bin deb/usr/share/applications deb/usr/share/icons/hicolor/512x512/apps
+          cp publish/${{ matrix.rid }}/LanCopy deb/usr/bin/lancopy
+          cp packaging/linux/lancopy.desktop deb/usr/share/applications/lancopy.desktop
+          cp Assets/app.png deb/usr/share/icons/hicolor/512x512/apps/lancopy.png
+          cat > deb/DEBIAN/control <<EOF
+          Package: lancopy
+          Version: ${GITHUB_REF_NAME#v}
+          Section: net
+          Priority: optional
+          Architecture: $arch
+          Maintainer: carbar
+          Description: LAN file transfer app (encrypted, cross-platform)
+          EOF
+          dpkg-deb --build deb "LanCopy-${{ matrix.rid }}.deb"
+      - name: Package Linux AppImage (x64)
+        if: matrix.rid == 'linux-x64'
+        run: |
+          set -euo pipefail
+          appdir="LanCopy.AppDir"
+          rm -rf "$appdir"
+          mkdir -p "$appdir/usr/bin" "$appdir/usr/share/applications" "$appdir/usr/share/icons/hicolor/512x512/apps"
+          cp publish/linux-x64/LanCopy "$appdir/usr/bin/lancopy"
+          cp packaging/linux/lancopy.desktop "$appdir/usr/share/applications/lancopy.desktop"
+          cp Assets/app.png "$appdir/usr/share/icons/hicolor/512x512/apps/lancopy.png"
+          cp packaging/linux/lancopy.desktop "$appdir/LanCopy.desktop"
+          cp Assets/app.png "$appdir/LanCopy.png"
+          cat > "$appdir/AppRun" <<'EOF'
+          #!/usr/bin/env bash
+          exec "$APPDIR/usr/bin/lancopy" "$@"
+          EOF
+          chmod +x "$appdir/AppRun" "$appdir/usr/bin/lancopy"
+          curl -fsSL -o appimagetool.AppImage https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-x86_64.AppImage
+          chmod +x appimagetool.AppImage
+          ARCH=x86_64 VERSION="${GITHUB_REF_NAME#v}" ./appimagetool.AppImage --appimage-extract-and-run "$appdir" "LanCopy-linux-x64.AppImage"
       - name: Package macOS (.app)
         if: startsWith(matrix.rid, 'osx-')
         run: |
+          set -euo pipefail
           chmod +x packaging/macos/make-app.sh
           packaging/macos/make-app.sh publish/${{ matrix.rid }}/LanCopy "${{ github.ref_name }}"
           ditto -c -k --sequesterRsrc --keepParent LanCopy.app LanCopy-${{ matrix.rid }}.zip
+          hdiutil create -volname "LanCopy" -srcfolder LanCopy.app -ov -format UDZO LanCopy-${{ matrix.rid }}.dmg
       - name: Upload
         uses: actions/upload-artifact@v4
         with:
@@ -124,7 +163,10 @@ jobs:
           path: |
             LanCopy-${{ matrix.rid }}.exe
             LanCopy-${{ matrix.rid }}.zip
+            LanCopy-${{ matrix.rid }}.dmg
             LanCopy-${{ matrix.rid }}.tar.gz
+            LanCopy-${{ matrix.rid }}.deb
+            LanCopy-${{ matrix.rid }}.AppImage
           if-no-files-found: ignore
 
   installer:
