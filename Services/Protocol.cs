@@ -17,6 +17,9 @@ internal static class Protocol
     internal const int MinBufferSize = 64 * 1024;
     internal const int MaxBufferSize = 2 * 1024 * 1024;
 
+    // Q1: _readLock estático eliminado — serializaba TODAS las conexiones bajo un lock global.
+    // TCP garantiza ordering por stream; ReadLineSlowAsync es per-stream y no necesita sincronización externa.
+
     // Limite anti-DoS: una linea de cabecera JSON nunca deberia superar esto.
     // Sin tope, un peer malicioso podria enviar bytes sin '\n' hasta agotar la memoria (OOM).
     internal const int MaxLineBytes = 1024 * 1024; // 1 MB
@@ -54,6 +57,7 @@ internal static class Protocol
 
     private static async Task<string> ReadLineSlowAsync(Stream stream, CancellationToken ct)
     {
+        // Q1: sin lock global — cada stream es independiente, TCP garantiza ordering
         var bytes = new List<byte>(256);
         var buf = new byte[1];
         while (true)
@@ -63,10 +67,9 @@ internal static class Protocol
             if (buf[0] == (byte)'\n') break;
             if (buf[0] != (byte)'\r')
             {
-                // BUG-005: Check buffer size before adding to prevent overflow
-                if (bytes.Count >= MaxLineBytes)
-                    throw new InvalidDataException("svc.lineTooLong");
                 bytes.Add(buf[0]);
+                if (bytes.Count > MaxLineBytes)
+                    throw new InvalidDataException("svc.lineTooLong");
             }
         }
         return Encoding.UTF8.GetString(bytes.ToArray());
@@ -74,9 +77,17 @@ internal static class Protocol
 
     internal static async Task WriteLineAsync(Stream stream, string json, CancellationToken ct)
     {
-        var bytes = Encoding.UTF8.GetBytes(json + "\n");
-        await stream.WriteAsync(bytes, ct);
-        await stream.FlushAsync(ct);
+        // P6: evitar aloc por línea — ArrayPool<byte> + sin concatenar "\n"
+        var byteCount = Encoding.UTF8.GetByteCount(json) + 1; // +1 para '\n'
+        var rented = ArrayPool<byte>.Shared.Rent(byteCount);
+        try
+        {
+            var written = Encoding.UTF8.GetBytes(json, rented);
+            rented[written] = (byte)'\n';
+            await stream.WriteAsync(rented.AsMemory(0, written + 1), ct);
+            await stream.FlushAsync(ct);
+        }
+        finally { ArrayPool<byte>.Shared.Return(rented); }
     }
 
     internal static async Task CopyExactAsync(
@@ -183,22 +194,39 @@ internal sealed class BufferedLineStream(Stream inner, bool leaveOpen = true, in
 
     public async Task<string> ReadLineAsync(CancellationToken ct)
     {
-        var acc = new List<byte>(256);
-        while (true)
+        // P2: usar ArrayPool para el acumulador — evita List<byte> + ToArray() (2 alocs por línea)
+        var rent = System.Buffers.ArrayPool<byte>.Shared.Rent(512);
+        var used = 0;
+        try
         {
-            if (_pos >= _len && !await FillAsync(ct))
-                throw new EndOfStreamException("svc.connClosed");
-            while (_pos < _len)
+            while (true)
             {
-                var b = _buf[_pos++];
-                if (b == (byte)'\n') return Encoding.UTF8.GetString(acc.ToArray());
-                if (b != (byte)'\r')
+                if (_pos >= _len && !await FillAsync(ct))
+                    throw new EndOfStreamException("svc.connClosed");
+                while (_pos < _len)
                 {
-                    acc.Add(b);
-                    if (acc.Count > Protocol.MaxLineBytes)
-                        throw new InvalidDataException("svc.lineTooLong");
+                    var b = _buf[_pos++];
+                    if (b == (byte)'\n')
+                        return Encoding.UTF8.GetString(rent, 0, used);
+                    if (b != (byte)'\r')
+                    {
+                        if (used >= Protocol.MaxLineBytes)
+                            throw new InvalidDataException("svc.lineTooLong");
+                        if (used >= rent.Length)
+                        {
+                            var bigger = System.Buffers.ArrayPool<byte>.Shared.Rent(rent.Length * 2);
+                            rent.AsSpan(0, used).CopyTo(bigger);
+                            System.Buffers.ArrayPool<byte>.Shared.Return(rent);
+                            rent = bigger;
+                        }
+                        rent[used++] = b;
+                    }
                 }
             }
+        }
+        finally
+        {
+            System.Buffers.ArrayPool<byte>.Shared.Return(rent);
         }
     }
 

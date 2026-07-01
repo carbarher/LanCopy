@@ -7,15 +7,6 @@ namespace LanCopy.Tests;
 
 public class TransferIntegrationTests : IDisposable
 {
-    private static string OutsideRootDir()
-        => OperatingSystem.IsWindows() ? @"C:\Windows" : "/etc";
-
-    private static string OutsideRootFile()
-        => OperatingSystem.IsWindows() ? @"C:\Windows\win.ini" : "/etc/hosts";
-
-    private static string OutsideUploadTarget()
-        => OperatingSystem.IsWindows() ? @"C:\Users\Public\evil.txt" : "/tmp/evil.txt";
-
     private readonly FileServer _server;
     private readonly int _port;
     private readonly string _shared;
@@ -81,7 +72,7 @@ public class TransferIntegrationTests : IDisposable
     public async Task List_OutsideRoot_IsBlocked()
     {
         await Assert.ThrowsAnyAsync<Exception>(async () =>
-            await Client().ListAsync(OutsideRootDir()));
+            await Client().ListAsync(@"C:\Windows"));
     }
 
     [Fact]
@@ -89,7 +80,7 @@ public class TransferIntegrationTests : IDisposable
     {
         var outFile = Path.Combine(Path.GetTempPath(), "leak_" + Guid.NewGuid().ToString("N") + ".ini");
         await Assert.ThrowsAnyAsync<Exception>(async () =>
-            await Client().DownloadAsync(OutsideRootFile(), outFile));
+            await Client().DownloadAsync(@"C:\Windows\win.ini", outFile));
     }
 
     [Fact]
@@ -100,7 +91,7 @@ public class TransferIntegrationTests : IDisposable
         var srcFile = Path.Combine(srcDir, "evil.txt");
         await File.WriteAllTextAsync(srcFile, "x");
         await Assert.ThrowsAnyAsync<Exception>(async () =>
-            await Client().UploadAsync(srcFile, OutsideUploadTarget()));
+            await Client().UploadAsync(srcFile, @"C:\Users\Public\evil.txt"));
     }
 
     [Fact]

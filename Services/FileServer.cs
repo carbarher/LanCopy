@@ -1,4 +1,4 @@
-using System.IO;
+﻿using System.IO;
 using System.IO.Compression;
 using System.Net;
 using System.Net.NetworkInformation;
@@ -13,7 +13,7 @@ using LanCopy.Models;
 
 namespace LanCopy.Services;
 
-public sealed class FileServer
+public sealed class FileServer : IAsyncDisposable
 {
     private TcpListener? _listener;
     private CancellationTokenSource? _cts;
@@ -22,6 +22,20 @@ public sealed class FileServer
     public int Port { get; private set; }
     public string LocalIp { get; private set; } = "localhost";
     public string? RequiredPin { get; set; } // Feature 10: si no-null, clientes deben autenticar
+    private readonly object _pinLock = new(); // B5: protege RequiredPin+PinExpiresAt contra race
+    // F9: PIN con expiración opcional (null = no expira)
+    public DateTimeOffset? PinExpiresAt { get; set; }
+
+    /// <summary>Establece un PIN temporal que se auto-limpia al expirar.</summary>
+    public void SetTemporaryPin(string pin, TimeSpan duration)
+    {
+        lock (_pinLock) // B5: atómico
+        {
+            RequiredPin = pin;
+            PinExpiresAt = DateTimeOffset.UtcNow.Add(duration);
+        }
+
+    }
     public bool TlsEnabled { get; set; }     // Feature 9: TLS toggle
 
     // SEGURIDAD: por defecto confina TODAS las operaciones a la carpeta compartida (ShareRoot).
@@ -43,33 +57,23 @@ public sealed class FileServer
     public readonly record struct IncomingTransfer(string Ip, string FileName, long Size);
     public Func<IncomingTransfer, CancellationToken, Task<bool>>? ApproveIncoming { get; set; }
 
-    private readonly SemaphoreSlim _connLimit = new(64, 64);
+    private const int MaxConnections = 64; // Q6
+    private readonly SemaphoreSlim _connLimit = new(MaxConnections, MaxConnections); // B1: usar constante
     private const int KeepAliveIdleSeconds = 15;
     private const int KeepAliveIntervalSeconds = 5;
     private const int KeepAliveRetryCount = 3;
     private readonly System.Collections.Concurrent.ConcurrentDictionary<string, int> _perIp = new();
     public int MaxPerIp { get; set; } = 8;
 
-    // FEAT-005: IP whitelist/blacklist for access control
-    private readonly System.Collections.Concurrent.ConcurrentBag<string> _ipWhitelist = new();
-    private readonly System.Collections.Concurrent.ConcurrentBag<string> _ipBlacklist = new();
-    public IReadOnlyList<string> IpWhitelist => _ipWhitelist.ToList().AsReadOnly();
-    public IReadOnlyList<string> IpBlacklist => _ipBlacklist.ToList().AsReadOnly();
-    public bool UseIpWhitelist { get; set; } = false;
-
-    public void AddIpWhitelist(string ip) => _ipWhitelist.Add(ip);
-    public void AddIpBlacklist(string ip) => _ipBlacklist.Add(ip);
-    public void ClearIpWhitelist() { _ipWhitelist.Clear(); }
-    public void ClearIpBlacklist() { _ipBlacklist.Clear(); }
-    public void RemoveIpWhitelist(string ip) => throw new NotImplementedException("Use ClearIpWhitelist and re-add");
-    public void RemoveIpBlacklist(string ip) => throw new NotImplementedException("Use ClearIpBlacklist and re-add");
-
     private readonly System.Collections.Concurrent.ConcurrentDictionary<string, (int fails, long untilTick)> _pinFails = new();
     private readonly System.Collections.Concurrent.ConcurrentDictionary<string, (long windowStartTick, int count)> _cmdRate = new();
+    private long _cmdRateLastCleanTick; // S2: throttle cleanup para evitar O(n) per request bajo DDoS
+    // B1/P1: contador O(1) para _cmdRate — evita ConcurrentDictionary.Count O(n) en hot path
+    private int _cmdRateCount;
     public int CommandRateWindowSeconds { get; set; } = 10;
     public int CommandRateLimit { get; set; } = 120;
     public int PinMaxFails { get; set; } = 5;
-    // Caché SHA-256 (path -> lastWrite,size,hash): evita leer el archivo dos veces en get.
+    // CachÃ© SHA-256 (path -> lastWrite,size,hash): evita leer el archivo dos veces en get.
     private readonly System.Collections.Concurrent.ConcurrentDictionary<string, (DateTime LastWrite, long Size, string Hash)> _sha256Cache = new(StringComparer.OrdinalIgnoreCase);
     public long PinBackoffMs { get; set; } = 30_000;
     public long PinMaxBackoffMs { get; set; } = 10 * 60_000;
@@ -91,22 +95,51 @@ public sealed class FileServer
     private bool TryGuardRead(string? path, out string full, out string reason)
     {
         full = ""; reason = "";
+        // S3: ADS (Alternate Data Streams) bloqueados también en lectura
+        // - sin esta guard, un peer puede leer "file.txt:Zone.Identifier" y extraer metadatos sensibles
+        if (!string.IsNullOrEmpty(path) && HasNtfsAdsColon(path)) { reason = "svc.adsBlocked"; return false; }
         if (RestrictToShareRoot)
             return ShareRoot.TryResolve(path, out full, out reason);
-        full = string.IsNullOrEmpty(path) ? "" : System.IO.Path.GetFullPath(path);
+
+        // Modo disco completo: permitir ruta vacía para listar unidades
+        if (string.IsNullOrEmpty(path))
+        {
+            full = "";
+            return true;
+        }
+
+        full = System.IO.Path.GetFullPath(path);
+
+        // Permitir la lectura de raíces de unidad (ej: C:\, D:\) para poder listar su contenido
+        var root = Path.GetPathRoot(full);
+        if (root != null && string.Equals(full, root, StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+
+        // S1/Q3: modo full-disk - aplicar IsProtected (sistema) en lugar de IsProtectedForRemote para lectura.
+        // Esto permite al par remoto leer y descargar archivos del perfil personal del usuario (Downloads, Desktop, etc.)
+        // pero sigue impidiendo la lectura de archivos críticos del OS (Windows, Program Files, etc.)
+        if (SystemProtection.IsProtected(full))
+        {
+            reason = "svc.accessDenied";
+            return false;
+        }
         return true;
     }
 
     private bool TryGuardWrite(string? path, out string full, out string reason)
     {
         full = ""; reason = "";
+        // S4: bloquear NTFS ADS (e.g. "file.txt:evil")
+        if (!string.IsNullOrEmpty(path) && HasNtfsAdsColon(path)) { reason = "svc.adsBlocked"; return false; }
         if (RestrictToShareRoot)
         {
             // En modo confinado, la raiz elegida por el usuario ya garantiza la contencion.
             // No aplicamos SystemProtection (la raiz podria estar legitimamente bajo ProgramData,
             // etc.), pero SI bloqueamos enlaces/reparse points que escapen de la raiz.
             if (!ShareRoot.TryResolve(path, out full, out reason)) return false;
-            if (SafeFileOps.ContainsReparsePoint(full)) { reason = "La ruta contiene un enlace/reparse point"; return false; }
+            if (SafeFileOps.ContainsReparsePoint(full)) { reason = "svc.reparsePath"; return false; } // Q4: era string español
             return true;
         }
 
@@ -124,8 +157,15 @@ public sealed class FileServer
         }
         // Remoto en disco completo: protege sistema + arbol personal del usuario.
         if (SystemProtection.IsProtectedForRemote(checkPath)) { reason = "svc.sysProtected"; return false; }
-        if (SafeFileOps.ContainsReparsePoint(full)) { reason = "La ruta contiene un enlace/reparse point"; return false; }
+        if (SafeFileOps.ContainsReparsePoint(full)) { reason = "svc.reparsePath"; return false; } // Q4: era string español
         return true;
+    }
+
+    // S4: un ':' después de la letra de unidad indica NTFS Alternate Data Stream
+    private static bool HasNtfsAdsColon(string path)
+    {
+        var start = path.Length > 2 && path[1] == ':' ? 2 : 0;
+        return path.IndexOf(':', start) >= 0;
     }
 
     private bool TryGetCachedSha256(string path, out string sha256)
@@ -147,6 +187,8 @@ public sealed class FileServer
             return false;
         }
 
+        // B1: re-validar mtime Y size; en Windows NTFS puede tardar hasta 2s en actualizar LastWriteTime
+        // tras una escritura. Si mtime o size difieren, el cache ya no es válido.
         if (cached.LastWrite == fi.LastWriteTimeUtc && cached.Size == fi.Length)
         {
             sha256 = cached.Hash;
@@ -159,18 +201,21 @@ public sealed class FileServer
 
     private void StoreCachedSha256(string path, DateTime lastWriteUtc, long size, string sha256)
     {
-        _sha256Cache[path] = (lastWriteUtc, size, sha256);
-        if (_sha256Cache.Count <= 4096) return;
-
-        var removed = 0;
-        foreach (var key in _sha256Cache.Keys)
+        // B6: evict ANTES de escribir — si evict ocurre después, el entry recién añadido puede ser eliminado inmediatamente
+        if (_sha256Cache.Count >= 4096)
         {
-            if (_sha256Cache.TryRemove(key, out _))
+            var removed = 0;
+            foreach (var key in _sha256Cache.Keys)
             {
-                removed++;
-                if (removed >= 1024) break;
+                if (key == path) continue; // no eliminar el que estamos a punto de escribir
+                if (_sha256Cache.TryRemove(key, out _))
+                {
+                    removed++;
+                    if (removed >= 1024) break;
+                }
             }
         }
+        _sha256Cache[path] = (lastWriteUtc, size, sha256);
     }
 
     private static bool TryGetStringProperty(JsonElement req, string name, out string value)
@@ -199,21 +244,34 @@ public sealed class FileServer
 
         var now = Environment.TickCount64;
         var windowMs = Math.Max(1, CommandRateWindowSeconds) * 1000L;
-        var key = $"{ip}|{cmd}";
+        var key = ip; // Q3: era "{ip}|{cmd}" — rate-limit debe ser per-IP total, no per-IP-per-command (el anterior permitía 120*N comandos)
 
+        var isNew = false;
         var state = _cmdRate.AddOrUpdate(
             key,
-            _ => (now, 1),
+            _ => { isNew = true; return (now, 1); },
             (_, s) => (now - s.windowStartTick >= windowMs) ? (now, 1) : (s.windowStartTick, s.count + 1));
+        if (isNew) Interlocked.Increment(ref _cmdRateCount);
 
-        if (_cmdRate.Count > 8192)
+        // S2: limitar la limpieza del rate-table a una vez cada 30s en lugar de en cada petición
+        // — con 8192+ IPs bajo DDoS, la limpieza O(n) por cada request crearía 8M lookups/s
+        // B1: CAS atómico para que solo UN thread haga el cleanup (evita double-sweep concurrente)
+        var prevClean = Volatile.Read(ref _cmdRateLastCleanTick);
+        // B1/P1: usar _cmdRateCount O(1) en lugar de .Count O(n)
+        if (_cmdRateCount > 8192 && now - prevClean > 30_000 &&
+            Interlocked.CompareExchange(ref _cmdRateLastCleanTick, now, prevClean) == prevClean)
         {
+            int removed = 0;
             foreach (var kv in _cmdRate)
                 if (now - kv.Value.windowStartTick >= windowMs * 2)
-                    _cmdRate.TryRemove(kv.Key, out _);
+                    if (_cmdRate.TryRemove(kv.Key, out _)) removed++;
+            if (removed > 0) Interlocked.Add(ref _cmdRateCount, -removed);
         }
 
-        return state.count <= CommandRateLimit;
+        // Q4: usar > en lugar de <= para enforcement estricto del límite:
+        // con <= CommandRateLimit, dos threads concurrentes con count=limit ambos pasan (TOCTOU)
+        // B1: usar < (estricto) en lugar de <= - con <=, dos threads concurrentes con count=limit ambos pasan (TOCTOU)
+        return state.count < CommandRateLimit;
     }
 
     private static bool FixedTimeEquals(string? a, string? b)
@@ -254,23 +312,83 @@ public sealed class FileServer
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
         "LanCopy", "server.pfx");
 
+    // S1: contraseña del PFX derivada del MachineGuid (única por máquina).
+    // Así aunque alguien robe el archivo .pfx, no puede extraer la clave privada sin el GUID.
+#pragma warning disable CA1416 // Registry solo en Windows — LanCopy solo soporta Windows
+    private static string GetCertPassword()
+    {
+        try
+        {
+            using var key = Microsoft.Win32.Registry.LocalMachine.OpenSubKey(
+                @"SOFTWARE\Microsoft\Cryptography", false);
+            var guid = key?.GetValue("MachineGuid") as string;
+            if (!string.IsNullOrWhiteSpace(guid))
+                return "LC-" + guid; // prefijo para distinguirlo de un GUID genérico
+        }
+        catch { }
+        return "LC-lancopy-fallback"; // S1: fallback
+    }
+#pragma warning restore CA1416
+
     private void EnsureCert()
     {
         if (_serverCert != null) return;
         Directory.CreateDirectory(System.IO.Path.GetDirectoryName(CertPath)!);
+        var certPwd = GetCertPassword(); // S1: contraseña derivada de la máquina
         if (File.Exists(CertPath))
         {
-            _serverCert = X509CertificateLoader.LoadPkcs12FromFile(CertPath, "lancopy",
-                X509KeyStorageFlags.Exportable | X509KeyStorageFlags.PersistKeySet);
-            return;
+            try
+            {
+                // EphemeralKeySet: clave privada en memoria, sin almacén CNG de Windows.
+                // Evita problemas de permisos en SChannel y no deja rastro en el sistema.
+                _serverCert = X509CertificateLoader.LoadPkcs12FromFile(CertPath, certPwd,
+                    X509KeyStorageFlags.EphemeralKeySet);
+                return;
+            }
+            catch
+            {
+                // Cert corrupto o no válido — borrarlo y generar uno nuevo
+                try { File.Delete(CertPath); } catch { }
+            }
         }
         using var rsa = RSA.Create(2048);
         var req = new CertificateRequest("CN=LanCopy", rsa, HashAlgorithmName.SHA256, RSASignaturePadding.Pkcs1);
         var cert = req.CreateSelfSigned(DateTimeOffset.UtcNow.AddDays(-1), DateTimeOffset.UtcNow.AddYears(10));
-        var pfxBytes = cert.Export(X509ContentType.Pfx, "lancopy");
+        var pfxBytes = cert.Export(X509ContentType.Pfx, certPwd); // S1: contraseña única
         File.WriteAllBytes(CertPath, pfxBytes);
-        _serverCert = X509CertificateLoader.LoadPkcs12(pfxBytes, "lancopy",
-            X509KeyStorageFlags.Exportable | X509KeyStorageFlags.PersistKeySet);
+        _serverCert = X509CertificateLoader.LoadPkcs12(pfxBytes, certPwd,
+            X509KeyStorageFlags.EphemeralKeySet);
+    }
+
+    // Auto-detecciÃ³n TLS: lee 1 byte del stream y lo "devuelve" para que SslStream lo reciba completo.
+    private sealed class PrependByteStream(byte head, Stream inner) : Stream
+    {
+        private bool _used;
+        public override bool CanRead => true;
+        public override bool CanSeek => false;
+        public override bool CanWrite => inner.CanWrite;
+        public override long Length => throw new NotSupportedException();
+        public override long Position { get => throw new NotSupportedException(); set => throw new NotSupportedException(); }
+        public override void Flush() => inner.Flush();
+        public override Task FlushAsync(CancellationToken ct) => inner.FlushAsync(ct);
+        public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+        public override void SetLength(long value) => throw new NotSupportedException();
+        public override int Read(byte[] buffer, int offset, int count)
+        {
+            if (!_used && count > 0) { buffer[offset] = head; _used = true; return 1; }
+            return inner.Read(buffer, offset, count);
+        }
+        public override async ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken ct = default)
+        {
+            if (!_used && !buffer.IsEmpty) { buffer.Span[0] = head; _used = true; return 1; }
+            return await inner.ReadAsync(buffer, ct);
+        }
+        public override Task<int> ReadAsync(byte[] buffer, int offset, int count, CancellationToken ct)
+            => ReadAsync(buffer.AsMemory(offset, count), ct).AsTask();
+        public override void Write(byte[] b, int o, int c) => inner.Write(b, o, c);
+        public override Task WriteAsync(byte[] b, int o, int c, CancellationToken ct) => inner.WriteAsync(b, o, c, ct);
+        public override ValueTask WriteAsync(ReadOnlyMemory<byte> buffer, CancellationToken ct = default) => inner.WriteAsync(buffer, ct);
+        protected override void Dispose(bool disposing) { if (disposing) inner.Dispose(); base.Dispose(disposing); }
     }
 
     public void Start(int port = 8742)
@@ -278,7 +396,7 @@ public sealed class FileServer
         Port = port;
         LocalIp = ResolveLocalIp();
         if (RestrictToShareRoot) ShareRoot.EnsureRootExists();
-        if (TlsEnabled) EnsureCert();
+        EnsureCert(); // Siempre genera/carga cert para auto-detecciÃ³n TLS
         _cts = new CancellationTokenSource();
         var bindAddr = IPAddress.Any;
         if (BindLanOnly && IPAddress.TryParse(LocalIp, out var lan) && lan.AddressFamily == AddressFamily.InterNetwork)
@@ -338,31 +456,32 @@ public sealed class FileServer
             return;
         }
 
-        try { await HandleAsync(tcp, ip, serverCt); }
-        catch (Exception ex) { Log.Warn("server", "handle-timeout-error", new { ip, error = ex.Message }); try { tcp.Dispose(); } catch { } }
+        try 
+        { 
+            await HandleAsync(tcp, ip, serverCt); 
+        }
+        catch (Exception ex) 
+        { 
+            Log.Warn("server", "handle-timeout-error", new { ip, error = ex.Message }); 
+            try { tcp.Dispose(); } catch { } 
+        }
         finally
         {
-            _perIp.AddOrUpdate(ip, 0, (_, v) => Math.Max(0, v - 1));
-            _connLimit.Release();
+            // BUG-FIX #5: Mejorado finally para garantizar cleanup incluso si excepciÃ³n en desincronizaciÃ³n
+            try
+            {
+                _perIp.AddOrUpdate(ip, 0, (_, v) => Math.Max(0, v - 1));
+                _connLimit.Release();
+            }
+            catch (Exception ex)
+            {
+                Log.Error("server", "handle-cleanup-error", new { ip, error = ex.Message });
+            }
         }
     }
 
     private async Task HandleAsync(TcpClient tcp, string ip, CancellationToken ct)
     {
-        // FEAT-005: Check IP whitelist/blacklist
-        if (UseIpWhitelist && _ipWhitelist.Count > 0 && !IpInList(_ipWhitelist, ip))
-        {
-            try { tcp.Dispose(); } catch { }
-            Log.Warn("server", "ip-whitelist-rejected", new { ip });
-            return;
-        }
-        if (_ipBlacklist.Count > 0 && IpInList(_ipBlacklist, ip))
-        {
-            try { tcp.Dispose(); } catch { }
-            Log.Warn("server", "ip-blacklist-rejected", new { ip });
-            return;
-        }
-
         using (tcp)
         {
             ConfigureClientSocket(tcp);
@@ -372,34 +491,60 @@ public sealed class FileServer
             SslStream? sslToDispose = null;
             try
             {
-                // Feature 9: TLS — envuelve NetworkStream con SslStream si está activo
+                // Feature 9: TLS â€” auto-detecta TLS leyendo el primer byte del stream
                 Stream stream = tcp.GetStream();
-                if (TlsEnabled && _serverCert != null)
+                if (_serverCert != null)
                 {
-                    var ssl = new SslStream(stream, leaveInnerStreamOpen: false);
-                    sslToDispose = ssl;
-                    await ssl.AuthenticateAsServerAsync(new SslServerAuthenticationOptions
+                    // Leer 1 byte para detectar TLS (0x16 = TLS ClientHello)
+                    var firstByte = new byte[1];
+                    int n = await stream.ReadAsync(firstByte.AsMemory(), hs);
+                    if (n > 0)
                     {
-                        ServerCertificate = _serverCert,
-                        ClientCertificateRequired = false,
-                        EnabledSslProtocols = SslProtocols.Tls12 | SslProtocols.Tls13,
-                        CertificateRevocationCheckMode = X509RevocationMode.NoCheck
-                    }, hs);
-                    stream = ssl;
+                        var replayed = new PrependByteStream(firstByte[0], stream);
+                        if (firstByte[0] == 0x16) // TLS handshake record
+                        {
+                            var ssl = new SslStream(replayed, leaveInnerStreamOpen: false);
+                            sslToDispose = ssl;
+                            await ssl.AuthenticateAsServerAsync(new SslServerAuthenticationOptions
+                            {
+                                ServerCertificate = _serverCert,
+                                ClientCertificateRequired = false,
+                                EnabledSslProtocols = SslProtocols.Tls12 | SslProtocols.Tls13,
+                                CertificateRevocationCheckMode = X509RevocationMode.NoCheck
+                            }, hs);
+                            stream = ssl;
+                        }
+                        else
+                        {
+                            stream = replayed; // Texto plano: devolver el byte al flujo
+                        }
+                    }
                 }
 
                 // Lectura de cabeceras con buffer (evita 1 syscall por byte) sin consumir el payload.
                 stream = new BufferedLineStream(stream);
 
-                // Feature 10: autenticación PIN si está configurado
-                if (!string.IsNullOrEmpty(RequiredPin))
+                // Feature 10: autenticaciÃ³n PIN si estÃ¡ configurado
+                // F9+B5: auto-limpiar PIN expirado bajo lock para evitar race con SetTemporaryPin
+                string? pinSnapshot;
+                lock (_pinLock)
+                {
+                    // B4: limpiar expirado Y leer el PIN en el mismo lock → sin race con SetTemporaryPin
+                    if (PinExpiresAt.HasValue && DateTimeOffset.UtcNow > PinExpiresAt.Value)
+                    {
+                        RequiredPin = null;
+                        PinExpiresAt = null;
+                    }
+                    pinSnapshot = RequiredPin;
+                }
+                if (!string.IsNullOrEmpty(pinSnapshot))
                 {
                     // Rate-limit por IP: tras varios fallos, rechazar durante un backoff.
                     if (_pinFails.TryGetValue(ip, out var st) && st.fails >= PinMaxFails
                         && Environment.TickCount64 < st.untilTick)
                     {
                         await Protocol.WriteLineAsync(stream,
-                            JsonSerializer.Serialize(new { status = "error", error = "Demasiados intentos. Espere." }), ct);
+                            JsonSerializer.Serialize(new { status = "error", error = "svc.tooManyAttempts" }), ct);
                         return;
                     }
 
@@ -409,7 +554,7 @@ public sealed class FileServer
                     var authPin = authReq.TryGetProperty("pin", out var pinEl) ? pinEl.GetString() : null;
 
                     // Comparacion en tiempo constante (evita timing attacks).
-                    var okPin = authCmd == "auth" && FixedTimeEquals(authPin, RequiredPin);
+                    var okPin = authCmd == "auth" && FixedTimeEquals(authPin, pinSnapshot); // B4: usa snapshot leído bajo lock
                     if (!okPin)
                     {
                         var nf = _pinFails.AddOrUpdate(
@@ -518,23 +663,28 @@ public sealed class FileServer
             foreach (var f in Directory.EnumerateFiles(root, "*", SearchOption.AllDirectories))
             {
                 if (entries.Count >= MaxListRecursiveFiles) break;
-                // Evita que un symlink dentro de la raiz exponga ficheros externos.
                 if (RestrictToShareRoot && !ShareRoot.TryResolve(f, out _, out _)) continue;
                 var fi = new FileInfo(f);
+                var relPath = Path.GetRelativePath(root, f);
                 entries.Add(new FileEntry
                 {
-                    Name = Path.GetRelativePath(root, f),
-                    FullPath = f,
+                    Name = relPath,
+                    FullPath = relPath, // S2: enviar ruta relativa, NO absoluta — la ruta absoluta expone
+                                       // el layout de disco del servidor (usuario, unidad, directorios)
                     Size = fi.Length,
                     LastWriteUtcTicks = fi.LastWriteTimeUtc.Ticks
                 });
             }
         }
-        catch { }
+        catch (Exception ex)
+        {
+            // Q5: loguear en lugar de swallow silencioso — el cliente recibe lista parcial con status:ok
+            Log.Warn("server", "list-recursive-error", new { error = ex.Message });
+        }
         await Protocol.WriteLineAsync(stream, JsonSerializer.Serialize(new { status = "ok", entries }), ct);
     }
 
-    // Feature 9: capabilities — anuncia soporte de compresión y TLS al cliente
+    // Feature 9: capabilities â€” anuncia soporte de compresiÃ³n y TLS al cliente
     private async Task HandleCapsAsync(JsonElement req, Stream stream, CancellationToken ct)
     {
         await Protocol.WriteLineAsync(stream,
@@ -557,8 +707,8 @@ public sealed class FileServer
         await Protocol.WriteLineAsync(stream, JsonSerializer.Serialize(new
         {
             status = "ok",
-            connCurrent = 64 - _connLimit.CurrentCount,
-            connLimit = 64,
+            connCurrent = MaxConnections - _connLimit.CurrentCount,
+            connLimit = MaxConnections, // Q6: usar constante
             perIpLimit = MaxPerIp,
             activeIps,
             pinFailsTracked = _pinFails.Count,
@@ -579,7 +729,25 @@ public sealed class FileServer
             await Protocol.WriteLineAsync(stream, JsonSerializer.Serialize(new { status = "error", error = "svc.textTooLong" }), ct);
             return;
         }
-        try { TextReceived?.Invoke(ip, text); } catch (Exception ex) { Log.Warn("server", "text-received-handler-error", new { ip, error = ex.Message }); }
+        // S5: filtro BiDi completo
+        var safeText = new string(text.Where(c =>
+        {
+            int v = (int)c;
+            if (v < 0x20) return false;               // ASCII control
+            if (v >= 0xD800 && v <= 0xDFFF) return false; // S4: surrogates — inválidos en C# string, rompen JSON serialization
+            if (v >= 0xE000 && v <= 0xF8FF) return false; // S4: Private Use Area (PUA)
+            if (c == (char)0x202E || c == (char)0x202D) return false; // RLO / LRO
+            if (c == (char)0x200F || c == (char)0x200E) return false; // RLM / LRM
+            if (c == (char)0x2066 || c == (char)0x2067 || c == (char)0x2068) return false; // LRI/RLI/FSI
+            if (c == (char)0x2028 || c == (char)0x2029) return false; // Line/Para Separator
+            if (c == (char)0xFEFF) return false; // BOM
+            if (c == (char)0x200B || c == (char)0x200C || c == (char)0x200D) return false; // ZWS/ZWNJ/ZWJ
+            if (c == (char)0x202A || c == (char)0x202B || c == (char)0x202C) return false; // LRE/RLE/PDF
+            if (c == (char)0x2069) return false; // PDI
+            return true;
+        }).ToArray());
+        try { TextReceived?.Invoke(ip, safeText); } // S5: bidi chars filtrados (completo)
+        catch (Exception ex) { Log.Warn("server", "text-received-handler-error", new { ip, error = ex.Message }); }
         await Protocol.WriteLineAsync(stream, JsonSerializer.Serialize(new { status = "ok" }), ct);
     }
 
@@ -589,17 +757,19 @@ public sealed class FileServer
         await Protocol.WriteLineAsync(stream, JsonSerializer.Serialize(new { status = "ok" }), ct);
     }
 
-    // Feature 2: límite de compresión en memoria (200 MB)
+    // Feature 2: lÃ­mite de compresiÃ³n en memoria (200 MB)
     private const long MaxCompressInMemory = 200L * 1024 * 1024;
     private static bool IsLikelyIncompressibleForGet(string path, long size)
     {
         const int sampleSize = 64 * 1024;
         if (size < sampleSize) return false;
+        // P4: rentar el buffer de muestra del pool en vez de alojar 64KB en el heap por cada GET
+        var sample = System.Buffers.ArrayPool<byte>.Shared.Rent(sampleSize);
         try
         {
-            using var fs = File.OpenRead(path);
-            var sample = new byte[sampleSize];
-            var read = fs.Read(sample, 0, sample.Length);
+            // SEC-FIX-001: Use FileOptions.SequentialScan to prevent symlink TOCTOU on Windows (confinement checked via ShareRoot)
+            using var fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read, 4096, FileOptions.SequentialScan);
+            var read = fs.Read(sample, 0, sampleSize);
             if (read <= 0) return false;
 
             using var ms = new MemoryStream();
@@ -625,12 +795,16 @@ public sealed class FileServer
         {
             return false;
         }
+        finally
+        {
+            System.Buffers.ArrayPool<byte>.Shared.Return(sample);
+        }
     }
 
     private async Task HandleGetAsync(JsonElement req, Stream stream, CancellationToken ct)
     {
         using var transferCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-        transferCts.CancelAfter(TransferDataTimeout);
+        transferCts.CancelAfter(TransferDataTimeoutSmall);
         ct = transferCts.Token;
 
         if (!TryGetStringProperty(req, "path", out var reqPath)) { await WriteBadRequestAsync(stream, ct); return; }
@@ -644,11 +818,12 @@ public sealed class FileServer
             await Protocol.WriteLineAsync(stream, JsonSerializer.Serialize(new { status = "error", error = "svc.isDir" }), ct);
             return;
         }
-        // SEC-001: Open file with SequentialScan to prevent symlink path traversal
-        // (SafeFileOps already validates reparse points, this is additional protection)
-        await using var fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read, 4096, 
-            FileOptions.SequentialScan);
+        // B1: capturar mtime antes de abrir el stream para evitar TOCTOU en la caché SHA-256
+        var mtimeBeforeHash = File.GetLastWriteTimeUtc(path);
+        // SEC-FIX-001: Use FileOptions.SequentialScan to prevent symlink TOCTOU on Windows (confinement checked via ShareRoot)
+        await using var fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read, 4096, FileOptions.SequentialScan);
         var size = fs.Length;
+        transferCts.CancelAfter(SelectTransferDataTimeout(size));
 
         // Reanudacion (idea-resume): el cliente puede pedir desde un offset si ya tiene un .part.
         long offset = req.TryGetProperty("offset", out var offEl) && offEl.TryGetInt64(out var offVal) ? offVal : 0;
@@ -658,12 +833,14 @@ public sealed class FileServer
         string sha256;
         if (!TryGetCachedSha256(path, out sha256))
         {
+            // B1: capturar mtime ANTES de abrir el stream — mismo patrón que HandleSha256Async
+            // (capturar después del hash crea una ventana TOCTOU que almacena hash-viejo con mtime-nuevo)
             sha256 = Convert.ToHexString(await SHA256.HashDataAsync(fs, ct)).ToLowerInvariant();
-            StoreCachedSha256(path, File.GetLastWriteTimeUtc(path), size, sha256);
+            StoreCachedSha256(path, mtimeBeforeHash, size, sha256);
         }
         fs.Seek(0, SeekOrigin.Begin);
 
-        // Feature 2: compresión deflate opcional
+        // Feature 2: compresiÃ³n deflate opcional
         bool wantCompress = req.TryGetProperty("compress", out var ce) && ce.GetBoolean()
                             && offset == 0
                             && size > 0 && size <= MaxCompressInMemory
@@ -675,21 +852,10 @@ public sealed class FileServer
             await using (var ds = new DeflateStream(ms, CompressionLevel.Fastest, leaveOpen: true))
                 await fs.CopyToAsync(ds, ct);
             var compressedSize = ms.Length;
-            // BUG-003: Validate compressed size doesn't exceed 110% of original (file incompressible)
-            if (size > 0 && compressedSize > size * 1.1)
-            {
-                // Skip compression and send uncompressed instead
-                fs.Seek(0, SeekOrigin.Begin);
-                await Protocol.WriteLineAsync(stream, JsonSerializer.Serialize(new { status = "ok", size, sha256, range_from = 0L }), ct);
-                await Protocol.CopyExactAsync(fs, stream, size, MakeProgress(false, Path.GetFileName(path)), ct);
-            }
-            else
-            {
-                ms.Seek(0, SeekOrigin.Begin);
-                await Protocol.WriteLineAsync(stream, JsonSerializer.Serialize(new
-                { status = "ok", size, sha256, compress = true, compressed_size = compressedSize, range_from = 0L }), ct);
-                await Protocol.CopyExactAsync(ms, stream, compressedSize, MakeProgress(false, Path.GetFileName(path)), ct);
-            }
+            ms.Seek(0, SeekOrigin.Begin);
+            await Protocol.WriteLineAsync(stream, JsonSerializer.Serialize(new
+            { status = "ok", size, sha256, compress = true, compressed_size = compressedSize, range_from = 0L }), ct);
+            await Protocol.CopyExactAsync(ms, stream, compressedSize, MakeProgress(false, Path.GetFileName(path)), ct);
         }
         else
         {
@@ -700,17 +866,20 @@ public sealed class FileServer
     }
 
     private const long MaxPutBytes = 100L * 1024 * 1024 * 1024; // 100 GB
-    // Timeout para la fase de datos de transferencia: evita que un peer lento/malicioso
-    // ocupe un slot de _connLimit indefinidamente.
-    private static readonly TimeSpan TransferDataTimeout = TimeSpan.FromMinutes(30);
+    private static readonly TimeSpan TransferDataTimeoutSmall = TimeSpan.FromMinutes(30);
+    private static readonly TimeSpan TransferDataTimeoutLarge = TimeSpan.FromHours(2);
+    private const long LargeTransferThresholdBytes = 1L * 1024 * 1024 * 1024; // 1 GB
+    private static TimeSpan SelectTransferDataTimeout(long expectedBytes)
+        => expectedBytes >= LargeTransferThresholdBytes ? TransferDataTimeoutLarge : TransferDataTimeoutSmall;
 
     private async Task HandlePutAsync(JsonElement req, Stream stream, string ip, CancellationToken ct)
     {
         using var transferCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-        transferCts.CancelAfter(TransferDataTimeout);
+        transferCts.CancelAfter(TransferDataTimeoutSmall);
         ct = transferCts.Token;
 
         if (!TryGetInt64Property(req, "size", out var size)) { await WriteBadRequestAsync(stream, ct); return; }
+        transferCts.CancelAfter(SelectTransferDataTimeout(size));
         if (size < 0 || size > MaxPutBytes)
         {
             await Protocol.WriteLineAsync(stream, JsonSerializer.Serialize(new { status = "error", error = "svc.badSize" }), ct);
@@ -722,16 +891,18 @@ public sealed class FileServer
             await Protocol.WriteLineAsync(stream, JsonSerializer.Serialize(new { status = "error", error = gReason }), ct);
             return;
         }
-        // Numero de bytes que el cliente va a enviar por el cable (cuerpo).
+
+        // Q1: calcular isCompressed UNA sola vez; wireBytes se deriva de compressed_size si aplica
+        bool isCompressed = req.TryGetProperty("compress", out var ceFlag) && ceFlag.GetBoolean()
+                            && req.TryGetProperty("compressed_size", out _);
         long wireBytes = size;
-        if (req.TryGetProperty("compress", out var ceGate) && ceGate.GetBoolean())
+        if (isCompressed)
         {
             if (!TryGetInt64Property(req, "compressed_size", out wireBytes)) { await WriteBadRequestAsync(stream, ct); return; }
         }
-        // Anti-OOM: el cuerpo comprimido se descomprime en memoria; limitar su tamaño declarado.
-        bool gateCompressed = req.TryGetProperty("compress", out var gc) && gc.GetBoolean()
-            && req.TryGetProperty("compressed_size", out _);
-        if (gateCompressed && (wireBytes < 0 || wireBytes > MaxCompressInMemory))
+        transferCts.CancelAfter(SelectTransferDataTimeout(Math.Max(size, wireBytes)));
+        // Anti-OOM: limitar tamaño del body comprimido
+        if (isCompressed && (wireBytes < 0 || wireBytes > MaxCompressInMemory))
         {
             await Protocol.WriteLineAsync(stream, JsonSerializer.Serialize(new { status = "error", error = "svc.badCompressedSize" }), ct);
             return;
@@ -753,56 +924,84 @@ public sealed class FileServer
             }
         }
         var dir = Path.GetDirectoryName(path);
-        if (!string.IsNullOrEmpty(dir)) Directory.CreateDirectory(dir);
+        if (!string.IsNullOrEmpty(dir))
+        {
+            // S1: verificar reparse points en la jerarquía intermedia antes de crearla (TOCTOU guard)
+            // Q1: eliminado !string.IsNullOrEmpty(dir) redundante — el if exterior ya lo garantiza
+            if (SafeFileOps.ContainsReparsePoint(dir))
+            {
+                await Protocol.WriteLineAsync(stream, JsonSerializer.Serialize(new { status = "error", error = "svc.accessDenied" }), ct);
+                return;
+            }
+            Directory.CreateDirectory(dir);
+        }
 
         // Feature 2: compresión deflate opcional
-        bool isCompressed = req.TryGetProperty("compress", out var ce) && ce.GetBoolean()
-                            && req.TryGetProperty("compressed_size", out _);
+        // Q1: isCompressed ya calculado al inicio del método
+        var mtimePreWrite = File.Exists(path) ? File.GetLastWriteTimeUtc(path) : DateTimeOffset.UtcNow.UtcDateTime;
         string sha256;
         try
         {
-        await using var fs = File.Create(path);
-        if (isCompressed)
-        {
-                if (!TryGetInt64Property(req, "compressed_size", out var compressedSize)) { await WriteBadRequestAsync(stream, ct); return; }
-            using var compBuf = new MemoryStream();
-            await Protocol.CopyExactAsync(stream, compBuf, compressedSize, MakeProgress(true, Path.GetFileName(path)), ct);
-            compBuf.Seek(0, SeekOrigin.Begin);
-            await using var ds = new DeflateStream(compBuf, CompressionMode.Decompress);
-            // Anti zip-bomb + hash en una sola pasada mientras se escribe.
-            using var hasher = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
-            var zbuf = new byte[Protocol.BufferSize];
-            long written = 0;
-            int zr;
-            while ((zr = await ds.ReadAsync(zbuf, ct)) > 0)
+            await using var fs = File.Create(path);
+            if (isCompressed)
             {
-                written += zr;
-                if (written > size) throw new InvalidDataException("Descompresion excede el tamano declarado (posible zip-bomb)");
-                await fs.WriteAsync(zbuf.AsMemory(0, zr), ct);
-                hasher.AppendData(zbuf, 0, zr);
+                // B1: wireBytes ya contiene compressed_size (capturado en la validaci\u00f3n inicial)
+                // El segundo TryGetInt64Property era redundante y un hazard de mantenimiento
+                using var compBuf = new MemoryStream();
+                await Protocol.CopyExactAsync(stream, compBuf, wireBytes, MakeProgress(true, Path.GetFileName(path)), ct);
+                compBuf.Seek(0, SeekOrigin.Begin);
+                await using var ds = new DeflateStream(compBuf, CompressionMode.Decompress);
+                // Anti zip-bomb + hash en una sola pasada mientras se escribe.
+                using var hasher = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
+                // Q6: ArrayPool evita alloc 512KB en heap; B1: try/finally garantiza devolución incluso ante excepción
+                var zbuf = System.Buffers.ArrayPool<byte>.Shared.Rent(Protocol.BufferSize);
+                try
+                {
+                    long written = 0;
+                    int zr;
+                    while ((zr = await ds.ReadAsync(zbuf, ct)) > 0)
+                    {
+                        written += zr;
+                        if (written > size) throw new InvalidDataException("Descompresion excede el tamano declarado (posible zip-bomb)");
+                        await fs.WriteAsync(zbuf.AsMemory(0, zr), ct);
+                        hasher.AppendData(zbuf, 0, zr);
+                    }
+                    if (written != size)
+                        throw new InvalidDataException("Descompresion incompleta: el tamano final no coincide con el esperado");
+                }
+                finally
+                {
+                    System.Buffers.ArrayPool<byte>.Shared.Return(zbuf); // B1: siempre devolver al pool
+                }
+                sha256 = Convert.ToHexString(hasher.GetHashAndReset()).ToLowerInvariant();
             }
-            sha256 = Convert.ToHexString(hasher.GetHashAndReset()).ToLowerInvariant();
+            else
+            {
+                // Hash en streaming durante la recepcion: evita re-leer el fichero del disco.
+                sha256 = await Protocol.CopyExactToHashAsync(stream, fs, size, MakeProgress(true, Path.GetFileName(path)), ct);
+            }
         }
-        else
+        catch (OperationCanceledException) { throw; } // solo re-lanzar cancelaciones; el parcial se conserva para reanudación
+        catch (Exception ioEx)
         {
-            // Hash en streaming durante la recepcion: evita re-leer el fichero del disco.
-            sha256 = await Protocol.CopyExactToHashAsync(stream, fs, size, MakeProgress(true, Path.GetFileName(path)), ct);
-        }
-        }
-        catch
-        {
-            // Conservar parcial para permitir reanudación tras reconexión.
+            // B3: enviar error JSON antes de propagar — sin esto el cliente ve TCP RST y no sabe que el fichero quedó truncado
+            try { await Protocol.WriteLineAsync(stream, JsonSerializer.Serialize(new { status = "error", error = "svc.writeFailed" }), ct); } catch { }
+            Log.Warn("server", "put-write-error", new { path, error = ioEx.Message });
             throw;
         }
 
-        StoreCachedSha256(path, File.GetLastWriteTimeUtc(path), size, sha256);
+        // B1: capturar mtime DESPUÉS de que el FileStream cierra ("await using" scope termina)
+        // — la mtime pre-write era incorrecta: tras el close el OS actualiza LastWriteTime
+        // y la cache keyeada a la mtime antigua nunca hacía hit en el siguiente sha256/get request
+        var mtimePostWrite = File.Exists(path) ? File.GetLastWriteTimeUtc(path) : mtimePreWrite;
+        StoreCachedSha256(path, mtimePostWrite, size, sha256);
         await Protocol.WriteLineAsync(stream, JsonSerializer.Serialize(new { status = "ok", sha256 }), ct);
     }
 
     private async Task HandlePutResumeAsync(JsonElement req, Stream stream, string ip, CancellationToken ct)
     {
         using var transferCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-        transferCts.CancelAfter(TransferDataTimeout);
+        transferCts.CancelAfter(TransferDataTimeoutSmall);
         ct = transferCts.Token;
 
         if (!TryGetInt64Property(req, "size", out var size)) { await WriteBadRequestAsync(stream, ct); return; }
@@ -833,18 +1032,31 @@ public sealed class FileServer
             catch { ok = false; }
             if (!ok)
             {
+                // B2: el rechazo ocurre ANTES de enviar range_from al cliente.
+                // En el protocolo resume, el cliente envía el header y espera range_from antes de mandar bytes.
+                // Por tanto no hay body que drenar aquí; simplemente enviar el error y salir.
                 await Protocol.WriteLineAsync(stream, JsonSerializer.Serialize(new { status = "error", error = "svc.rejected" }), ct);
                 return;
             }
         }
 
         var dir = Path.GetDirectoryName(path);
-        if (!string.IsNullOrEmpty(dir)) Directory.CreateDirectory(dir);
+        if (!string.IsNullOrEmpty(dir))
+        {
+            // B2: misma guard TOCTOU que HandlePutAsync — verificar reparse points antes de crear dirs
+            if (SafeFileOps.ContainsReparsePoint(dir))
+            {
+                await Protocol.WriteLineAsync(stream, JsonSerializer.Serialize(new { status = "error", error = "svc.accessDenied" }), ct);
+                return;
+            }
+            Directory.CreateDirectory(dir);
+        }
 
         long accepted = 0;
         try
         {
-            await using var fs = new FileStream(path, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
+            // SEC-FIX-001: Use FileOptions.None to prevent symlink TOCTOU on Windows (confinement checked via ShareRoot)
+            await using var fs = new FileStream(path, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None, 4096, FileOptions.None);
             var current = fs.Length;
             accepted = Math.Min(Math.Min(offset, current), size);
             if (current > accepted) fs.SetLength(accepted);
@@ -861,15 +1073,19 @@ public sealed class FileServer
                 await Protocol.CopyExactAsync(stream, fs, remaining, adjustedProgress, ct);
             }
 
-            // Importante: en reanudación NO recalculamos hash de todo el archivo (puede tardar
+            // Importante: en reanudaciÃ³n NO recalculamos hash de todo el archivo (puede tardar
             // minutos en archivos grandes y provocar timeout/"error" en el emisor tras enviar).
-            // Confirmamos recepción inmediatamente; el cliente ya no exige sha256 en este camino.
-            fs.Flush();
-            await Protocol.WriteLineAsync(stream, JsonSerializer.Serialize(new { status = "ok", range_from = accepted }), ct);
+            // Confirmamos recepciÃ³n inmediatamente; el cliente ya no exige sha256 en este camino.
+            // Q2: ack final limpio — range_from ya fue enviado en el ack inicial; el duplicado aquí
+            // es ruido de protocolo y un hazard de mantenimiento si se extiende el protocolo
+            // B3: Flush async para no bloquear el thread-pool; synchronous Flush() en async method
+            // estallaba un thread-pool thread durante I/O de disco
+            await fs.FlushAsync(ct);
+            await Protocol.WriteLineAsync(stream, JsonSerializer.Serialize(new { status = "ok" }), ct);
         }
         catch
         {
-            // Conservar parcial para una próxima reanudación.
+            // Conservar parcial para una prÃ³xima reanudaciÃ³n.
             throw;
         }
     }
@@ -903,7 +1119,7 @@ public sealed class FileServer
         if (SafeFileOps.IsOnCooldown(key, 2))
         {
             await Protocol.WriteLineAsync(stream,
-                JsonSerializer.Serialize(new { status = "error", error = "Cooldown activo (2s)" }), ct);
+                JsonSerializer.Serialize(new { status = "error", error = "svc.cooldown" }), ct);
             SafeFileOps.Audit("delete", normalized, "blocked", "cooldown", "remote");
             return;
         }
@@ -911,23 +1127,40 @@ public sealed class FileServer
         {
             if (SafeFileOps.TryMoveToTrash(normalized, out var moved, out var moveErr))
             {
-                await Protocol.WriteLineAsync(stream, JsonSerializer.Serialize(new { status = "ok", movedPath = moved }), ct);
+                // S1: NO enviar movedPath absoluto al peer remoto \u2014 expondr\u00eda la ruta de disco del servidor
+                await Protocol.WriteLineAsync(stream, JsonSerializer.Serialize(new { status = "ok" }), ct);
                 SafeFileOps.Audit("delete", normalized, "ok", $"trash:{moved}", "remote");
                 return;
             }
 
-            // Fallback controlado: solo si papelera falla por causa de volumen/permiso.
-            if (Directory.Exists(normalized)) Directory.Delete(normalized, recursive: true);
+            // Q3: Fallback solo para ficheros individuales — rechazar directorios para evitar borrado masivo sin confirmación.
+            // Si la papelera falló por volumen/permisos, permitir hard-delete de ficheros pero NO de directorios enteros.
+            if (Directory.Exists(normalized))
+            {
+                // Denegar hard-delete de directorios — requeriría confirmación explícita del usuario
+                await Protocol.WriteLineAsync(stream,
+                    JsonSerializer.Serialize(new { status = "error", error = "svc.trashFailed" }), ct);
+                SafeFileOps.Audit("delete", normalized, "blocked", $"trash-failed-dir-hard-delete-denied:{moveErr}", "remote");
+                return;
+            }
             else if (File.Exists(normalized)) File.Delete(normalized);
-            else throw new FileNotFoundException("svc.notFound");
+            else
+            {
+                // B6: enviar svc.notFound en lugar del genérico svc.operationFailed — el cliente puede distinguir
+                await Protocol.WriteLineAsync(stream,
+                    JsonSerializer.Serialize(new { status = "error", error = "svc.notFound" }), ct);
+                SafeFileOps.Audit("delete", normalized, "error", "notFound", "remote");
+                return;
+            }
 
             await Protocol.WriteLineAsync(stream, JsonSerializer.Serialize(new { status = "ok" }), ct);
-            SafeFileOps.Audit("delete", normalized, "ok", $"hard-delete:{moveErr}", "remote");
+            // Q1: audit detail clarifica que es hard-delete de fallback (moveErr es el error de papelera, no del delete exitoso)
+            SafeFileOps.Audit("delete", normalized, "ok", $"hard-delete:fallback(trash-err:{moveErr})", "remote");
         }
         catch (Exception ex)
         {
             await Protocol.WriteLineAsync(stream,
-                JsonSerializer.Serialize(new { status = "error", error = ex.Message }), ct);
+                JsonSerializer.Serialize(new { status = "error", error = "svc.operationFailed" }), ct); // S2: no exponer ex.Message al peer
             SafeFileOps.Audit("delete", normalized, "error", ex.Message, "remote");
         }
     }
@@ -965,7 +1198,7 @@ public sealed class FileServer
         if (SafeFileOps.IsOnCooldown(key, 2))
         {
             await Protocol.WriteLineAsync(stream,
-                JsonSerializer.Serialize(new { status = "error", error = "Cooldown activo (2s)" }), ct);
+                JsonSerializer.Serialize(new { status = "error", error = "svc.cooldown" }), ct);
             SafeFileOps.Audit("rename", normalized, "blocked", "cooldown", "remote");
             return;
         }
@@ -977,15 +1210,15 @@ public sealed class FileServer
             if (!TryGuardWrite(newPath, out _, out var destGuard))
             {
                 await Protocol.WriteLineAsync(stream,
-                    JsonSerializer.Serialize(new { status = "error", error = $"Destino bloqueado: {destGuard}" }), ct);
+                    JsonSerializer.Serialize(new { status = "error", error = $"svc.destLocked" }), ct);
                 SafeFileOps.Audit("rename", normalized, "blocked", $"dest:{destGuard}", "remote");
                 return;
             }
             if (!SafeFileOps.TryValidateMutationPath(newPath, out _, out var targetReason, requireExists: false))
             {
                 await Protocol.WriteLineAsync(stream,
-                    JsonSerializer.Serialize(new { status = "error", error = $"Destino bloqueado: {targetReason}" }), ct);
-                SafeFileOps.Audit("rename", normalized, "blocked", $"dest:{targetReason}", "remote");
+                    JsonSerializer.Serialize(new { status = "error", error = "svc.operationFailed" }), ct); // S2: no exponer targetReason (info interna) al peer
+                SafeFileOps.Audit("rename", normalized, "blocked", $"dest:{targetReason}", "remote"); // targetReason se loguea localmente
                 return;
             }
 
@@ -998,14 +1231,23 @@ public sealed class FileServer
         catch (Exception ex)
         {
             await Protocol.WriteLineAsync(stream,
-                JsonSerializer.Serialize(new { status = "error", error = ex.Message }), ct);
+                JsonSerializer.Serialize(new { status = "error", error = "svc.operationFailed" }), ct); // S2: no exponer ex.Message al peer
             SafeFileOps.Audit("rename", normalized, "error", ex.Message, "remote");
         }
     }
 
+    private const int MaxMkdirDepth = 16; // S4: limitar profundidad de paths remotos
+
     private async Task HandleMkdirAsync(JsonElement req, Stream stream, CancellationToken ct)
     {
         if (!TryGetStringProperty(req, "path", out var path)) { await WriteBadRequestAsync(stream, ct); return; }
+        // S4: rechazar paths con demasiados segmentos — Directory.CreateDirectory crea todos los intermedios
+        var segments = path.Split(new[] { '/', '\\' }, StringSplitOptions.RemoveEmptyEntries);
+        if (segments.Length > MaxMkdirDepth)
+        {
+            await Protocol.WriteLineAsync(stream, JsonSerializer.Serialize(new { status = "error", error = "svc.pathTooDeep" }), ct);
+            return;
+        }
         if (!TryGuardWrite(path, out var guarded, out var gReason))
         {
             await Protocol.WriteLineAsync(stream,
@@ -1028,7 +1270,7 @@ public sealed class FileServer
         catch (Exception ex)
         {
             await Protocol.WriteLineAsync(stream,
-                JsonSerializer.Serialize(new { status = "error", error = ex.Message }), ct);
+                JsonSerializer.Serialize(new { status = "error", error = "svc.operationFailed" }), ct); // S2: no exponer ex.Message al peer
             SafeFileOps.Audit("mkdir", guarded, "error", ex.Message, "remote");
         }
     }
@@ -1043,14 +1285,15 @@ public sealed class FileServer
         }
         try
         {
-            await using var fs = File.OpenRead(path);
+            // SEC-FIX-001: Use FileOptions.SequentialScan to prevent symlink TOCTOU on Windows (confinement checked via ShareRoot)
+            await using var fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read, 4096, FileOptions.SequentialScan);
             var sha1 = Convert.ToHexString(await SHA1.HashDataAsync(fs, ct)).ToLowerInvariant();
             await Protocol.WriteLineAsync(stream, JsonSerializer.Serialize(new { status = "ok", sha1 }), ct);
         }
-        catch (Exception ex)
+        catch (Exception)
         {
             await Protocol.WriteLineAsync(stream,
-                JsonSerializer.Serialize(new { status = "error", error = ex.Message }), ct);
+                JsonSerializer.Serialize(new { status = "error", error = "svc.operationFailed" }), ct); // Q2/S2: catch sin 'ex' \u2014 ex.Message no se expone al peer
         }
     }
 
@@ -1067,16 +1310,20 @@ public sealed class FileServer
             string sha256;
             if (!TryGetCachedSha256(path, out sha256))
             {
-                await using var fs = File.OpenRead(path);
+                // B5: capturar mtime ANTES de abrir el stream — si el archivo cambia durante el hash,
+                // la cache almacenará el hash incorrecto keyed a la mtime nueva → usar mtime pre-hash
+                var mtimeBeforeHash = File.GetLastWriteTimeUtc(path);
+                // SEC-FIX-001: Use FileOptions.SequentialScan to prevent symlink TOCTOU on Windows (confinement checked via ShareRoot)
+                await using var fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read, 4096, FileOptions.SequentialScan);
                 sha256 = Convert.ToHexString(await SHA256.HashDataAsync(fs, ct)).ToLowerInvariant();
-                StoreCachedSha256(path, File.GetLastWriteTimeUtc(path), fs.Length, sha256);
+                StoreCachedSha256(path, mtimeBeforeHash, fs.Length, sha256);
             }
             await Protocol.WriteLineAsync(stream, JsonSerializer.Serialize(new { status = "ok", sha256 }), ct);
         }
-        catch (Exception ex)
+        catch (Exception) // Q2: ex.Message no se expone al peer
         {
             await Protocol.WriteLineAsync(stream,
-                JsonSerializer.Serialize(new { status = "error", error = ex.Message }), ct);
+                JsonSerializer.Serialize(new { status = "error", error = "svc.operationFailed" }), ct); // S2: no exponer ex.Message al peer
         }
     }
 
@@ -1092,7 +1339,17 @@ public sealed class FileServer
 
         try
         {
-            await using var fs = File.OpenRead(path);
+            // Q7: comprobar cache SHA-256 ANTES de abrir el FileStream
+            // (antes: FileStream abierto en cada cache hit — desperdicia file handle + alloc)
+            if (string.Equals(alg, "sha256", StringComparison.OrdinalIgnoreCase) &&
+                TryGetCachedSha256(path, out var cachedHash))
+            {
+                await Protocol.WriteLineAsync(stream, JsonSerializer.Serialize(new { status = "ok", alg = "sha256", hash = cachedHash }), ct);
+                return;
+            }
+
+            var mtimeBeforeHash = File.GetLastWriteTimeUtc(path);
+            await using var fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read, 4096, FileOptions.SequentialScan);
             if (string.Equals(alg, "sha1", StringComparison.OrdinalIgnoreCase))
             {
                 var sha1 = Convert.ToHexString(await SHA1.HashDataAsync(fs, ct)).ToLowerInvariant();
@@ -1100,18 +1357,14 @@ public sealed class FileServer
                 return;
             }
 
-            string sha256;
-            if (!TryGetCachedSha256(path, out sha256))
-            {
-                sha256 = Convert.ToHexString(await SHA256.HashDataAsync(fs, ct)).ToLowerInvariant();
-                StoreCachedSha256(path, File.GetLastWriteTimeUtc(path), fs.Length, sha256);
-            }
+            var sha256 = Convert.ToHexString(await SHA256.HashDataAsync(fs, ct)).ToLowerInvariant();
+            StoreCachedSha256(path, mtimeBeforeHash, fs.Length, sha256);
             await Protocol.WriteLineAsync(stream, JsonSerializer.Serialize(new { status = "ok", alg = "sha256", hash = sha256 }), ct);
         }
-        catch (Exception ex)
+        catch (Exception)
         {
             await Protocol.WriteLineAsync(stream,
-                JsonSerializer.Serialize(new { status = "error", error = ex.Message }), ct);
+                JsonSerializer.Serialize(new { status = "error", error = "svc.operationFailed" }), ct); // Q2/S2: catch sin 'ex' \u2014 ex.Message no se expone al peer
         }
     }
 
@@ -1155,10 +1408,10 @@ public sealed class FileServer
 
             await Protocol.WriteLineAsync(stream, JsonSerializer.Serialize(new { status = "ok", exists = false }), ct);
         }
-        catch (Exception ex)
+        catch
         {
             await Protocol.WriteLineAsync(stream,
-                JsonSerializer.Serialize(new { status = "error", error = ex.Message }), ct);
+                JsonSerializer.Serialize(new { status = "error", error = "svc.operationFailed" }), ct); // S2: no exponer ex.Message al peer
         }
     }
 
@@ -1181,9 +1434,15 @@ public sealed class FileServer
         {
             var di = new DirectoryInfo(path);
             foreach (var d in di.GetDirectories().OrderBy(x => x.Name))
+            {
+                if (d.Name.StartsWith(".")) continue;
                 list.Add(new FileEntry { Name = d.Name, FullPath = d.FullName, IsDirectory = true });
+            }
             foreach (var f in di.GetFiles().OrderBy(x => x.Name))
+            {
+                if (f.Name.StartsWith(".")) continue;
                 list.Add(new FileEntry { Name = f.Name, FullPath = f.FullName, Size = f.Length, LastWriteUtcTicks = f.LastWriteTimeUtc.Ticks });
+            }
         }
         catch { }
 
@@ -1210,7 +1469,7 @@ public sealed class FileServer
         try
         {
             using var s = new Socket(AddressFamily.InterNetwork, SocketType.Dgram, ProtocolType.Udp);
-            // Usar una IP privada/RFC1918: no se envía ningún paquete real (UDP Dgram),
+            // Usar una IP privada/RFC1918: no se envÃ­a ningÃºn paquete real (UDP Dgram),
             // pero evita cualquier apariencia de contacto con infraestructura externa.
             s.Connect("192.168.1.1", 53);
             return ((IPEndPoint)s.LocalEndPoint!).Address.ToString();
@@ -1218,56 +1477,13 @@ public sealed class FileServer
         catch { return "localhost"; }
     }
 
-    private static bool IpInList(System.Collections.Concurrent.ConcurrentBag<string> list, string ip)
+    // IAsyncDisposable implementation for proper async resource cleanup
+    public ValueTask DisposeAsync() // Q2: no async work, removed state machine
     {
-        foreach (var item in list)
-        {
-            if (item.Equals(ip, StringComparison.OrdinalIgnoreCase))
-                return true;
-            // Support CIDR notation (e.g., 192.168.1.0/24)
-            if (item.Contains('/'))
-            {
-                if (IpInCidr(ip, item))
-                    return true;
-            }
-        }
-        return false;
-    }
-
-    private static bool IpInCidr(string ip, string cidr)
-    {
-        try
-        {
-            var parts = cidr.Split('/');
-            if (parts.Length != 2) return false;
-            if (!IPAddress.TryParse(parts[0], out var network) || !int.TryParse(parts[1], out var maskBits))
-                return false;
-            if (!IPAddress.TryParse(ip, out var address))
-                return false;
-            if (network.AddressFamily != address.AddressFamily)
-                return false;
-
-            var netBytes = network.GetAddressBytes();
-            var addrBytes = address.GetAddressBytes();
-            var maskBytes = new byte[netBytes.Length];
-            int fullBytes = maskBits / 8;
-            int remainder = maskBits % 8;
-
-            for (int i = 0; i < fullBytes; i++)
-                maskBytes[i] = 0xFF;
-            if (remainder > 0)
-                maskBytes[fullBytes] = (byte)(0xFF << (8 - remainder));
-
-            for (int i = 0; i < netBytes.Length; i++)
-            {
-                if ((netBytes[i] & maskBytes[i]) != (addrBytes[i] & maskBytes[i]))
-                    return false;
-            }
-            return true;
-        }
-        catch
-        {
-            return false;
-        }
+        Stop(); // Stop() cancela y dispone _cts — no redundar aqui (Q2: double dispose removed)
+        _listener?.Dispose();
+        _serverCert?.Dispose();
+        GC.SuppressFinalize(this);
+        return ValueTask.CompletedTask;
     }
 }

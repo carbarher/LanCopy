@@ -1,0 +1,32 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        x:Class="LanCopy.QueueResumeDialog"
+        Title="LanCopy"
+        Width="620" Height="220"
+        WindowStartupLocation="CenterOwner"
+        CanResize="False"
+        Background="{DynamicResource WindowBg}">
+    <StackPanel Margin="20" Spacing="16">
+        <TextBlock x:Name="txtMessage"
+                   Foreground="{DynamicResource TextFg}"
+                   TextWrapping="Wrap"
+                   FontSize="13"/>
+        <StackPanel Orientation="Horizontal"
+                    HorizontalAlignment="Center"
+                    Spacing="12">
+            <Button x:Name="btnResume"
+                    Background="#28A745" Foreground="White"
+                    Padding="20,8" FontWeight="SemiBold"
+                    IsDefault="True"
+                    Click="BtnResume_Click"/>
+            <Button x:Name="btnResumeSkipSameSize"
+                    Background="#8E44AD" Foreground="White"
+                    Padding="20,8"
+                    Click="BtnResumeSkipSameSize_Click"/>
+            <Button x:Name="btnDiscard"
+                    Background="#6C757D" Foreground="White"
+                    Padding="20,8"
+                    Click="BtnDiscard_Click"/>
+        </StackPanel>
+    </StackPanel>
+</Window>

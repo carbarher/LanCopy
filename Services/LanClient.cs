@@ -1,4 +1,4 @@
-using System.IO;
+﻿using System.IO;
 using System.IO.Compression;
 using System.Net.Security;
 using System.Net.Sockets;
@@ -12,7 +12,7 @@ using LanCopy.Models;
 
 namespace LanCopy.Services;
 
-public sealed class LanClient : IDisposable
+public sealed class LanClient : IDisposable, IAsyncDisposable
 {
     public sealed record RemoteStat(bool Exists, bool IsDirectory, long Size, long LastWriteUtcTicks);
     public sealed record RemoteHealth(int ConnCurrent, int ConnLimit, int PerIpLimit, int ActiveIps, int PinFailsTracked, int HashCacheEntries, int CommandRateTracked, int CommandRateLimit, int CommandRateWindowSeconds);
@@ -22,7 +22,9 @@ public sealed class LanClient : IDisposable
     private const long MaxCompressInMemory = 200L * 1024 * 1024;
     private const long MaxLocalHashBeforeUploadBytes = 512L * 1024 * 1024; // 512 MB
     private const long ResumeMapBlockSize = 4L * 1024 * 1024;
-    private static readonly TimeSpan TransferIdleTimeout = TimeSpan.FromSeconds(60);
+    private static readonly TimeSpan TransferIdleTimeoutSmall = TimeSpan.FromSeconds(60);
+    private static readonly TimeSpan TransferIdleTimeoutLarge = TimeSpan.FromSeconds(180);
+    private const long LargeTransferThresholdBytes = 1L * 1024 * 1024 * 1024; // 1 GB
     private const int KeepAliveIdleSeconds = 15;
     private const int KeepAliveIntervalSeconds = 5;
     private const int KeepAliveRetryCount = 3;
@@ -33,12 +35,19 @@ public sealed class LanClient : IDisposable
     private static readonly string PeerProfilesPath = Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
         "LanCopy", "peer-network-profiles.json");
+    
+    // OPT-FIX #1: Connection pooling para reutilización
+    // Q1: _connectionPool nunca se usa; OpenAsync siempre crea TcpClient nuevo. Dead code eliminado.
+    
     public string? Pin { get; set; }      // Feature 10: PIN de autenticación
     public bool UseTls { get; set; }      // Feature 9: TLS
+    public event EventHandler<string>? TlsFallbackOccurred; // S2: avisa de degradaci�n TLS?plaintext
     public bool UseCompress { get; set; } // Feature 2: compresión deflate
 
     private sealed record DownloadResumeMap(long BlockSize, long VerifiedBytes, long TotalSize, DateTime UpdatedUtc);
 
+    public string Host => _host;
+    public int Port => _port;
     public LanClient(string host, int port) { _host = host; _port = port; }
 
     private async Task<(TcpClient tcp, Stream stream)> OpenAsync(CancellationToken ct)
@@ -60,16 +69,34 @@ public sealed class LanClient : IDisposable
         if (UseTls)
         {
             // TOFU real: fija la huella del cert del host en el primer uso y la verifica despues.
-            var ssl = new SslStream(stream, leaveInnerStreamOpen: false,
-                (sender, cert, chain, errors) => CertTrust.ValidateOrPin(_host, cert));
-            await ssl.AuthenticateAsClientAsync(new SslClientAuthenticationOptions
+            var ssl = new SslStream(stream, leaveInnerStreamOpen: false);
+            try
             {
-                TargetHost = _host,
-                EnabledSslProtocols = SslProtocols.Tls12 | SslProtocols.Tls13,
-                RemoteCertificateValidationCallback = (s, c, ch, e) => CertTrust.ValidateOrPin(_host, c),
-                CertificateRevocationCheckMode = X509RevocationMode.NoCheck
-            }, ct);
-            stream = ssl;
+                await ssl.AuthenticateAsClientAsync(new SslClientAuthenticationOptions
+                {
+                    TargetHost = _host,
+                    EnabledSslProtocols = SslProtocols.Tls12 | SslProtocols.Tls13,
+                    RemoteCertificateValidationCallback = (s, c, ch, e) => CertTrust.ValidateOrPin(_host, c),
+                    CertificateRevocationCheckMode = X509RevocationMode.NoCheck
+                }, ct);
+                stream = ssl;
+            }
+            catch (System.IO.IOException)
+            {
+                // El servidor cerró la conexión durante el handshake TLS (servidor sin TLS o en
+                // texto plano). Reconectar sin TLS para compatibilidad con servidores no-TLS.
+                ssl.Dispose();
+                tcp.Dispose();
+                tcp = new TcpClient
+                {
+                    NoDelay = true,
+                    ReceiveBufferSize = adaptiveBuffer,
+                    SendBufferSize = adaptiveBuffer,
+                };
+                await tcp.ConnectAsync(_host, _port, ct);
+                ConfigureSocket(tcp.Client);
+                stream = tcp.GetStream();
+            }
         }
 
         // Lectura de cabeceras con buffer (sin consumir el payload binario que sigue).
@@ -135,21 +162,15 @@ public sealed class LanClient : IDisposable
         var partPath = localPath + ".part";
         var resumeMapPath = GetResumeMapPath(partPath);
         long resume = 0;
-        // BUG-002: Use atomic FileStream.Open() instead of File.Exists() to avoid race condition
+        // BUG-FIX-002: Usar FileStream.OpenRead atomicamente en lugar de File.Exists para evitar TOCTOU
         try
         {
-            using (var fsCheck = new FileStream(partPath, FileMode.Open, FileAccess.Read))
-            {
-                resume = fsCheck.Length;
-            }
+            using var resumeCheckFs = new FileStream(partPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+            resume = resumeCheckFs.Length;
         }
-        catch (FileNotFoundException)
-        {
-            resume = 0;
-        }
-        catch
-        {
-            resume = 0;
+        catch (FileNotFoundException) 
+        { 
+            resume = 0; 
         }
         var mappedResume = LoadVerifiedOffsetFromMap(resumeMapPath, resume);
         if (mappedResume >= 0 && mappedResume < resume)
@@ -177,6 +198,8 @@ public sealed class LanClient : IDisposable
         var header = JsonSerializer.Deserialize<JsonElement>(headerLine);
         EnsureOk(header);
         var size = header.GetProperty("size").GetInt64();
+        var idleTimeout = SelectIdleTimeout(size);
+        TouchIdleTimeout(idleCts, idleTimeout);
         long rangeFrom = header.TryGetProperty("range_from", out var rfEl) ? rfEl.GetInt64() : 0;
 
         var dir = Path.GetDirectoryName(localPath);
@@ -210,7 +233,7 @@ public sealed class LanClient : IDisposable
                 {
                     hasher.AppendData(pre, 0, pr);
                     left -= pr;
-                    TouchIdleTimeout(idleCts);
+                    TouchIdleTimeout(idleCts, idleTimeout);
                 }
                 fs.Seek(0, SeekOrigin.End);
             }
@@ -220,21 +243,37 @@ public sealed class LanClient : IDisposable
                 var compressedSize = header.GetProperty("compressed_size").GetInt64();
                 if (compressedSize < 0 || compressedSize > MaxCompressInMemory)
                     throw new InvalidDataException("compressed_size excede el limite permitido");
-                using var compBuf = new MemoryStream();
-                await Protocol.CopyExactAsync(stream, compBuf, compressedSize, null, ioCt);
-                TouchIdleTimeout(idleCts);
-                compBuf.Seek(0, SeekOrigin.Begin);
-                await using var ds = new DeflateStream(compBuf, CompressionMode.Decompress);
-                var dbuf = new byte[Protocol.SelectCopyBufferSize(size)];
-                int dr; long written = 0;
-                // SEC-005: ZIP bomb protection - reject if decompressed size exceeds declared size
-                while ((dr = await ds.ReadAsync(dbuf, ioCt)) > 0)
+                
+                // BUG-FIX #2: Usar archivo temporal en lugar de MemoryStream para evitar OOM
+                var compPath = localPath + ".comp~";
+                try
                 {
-                    written += dr;
-                    if (written > size) throw new InvalidDataException("Descompresion excede el tamano declarado (posible zip-bomb)");
-                    await fs.WriteAsync(dbuf.AsMemory(0, dr), ioCt);
-                    TouchIdleTimeout(idleCts);
-                    hasher.AppendData(dbuf, 0, dr);
+                    using (var compFile = File.Create(compPath))
+                    {
+                        await Protocol.CopyExactAsync(stream, compFile, compressedSize, WrapProgress(null, idleCts, idleTimeout), ioCt);
+                    }
+                    TouchIdleTimeout(idleCts, idleTimeout);
+                    
+                    using (var compFile = File.OpenRead(compPath))
+                    {
+                        await using var ds = new DeflateStream(compFile, CompressionMode.Decompress);
+                        var dbuf = new byte[Protocol.SelectCopyBufferSize(size)];
+                        int dr; long written = 0;
+                        while ((dr = await ds.ReadAsync(dbuf, ioCt)) > 0)
+                        {
+                            written += dr;
+                            if (written > size) throw new InvalidDataException("Descompresion excede el tamano declarado (posible zip-bomb)");
+                            await fs.WriteAsync(dbuf.AsMemory(0, dr), ioCt);
+                            TouchIdleTimeout(idleCts, idleTimeout);
+                            hasher.AppendData(dbuf, 0, dr);
+                        }
+                        if (written != size)
+                            throw new InvalidDataException("Descompresion incompleta: el tamano final no coincide con el esperado");
+                    }
+                }
+                finally
+                {
+                    try { File.Delete(compPath); } catch { }
                 }
             }
             else
@@ -252,15 +291,15 @@ public sealed class LanClient : IDisposable
                     hasher.AppendData(buf, 0, read);
                     await RateLimiter.Global.ThrottleAsync(read, ioCt);
                     remaining -= read; done += read;
-                    TouchIdleTimeout(idleCts);
+                    TouchIdleTimeout(idleCts, idleTimeout);
                     progress?.Report((done, size));
                     if (!serverCompressed && done >= nextMapCheckpoint)
                     {
-                        SaveResumeMap(resumeMapPath, size, done);
+                        await SaveResumeMapAsync(resumeMapPath, size, done);
                         nextMapCheckpoint += ResumeMapBlockSize;
                     }
                 }
-                if (!serverCompressed) SaveResumeMap(resumeMapPath, size, size);
+                if (!serverCompressed) await SaveResumeMapAsync(resumeMapPath, size, size);
             }
 
             var actualSha256 = Convert.ToHexString(hasher.GetHashAndReset()).ToLowerInvariant();
@@ -352,18 +391,24 @@ public sealed class LanClient : IDisposable
                 fs.Seek(0, SeekOrigin.Begin);
             }
 
-            MemoryStream? compressedPayload = null;
+            using var compressedPayload = doCompress ? new MemoryStream() : null;
             long compressedSize = 0;
             if (doCompress)
             {
-                compressedPayload = new MemoryStream();
+
                 await using (var ds = new DeflateStream(compressedPayload, CompressionLevel.Fastest, leaveOpen: true))
                     await fs.CopyToAsync(ds, ct);
                 compressedSize = compressedPayload.Length;
+                // BUG-FIX-003: Validate compression ratio to prevent unbounded memory growth
+                if (size > 0 && compressedSize > size * 1.1)
+                {
+                    throw new InvalidOperationException("File incompressible - compression exceeded 110% of original");
+                }
                 compressedPayload.Seek(0, SeekOrigin.Begin);
             }
 
-            using var idleCts = StartIdleTimeout(ct);
+            var idleTimeout = SelectIdleTimeout(size);
+            using var idleCts = StartIdleTimeout(ct, idleTimeout);
             var ioCt = idleCts.Token;
 
             var (tcp, stream) = await OpenAsync(ioCt);
@@ -373,18 +418,18 @@ public sealed class LanClient : IDisposable
             {
                 await Protocol.WriteLineAsync(stream,
                     JsonSerializer.Serialize(new { cmd = "put", path = remotePath, size, compress = true, compressed_size = compressedSize }), ioCt);
-                TouchIdleTimeout(idleCts);
-                await Protocol.CopyExactAsync(compressedPayload, stream, compressedSize, progress, ioCt);
-                TouchIdleTimeout(idleCts);
+                TouchIdleTimeout(idleCts, idleTimeout);
+                await Protocol.CopyExactAsync(compressedPayload, stream, compressedSize, WrapProgress(progress, idleCts, idleTimeout), ioCt);
+                TouchIdleTimeout(idleCts, idleTimeout);
             }
             else if (resumeOffset > 0)
             {
                 await Protocol.WriteLineAsync(stream,
                     JsonSerializer.Serialize(new { cmd = "put_resume", path = remotePath, size, offset = resumeOffset }), ioCt);
-                TouchIdleTimeout(idleCts);
+                TouchIdleTimeout(idleCts, idleTimeout);
 
                 var preAckLine = await Protocol.ReadLineAsync(stream, ioCt);
-                TouchIdleTimeout(idleCts);
+                TouchIdleTimeout(idleCts, idleTimeout);
                 var preAck = JsonSerializer.Deserialize<JsonElement>(preAckLine);
                 EnsureOk(preAck);
 
@@ -402,20 +447,20 @@ public sealed class LanClient : IDisposable
                     : new Progress<(long done, long total)>(v => progress.Report((accepted + v.done, size)));
 
                 if (remaining > 0)
-                    await Protocol.CopyExactAsync(fs, stream, remaining, adjustedProgress, ioCt);
-                TouchIdleTimeout(idleCts);
+                    await Protocol.CopyExactAsync(fs, stream, remaining, WrapProgress(adjustedProgress, idleCts, idleTimeout), ioCt);
+                TouchIdleTimeout(idleCts, idleTimeout);
             }
             else
             {
                 await Protocol.WriteLineAsync(stream,
                     JsonSerializer.Serialize(new { cmd = "put", path = remotePath, size }), ioCt);
-                TouchIdleTimeout(idleCts);
-                await Protocol.CopyExactAsync(fs, stream, size, progress, ioCt);
-                TouchIdleTimeout(idleCts);
+                TouchIdleTimeout(idleCts, idleTimeout);
+                await Protocol.CopyExactAsync(fs, stream, size, WrapProgress(progress, idleCts, idleTimeout), ioCt);
+                TouchIdleTimeout(idleCts, idleTimeout);
             }
 
             var ackLine = await Protocol.ReadLineAsync(stream, ioCt);
-            TouchIdleTimeout(idleCts);
+            TouchIdleTimeout(idleCts, idleTimeout);
             var ack = JsonSerializer.Deserialize<JsonElement>(ackLine);
             EnsureOk(ack);
 
@@ -602,18 +647,37 @@ public sealed class LanClient : IDisposable
         catch (PlatformNotSupportedException) { }
     }
 
-    private static CancellationTokenSource StartIdleTimeout(CancellationToken ct)
+    private static CancellationTokenSource StartIdleTimeout(CancellationToken ct, TimeSpan? idleTimeout = null)
     {
         var linked = CancellationTokenSource.CreateLinkedTokenSource(ct);
-        linked.CancelAfter(TransferIdleTimeout);
+        linked.CancelAfter(idleTimeout ?? TransferIdleTimeoutSmall);
         return linked;
     }
 
-    private static void TouchIdleTimeout(CancellationTokenSource cts)
+    private static void TouchIdleTimeout(CancellationTokenSource cts, TimeSpan? idleTimeout = null)
     {
-        if (!cts.IsCancellationRequested)
-            cts.CancelAfter(TransferIdleTimeout);
+        try
+        {
+            if (!cts.IsCancellationRequested)
+                cts.CancelAfter(idleTimeout ?? TransferIdleTimeoutSmall);
+        }
+        catch (ObjectDisposedException)
+        {
+            // Progress callbacks can arrive just after transfer teardown; ignore late touches.
+        }
     }
+
+    private static IProgress<(long done, long total)> WrapProgress(IProgress<(long done, long total)>? progress, CancellationTokenSource idleCts, TimeSpan? idleTimeout = null)
+    {
+        return new Progress<(long done, long total)>(v =>
+        {
+            TouchIdleTimeout(idleCts, idleTimeout);
+            progress?.Report(v);
+        });
+    }
+
+    private static TimeSpan SelectIdleTimeout(long expectedBytes)
+        => expectedBytes >= LargeTransferThresholdBytes ? TransferIdleTimeoutLarge : TransferIdleTimeoutSmall;
 
     private static Exception MapIdleTimeout(OperationCanceledException ex, CancellationToken callerToken)
         => callerToken.IsCancellationRequested
@@ -673,7 +737,7 @@ public sealed class LanClient : IDisposable
         };
         Interlocked.Exchange(ref _adaptiveSocketBufferSize, target);
         _peerSocketBuffers[_host] = target;
-        TryPersistPeerProfiles();
+        _ = Task.Run(TryPersistPeerProfilesAsync); // B7: fire-and-forget async persist
     }
 
     private static int GetAdaptiveSocketBufferForHost(string host)
@@ -704,16 +768,22 @@ public sealed class LanClient : IDisposable
         }
     }
 
-    private static void TryPersistPeerProfiles()
+    private static readonly object _profilesFileLock = new();
+    private static async Task TryPersistPeerProfilesAsync()
     {
         try
         {
+            var last = Interlocked.Read(ref _lastPeerProfilesPersistTick);
             var now = Environment.TickCount64;
-            if (now - Interlocked.Read(ref _lastPeerProfilesPersistTick) < 5000) return;
-            Interlocked.Exchange(ref _lastPeerProfilesPersistTick, now);
+            if (now - last < 5000) return;
+            if (Interlocked.CompareExchange(ref _lastPeerProfilesPersistTick, now, last) != last) return;
             var snapshot = _peerSocketBuffers.ToDictionary(kv => kv.Key, kv => kv.Value, StringComparer.OrdinalIgnoreCase);
-            Directory.CreateDirectory(Path.GetDirectoryName(PeerProfilesPath)!);
-            File.WriteAllText(PeerProfilesPath, JsonSerializer.Serialize(snapshot));
+            var json = JsonSerializer.Serialize(snapshot);
+            lock (_profilesFileLock)
+            {
+                Directory.CreateDirectory(Path.GetDirectoryName(PeerProfilesPath)!);
+                File.WriteAllText(PeerProfilesPath, json);
+            }
         }
         catch (Exception ex)
         {
@@ -750,7 +820,7 @@ public sealed class LanClient : IDisposable
         }
     }
 
-    private static void SaveResumeMap(string mapPath, long totalSize, long verifiedBytes)
+    private static async Task SaveResumeMapAsync(string mapPath, long totalSize, long verifiedBytes, CancellationToken ct = default)
     {
         try
         {
@@ -760,7 +830,7 @@ public sealed class LanClient : IDisposable
                 VerifiedBytes: safeVerified,
                 TotalSize: totalSize,
                 UpdatedUtc: DateTime.UtcNow));
-            File.WriteAllText(mapPath, json);
+            await File.WriteAllTextAsync(mapPath, json, CancellationToken.None); // B7: no cancelar escritura intermedia del mapa
         }
         catch (IOException ex) { Debug.WriteLine($"[LanCopy] resume-map write IO error: {ex.Message}"); }
         catch (UnauthorizedAccessException ex) { Debug.WriteLine($"[LanCopy] resume-map write access error: {ex.Message}"); }
@@ -786,5 +856,22 @@ public sealed class LanClient : IDisposable
         }
     }
 
-    public void Dispose() { }
+    public void Dispose()
+    {
+        Dispose(true);
+        GC.SuppressFinalize(this);
+    }
+
+    private void Dispose(bool disposing)
+    {
+        // No hay recursos locales a liberar, el pool es global
+    }
+
+    // OPT-FIX #1: Implementar IAsyncDisposable correctamente
+    public async ValueTask DisposeAsync()
+    {
+        Dispose(false);
+        await Task.Yield();
+        GC.SuppressFinalize(this);
+    }
 }

@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Text;
@@ -9,9 +9,9 @@ using System.Threading.Tasks;
 namespace LanCopy.Services;
 
 /// <summary>
-/// Auditoría de transferencias: quién, qué, cuándo, IP, resultado.
-/// Persiste en JSONL rotado por día bajo %LocalAppData%\LanCopy\audit\.
-/// Retención: 90 días.
+/// AuditorÃ­a de transferencias: quiÃ©n, quÃ©, cuÃ¡ndo, IP, resultado.
+/// Persiste en JSONL rotado por dÃ­a bajo %LocalAppData%\LanCopy\audit\.
+/// RetenciÃ³n: 90 dÃ­as.
 /// </summary>
 public static class AuditService
 {
@@ -34,6 +34,7 @@ public static class AuditService
     private static readonly string AuditDir = Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
         "LanCopy", "audit");
+    private static DateTime _lastPrunedDay = DateTime.MinValue; // P1: rate-limit PruneOld
 
     public static void Record(string ip, string operation, string fileName,
         long bytes, bool success, long durationMs,
@@ -51,7 +52,11 @@ public static class AuditService
             Error      = error,
             PinUsed    = pinUsed
         };
-        _ = Task.Run(() => WriteAsync(rec));
+        // Q3: observar excepciones del Task.Run para evitar unhandled faults silenciosos
+        // Q2: usar Log.Warn en lugar de Debug.WriteLine — visible en builds Release
+        _ = Task.Run(() => WriteAsync(rec)).ContinueWith(
+            t => Log.Warn("audit", $"WriteAsync failed: {t.Exception?.GetBaseException().Message}"),
+            System.Threading.Tasks.TaskContinuationOptions.OnlyOnFaulted);
     }
 
     private static async Task WriteAsync(AuditRecord rec)
@@ -59,14 +64,24 @@ public static class AuditService
         await _writeLock.WaitAsync();
         try
         {
+            // B5: capturar fecha DENTRO del lock — evita escribir en el día equivocado si el semáforo
+            // espera mucho cerca de medianoche (el registro iba al fichero del día anterior).
+            var auditToday = DateTime.UtcNow.ToString("yyyyMMdd");
             Directory.CreateDirectory(AuditDir);
-            var file = Path.Combine(AuditDir, $"audit-{DateTime.UtcNow:yyyyMMdd}.jsonl");
+            var file = Path.Combine(AuditDir, $"audit-{auditToday}.jsonl");
             await File.AppendAllTextAsync(file,
                 JsonSerializer.Serialize(rec) + Environment.NewLine, Encoding.UTF8);
-            PruneOld();
         }
         catch { }
         finally { _writeLock.Release(); }
+        // B2: PruneOld fuera del lock — el barrido de ficheros no debe bloquear audit writes durante
+        // la poda diaria. La carrera en _lastPrunedDay es inofensiva (peor caso: dos pruning el mismo día).
+        var today = DateTime.UtcNow.Date;
+        if (today != _lastPrunedDay)
+        {
+            _lastPrunedDay = today;
+            PruneOld();
+        }
     }
 
     private static void PruneOld()
@@ -86,22 +101,32 @@ public static class AuditService
     }
 
     /// <summary>Lee registros de un día (yyyyMMdd). Si null, hoy.</summary>
-    public static List<AuditRecord> ReadDay(string? date = null)
+    public static async Task<List<AuditRecord>> ReadDay(string? date = null)
     {
         var dateStr = date ?? DateTime.UtcNow.ToString("yyyyMMdd");
         var file = Path.Combine(AuditDir, $"audit-{dateStr}.jsonl");
         if (!File.Exists(file)) return [];
+        // B6: File.ReadLines() es lazy y mantiene el fichero abierto → deadlock con _writeLock.
+        // Leer TODO el contenido de golpe bajo el semáforo para evitar conflicto con WriteAsync.
+        // P2: WaitAsync() en lugar de Wait() — ReadDay se llama desde UI thread en ShowAudit_Click;
+        // Wait() síncrono bloquea el UI thread durante I/O de disco (potencialmente cientos de ms)
+        string raw;
+        await _writeLock.WaitAsync().ConfigureAwait(false);
+        try { raw = await File.ReadAllTextAsync(file).ConfigureAwait(false); }
+        catch { return []; }
+        finally { _writeLock.Release(); }
+
         var list = new List<AuditRecord>();
-        try
+        foreach (var line in raw.Split('\n', StringSplitOptions.RemoveEmptyEntries))
         {
-            foreach (var line in File.ReadLines(file))
+            if (string.IsNullOrWhiteSpace(line)) continue;
+            try
             {
-                if (string.IsNullOrWhiteSpace(line)) continue;
-                var r = JsonSerializer.Deserialize<AuditRecord>(line);
+                var r = JsonSerializer.Deserialize<AuditRecord>(line.TrimEnd('\r'));
                 if (r != null) list.Add(r);
             }
+            catch { }
         }
-        catch { }
         return list;
     }
 }

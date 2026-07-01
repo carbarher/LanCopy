@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.Diagnostics;
@@ -53,7 +53,7 @@ public partial class MainWindow
     private async void ConnectionWatchdog_Tick(object? sender, EventArgs e)
     {
         if (Volatile.Read(ref _isWindowClosing) == 1) return;
-        if (_connectButtonIsBusy || _isTransferring == 1 || Volatile.Read(ref _isReconnectInProgress) == 1) return;
+        if (_connectButtonIsBusy || _isTransferring != 0 || Volatile.Read(ref _isReconnectInProgress) == 1) return;
         if (Interlocked.CompareExchange(ref _isConnectionProbeRunning, 1, 0) != 0) return;
 
         try
@@ -64,12 +64,13 @@ public partial class MainWindow
             finally { _clientLock.Release(); }
             if (snap == null) return;
 
+            // U4: usar GetHealthAsync como keepalive (no enumera directorio, solo consulta métricas)
             using var probeCts = new CancellationTokenSource(TimeSpan.FromSeconds(2));
-            _ = await snap.ListAsync("", probeCts.Token);
+            _ = await snap.GetHealthAsync(probeCts.Token);
         }
         catch (Exception)
         {
-            if (Volatile.Read(ref _isWindowClosing) == 1 || _isTransferring == 1) return;
+            if (Volatile.Read(ref _isWindowClosing) == 1 || _isTransferring != 0) return;
             await DisconnectAsync(silent: true);
             SetStatus(L["st.disconnected"]);
         }
@@ -88,22 +89,6 @@ public partial class MainWindow
     private async void TxtRemoteIp_KeyDown(object? sender, KeyEventArgs e)
     {
         if (e.Key == Key.Enter) await TryConnectAsync();
-    }
-
-    private void TxtRemoteIp_TextChanged(object? sender, TextChangedEventArgs e)
-    {
-        // Skip auto-save during settings restoration
-        if (Volatile.Read(ref _isLoadingSettings) == 1) return;
-        
-        // Auto-save IP whenever user types in the field
-        var ip = (sender as TextBox)?.Text?.Trim() ?? "";
-        var port = this.FindControl<TextBox>("txtRemotePort")?.Text?.Trim() ?? "8742";
-        if (!string.IsNullOrEmpty(ip) && ip != _lastConnectedIp)
-        {
-            _lastConnectedIp = ip;
-            _lastConnectedPort = port;
-            SaveSettings(ip, port);
-        }
     }
 
     private void CopyIp_Click(object? sender, RoutedEventArgs e)
@@ -163,8 +148,6 @@ public partial class MainWindow
         {
             SetStatus(L["st.invalidPort"]); return;
         }
-        _lastConnectedIp = ip;
-        _lastConnectedPort = portStr;
         SaveSettings(ip, portStr);
         await ConnectAsync(ip, port);
     }
@@ -179,12 +162,13 @@ public partial class MainWindow
         }
 
         await _clientLock.WaitAsync();
-        try { _client?.Dispose(); _client = MakeClient(ip, port); }
+        LanClient newClient;
+        try { _client?.Dispose(); _client = newClient = MakeClient(ip, port); }
         finally { _clientLock.Release(); }
 
         try
         {
-            var entries = await _client.ListAsync(_remotePath);
+            var entries = await newClient.ListAsync(_remotePath);
             Dispatcher.UIThread.Post(() => { _remoteItemsAll = entries; ApplyRemoteSort(); UpdateRemotePath(); });
             SetConnStatus(L["conn.connectedWord"], BrushConnected);
             UpdateConnectButton(isConnected: true, isBusy: false);
@@ -193,8 +177,33 @@ public partial class MainWindow
         }
         catch (Exception ex)
         {
+            if (!string.IsNullOrEmpty(_remotePath) &&
+                (ex.Message.Contains("svc.accessDenied") || ex.Message.Contains("svc.outsideShare") || ex.Message.Contains("svc.invalidPath") || ex.Message.Contains("svc.sysProtected")))
+            {
+                try
+                {
+                    _remotePath = "";
+                    var entries = await newClient.ListAsync("");
+                    Dispatcher.UIThread.Post(() => { _remoteItemsAll = entries; ApplyRemoteSort(); UpdateRemotePath(); });
+                    SetConnStatus(L["conn.connectedWord"], BrushConnected);
+                    UpdateConnectButton(isConnected: true, isBusy: false);
+                    UpdateRemoteCreateFolderButton(isConnected: true);
+                    if (!silent) SetStatus(L.Format("st.connected", $"{ip}:{port}"));
+                    return;
+                }
+                catch { }
+            }
+
             await _clientLock.WaitAsync();
-            try { _client?.Dispose(); _client = null; }
+            try
+            {
+                // Evita clobber de una conexión más nueva si hubo intentos solapados.
+                if (ReferenceEquals(_client, newClient))
+                {
+                    _client.Dispose();
+                    _client = null;
+                }
+            }
             finally { _clientLock.Release(); }
             SetConnStatus(L["conn.error"], BrushError);
             UpdateConnectButton(isConnected: false, isBusy: false);
@@ -214,8 +223,9 @@ public partial class MainWindow
     {
         UpdateConnectButton(isConnected: true, isBusy: true);
         if (notifyPeer) await TrySendDisconnectNoticeAsync();
-        _uploadCts.Cancel();
-        _downloadCts.Cancel();
+        try { _uploadCts.Cancel(); } catch (ObjectDisposedException) { }
+        try { _downloadCts.Cancel(); } catch (ObjectDisposedException) { }
+        if (_watchFolderActive) Dispatcher.UIThread.Post(StopWatch);
 
         await _clientLock.WaitAsync();
         try { _client?.Dispose(); _client = null; }

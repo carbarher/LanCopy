@@ -1,10 +1,12 @@
-using System;
+﻿using System;
 using System.Threading.Tasks;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Layout;
 using Avalonia.Media;
 using Avalonia.Threading;
+
+using LanCopy.Localization;
 
 namespace LanCopy;
 
@@ -50,7 +52,7 @@ public class SplashScreen : Window
 
         var icon = new TextBlock
         {
-            Text                = "⟷",
+            Text                = "\u27F7",
             FontSize            = 52,
             Foreground          = new LinearGradientBrush
             {
@@ -74,7 +76,7 @@ public class SplashScreen : Window
 
         var subtitle = new TextBlock
         {
-            Text                = "Transferencia LAN  ·  Cifrada  ·  Sin nube",
+            Text                = "Transferencia LAN  \u00B7  Cifrada  \u00B7  Sin nube",
             FontSize            = 11,
             Foreground          = new SolidColorBrush(Color.FromArgb(150, 180, 200, 255)),
             HorizontalAlignment = HorizontalAlignment.Center,
@@ -99,7 +101,7 @@ public class SplashScreen : Window
 
         _status = new TextBlock
         {
-            Text                = "Iniciando...",
+            Text                = LanCopy.Localization.Loc.Instance["splash.loading"], // U3: usa key ya existente
             FontSize            = 11,
             Foreground          = new SolidColorBrush(Color.FromArgb(100,180,200,255)),
             HorizontalAlignment = HorizontalAlignment.Center,
@@ -145,6 +147,18 @@ public class SplashScreen : Window
     {
         for (double i = 1.0; i >= 0; i -= 0.07) { Opacity = i; await Task.Delay(16); }
         Opacity = 0;
+    }
+
+    // U1: mostrar error de arranque en la splash (puerto ocupado, etc.) antes de cerrar
+    public void ShowError(string message)
+    {
+        Dispatcher.UIThread.Post(() =>
+        {
+            _bar.Value = 100;
+            _bar.Foreground = new SolidColorBrush(Color.FromRgb(220, 50, 50));
+            _status.Text = message;
+            _status.Foreground = new SolidColorBrush(Color.FromRgb(255, 120, 120));
+        });
     }
 }
 

@@ -10,6 +10,8 @@ public sealed class TransferRecord
     public string PeerIp    { get; init; } = "";
     public long   Bytes     { get; init; }
     public bool   Success   { get; init; } = true;
+    // U4: ruta local del fichero transferido — permite que el double-click lo revele en Explorer
+    public string LocalPath { get; init; } = "";
 
     // Propiedades computadas para bindings en la UI
     public string BytesText => Bytes > 0 ? FileEntry.FormatSize(Bytes) : "";

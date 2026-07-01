@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.IO;
 using System.Text.Json;
 
@@ -14,16 +14,8 @@ public static class JsonStore
     /// <summary>Serializa value y lo escribe de forma atómica. Devuelve true si tuvo éxito.</summary>
     public static bool WriteAtomic<T>(string path, T value, JsonSerializerOptions? options = null)
     {
-        try
-        {
-            var dir = Path.GetDirectoryName(path);
-            if (!string.IsNullOrEmpty(dir)) Directory.CreateDirectory(dir);
-            var json = JsonSerializer.Serialize(value, options);
-            var tmp = path + ".tmp";
-            File.WriteAllText(tmp, json);
-            File.Move(tmp, path, overwrite: true);
-            return true;
-        }
+        // Q6: serializar y delegar en WriteRawAtomic para evitar duplicar la lógica de escritura atómica
+        try { return WriteRawAtomic(path, JsonSerializer.Serialize(value, options)); }
         catch { return false; }
     }
 

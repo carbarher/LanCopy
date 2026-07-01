@@ -10,38 +10,41 @@ namespace LanCopy.Localization;
 
 public sealed class Loc : INotifyPropertyChanged
 {
-    private static Loc? _instance;
-    public static Loc Instance => _instance ??= new();
+    // Q4: thread-safe singleton — ??= no es atómico bajo contención inicial
+    private static readonly Lazy<Loc> _lazy = new(() => new Loc(), System.Threading.LazyThreadSafetyMode.ExecutionAndPublication);
+    public static Loc Instance => _lazy.Value;
 
     public static readonly IReadOnlyList<(string Code, string Native)> Available = new[]
     {
-        ("es", "Español"),
+        ("es", "Espa\u00f1ol"),      // Español
         ("en", "English"),
-        ("fr", "Français"),
+        ("fr", "Fran\u00e7ais"),     // Français
         ("de", "Deutsch"),
         ("it", "Italiano"),
-        ("pt", "Português"),
+        ("pt", "Portugu\u00eas"),    // Português
         ("nl", "Nederlands"),
         ("pl", "Polski"),
-        ("ru", "Русский"),
-        ("uk", "Українська"),
-        ("ar", "العربية"),
-        ("tr", "Türkçe"),
+        ("ru", "\u0420\u0443\u0441\u0441\u043a\u0438\u0439"),    // Русский
+        ("uk", "\u0423\u043a\u0440\u0430\u0457\u043d\u0441\u044c\u043a\u0430"), // Українська
+        ("ar", "\u0639\u0631\u0628\u064a"),                       // عربي
+        ("tr", "T\u00fcrk\u00e7e"),  // Türkçe
         ("sv", "Svenska"),
-        ("cs", "Čeština"),
-        ("el", "Ελληνικά"),
-        ("hi", "हिन्दी"),
-        ("zh", "中文"),
-        ("ja", "日本語"),
-        ("ko", "한국어"),
-        ("vi", "Tiếng Việt"),
+        ("cs", "\u010ce\u0161tina"),  // Čeština
+        ("el", "\u0395\u03bb\u03bb\u03b7\u03bd\u03b9\u03ba\u03ac"),  // Ελληνικά
+        ("hi", "\u0939\u093f\u0928\u094d\u0926\u0940"),              // हिन्दी
+        ("zh", "\u4e2d\u6587"),      // 中文
+        ("ja", "\u65e5\u672c\u8a9e"), // 日本語
+        ("ko", "\ud55c\uad6d\uc5b4"), // 한국어
+        ("vi", "Ti\u1ebfng Vi\u1ec7t"), // Tiếng Việt
     };
 
     private static readonly HashSet<string> SupportedCodes = new(StringComparer.OrdinalIgnoreCase);
 
     private readonly Dictionary<string, Dictionary<string, string>> _cache = new();
-    private Dictionary<string, string> _current = new();
-    private Dictionary<string, string> _fallback = new();
+    // P3: lock compartido para PersistLanguage — evita race con SaveSettings de MainWindow
+    internal static readonly System.Threading.SemaphoreSlim SettingsLock = new(1, 1);
+    private volatile Dictionary<string, string> _current = new(); // P1: volatile para visibilidad entre threads (SetLanguage vs indexer desde Task.Run)
+    private volatile Dictionary<string, string> _fallback = new(); // P1: volatile para visibilidad entre threads
 
     public string Current { get; private set; } = "en";
     public bool IsRtl => string.Equals(Current, "ar", StringComparison.OrdinalIgnoreCase);
@@ -98,23 +101,31 @@ public sealed class Loc : INotifyPropertyChanged
         try { CultureInfo.CurrentUICulture = CultureInfo.GetCultureInfo(code); } catch { }
     }
 
+    private readonly object _cacheLock = new(); // Q7: proteger _cache de escrituras concurrentes
+
     private Dictionary<string, string> Load(string code)
     {
-        if (_cache.TryGetValue(code, out var cached)) return cached;
-        var dict = new Dictionary<string, string>(StringComparer.Ordinal);
-        try
+        lock (_cacheLock) // Q7: Dictionary<> no es thread-safe para escrituras concurrentes
         {
-            var uri = new Uri($"avares://LanCopy/Assets/i18n/{code}.json");
-            using var stream = AssetLoader.Open(uri);
-            using var reader = new StreamReader(stream);
-            var json = reader.ReadToEnd();
-            var parsed = JsonSerializer.Deserialize<Dictionary<string, string>>(json);
-            if (parsed != null)
-                foreach (var kv in parsed) dict[kv.Key] = kv.Value;
+            // P1: verificar cache ANTES del I/O y retener el lock para prevenir double-load concurrente
+            if (_cache.TryGetValue(code, out var cached)) return cached;
+            // Cargar el idioma dentro del lock — el I/O es infrecuente (una vez por idioma en startup)
+            // asi evitamos que dos threads carguen el mismo fichero de forma redundante
+            var dict = new Dictionary<string, string>(StringComparer.Ordinal);
+            try
+            {
+                var uri = new Uri($"avares://LanCopy/Assets/i18n/{code}.json");
+                using var stream = AssetLoader.Open(uri);
+                using var reader = new StreamReader(stream);
+                var json = reader.ReadToEnd();
+                var parsed = JsonSerializer.Deserialize<Dictionary<string, string>>(json);
+                if (parsed != null)
+                    foreach (var kv in parsed) dict[kv.Key] = kv.Value;
+            }
+            catch { }
+            _cache[code] = dict;
+            return dict;
         }
-        catch { }
-        _cache[code] = dict;
-        return dict;
     }
 
     private static string ResolveInitialLanguage()
@@ -152,19 +163,28 @@ public sealed class Loc : INotifyPropertyChanged
 
     private static void PersistLanguage(string code)
     {
-        try
+        // P3: ejecutar en ThreadPool para que el UI thread (CmbLang_SelectionChanged) no bloquee
+        // esperando SettingsLock si SaveSettings lo está reteniendo desde un contexto background.
+        _ = System.Threading.Tasks.Task.Run(() =>
         {
-            Directory.CreateDirectory(Path.GetDirectoryName(SettingsPath)!);
-            Dictionary<string, JsonElement> map = new();
-            if (File.Exists(SettingsPath))
+            SettingsLock.Wait();
+            try
             {
-                var existing = JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(File.ReadAllText(SettingsPath));
-                if (existing != null) map = existing;
+                Directory.CreateDirectory(Path.GetDirectoryName(SettingsPath)!);
+                Dictionary<string, JsonElement> map = new();
+                if (File.Exists(SettingsPath))
+                {
+                    var existing = JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(File.ReadAllText(SettingsPath));
+                    if (existing != null) map = existing;
+                }
+                using var doc = JsonDocument.Parse(JsonSerializer.Serialize(code));
+                map["language"] = doc.RootElement.Clone();
+                // escritura atómica para evitar corrupción si el proceso muere a mitad
+                LanCopy.Services.JsonStore.WriteRawAtomic(SettingsPath,
+                    JsonSerializer.Serialize(map, new JsonSerializerOptions { WriteIndented = false }));
             }
-            using var doc = JsonDocument.Parse(JsonSerializer.Serialize(code));
-            map["language"] = doc.RootElement.Clone();
-            File.WriteAllText(SettingsPath, JsonSerializer.Serialize(map, new JsonSerializerOptions { WriteIndented = false }));
-        }
-        catch { }
+            catch { }
+            finally { SettingsLock.Release(); }
+        });
     }
 }

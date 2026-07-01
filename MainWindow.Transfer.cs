@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.Diagnostics;
@@ -82,7 +82,10 @@ public partial class MainWindow
     private async Task TransferAsync(
         List<FileEntry> items,
         bool isUpload,
-        List<(FileEntry entry, string destPath)>? replayQueueFiles = null)
+        List<(FileEntry entry, string destPath)>? replayQueueFiles = null,
+        string? targetIp = null,
+        int? targetPort = null,
+        HashSet<int>? precomputedSkipSet = null)
     {
         ref int isFlag = ref (isUpload ? ref _isUploading : ref _isDownloading);
         if (Interlocked.CompareExchange(ref isFlag, 1, 0) == 1) return;
@@ -93,28 +96,33 @@ public partial class MainWindow
         var ct = cts.Token;
 
         // Capturar IP/puerto en hilo UI antes de entrar en async
-        var remoteIp = this.FindControl<TextBox>("txtRemoteIp")!.Text?.Trim() ?? "";
-        var portStr = this.FindControl<TextBox>("txtRemotePort")!.Text?.Trim() ?? "8742";
-        int.TryParse(portStr, out var remotePort);
+        var remoteIp = targetIp ?? this.FindControl<TextBox>("txtRemoteIp")!.Text?.Trim() ?? "";
+        var portStr = targetPort?.ToString() ?? this.FindControl<TextBox>("txtRemotePort")!.Text?.Trim() ?? "8742";
+        int remotePort;
+        if (targetPort == null) int.TryParse(portStr, out remotePort);
+        else remotePort = targetPort.Value;
 
-        var __pwTitle = isUpload ? L["prog.title.send"] : L["prog.title.receive"];
-        _progressWin = new ProgressWindow(__pwTitle, cts);
+        var pwTitle = isUpload ? L["prog.title.send"] : L["prog.title.receive"]; // Q1: sin prefijo __
+        _progressWin = new ProgressWindow(pwTitle, cts);
         _progressWin.Show(this);
-        string __finalMsg = "";
-        bool __finalErr = false;
+        string finalMsg = ""; // Q1
+        bool finalErr = false; // Q1
         SetTransferButtonsEnabled(false, cancelEnabled: true);
-        var __sw = System.Diagnostics.Stopwatch.StartNew();
+        var sw = System.Diagnostics.Stopwatch.StartNew(); // Q1
         try
         {
             if (!await EnsureHealthyTransferConnectionAsync(remoteIp, remotePort, ct))
             {
-                __finalMsg = L["st.reconnectFailed"];
-                __finalErr = true;
-                SetStatusAlert(__finalMsg);
+                finalMsg = L["st.reconnectFailed"];
+                finalErr = true;
+                SetStatusAlert(finalMsg);
                 return;
             }
 
             var fileList = replayQueueFiles ?? await ExpandItemsAsync(items, isUpload, ct);
+        // Q5: ordenar por tama�o si "small first" est� activado
+        if (_sortSmallestFirst && fileList != null)
+            fileList = fileList.OrderBy(x => x.entry.Size).ToList();
             if (fileList == null || ct.IsCancellationRequested) return;
 
             // Feature 3: guardar cola persistente al iniciar
@@ -125,11 +133,16 @@ public partial class MainWindow
             var arrow = isUpload ? ">>" : "<<";
             SetStatus(L.Format("st.filesTotal", $"{arrow} {fileList.Count}", fileList.Count > 1 ? L["word.files"] : L["word.file"], FileEntry.FormatSize(totalBytes)));
 
-            var skipSet = await CheckOverwriteAsync(fileList, isUpload);
-            if (skipSet == null) return;
+            var skipSet = precomputedSkipSet ?? await CheckOverwriteAsync(fileList, isUpload, ct: ct);
+            if (skipSet == null)
+            {
+                finalErr = true;
+                finalMsg = L["st.queueKeptRetry"];
+                SetStatusAlert(finalMsg);
+                return;
+            }
 
             int ok = 0, skip = 0;
-            var doneSync = new { Bytes = 0L };
             long totalTransfer = fileList
                 .Where((_, i) => !skipSet.Contains(i))
                 .Sum(x => x.entry.Size);
@@ -140,31 +153,29 @@ public partial class MainWindow
             var lockDoneBytes = new object();
             long doneBytes = 0; // actualizada dentro de lockDoneBytes
 
-            static List<(FileEntry entry, string destPath)> DeduplicateFailures(IEnumerable<(FileEntry entry, string destPath)> items)
-                => items
+            static List<(FileEntry entry, string destPath)> DeduplicateFailures(IEnumerable<(FileEntry entry, string destPath)>? items)
+            {
+                // BUG-FIX #4: Validar items no sea null antes de GroupBy
+                if (items == null) return [];
+                return items
                     .GroupBy(x => $"{x.entry.FullPath}|{x.destPath}", StringComparer.OrdinalIgnoreCase)
                     .Select(g => g.Last())
                     .ToList();
-
-            // -- Pase 1: transferencias paralelas (máx 4 simultáneas) --------
-            var transferTasks = new List<Task>();
-            for (int fi = 0; fi < fileList.Count; fi++)
-            {
-                if (ct.IsCancellationRequested) break;
-                if (skipSet.Contains(fi)) { skip++; continue; }
-
-                var (entry, destPath) = fileList[fi];
-                var taskFi = fi; // capture para closure
-
-                var task = ParallelTransferFileAsync(
-                    entry, destPath, isUpload, taskFi, fileList.Count,
-                    totalTransfer, arrow, failedFiles, lockDoneBytes, aggregate, remoteIp, remotePort, ct);
-                transferTasks.Add(task);
             }
 
-            // Esperar a que todas las transferencias terminen (max 4 simultáneas)
-            if (transferTasks.Count > 0)
-                await Task.WhenAll(transferTasks);
+            // -- Pase 1: transferencias paralelas (máx _maxParallel simultáneas) --------
+            // P1: Parallel.ForEachAsync crea tasks lazily — evita N tasks en memoria para N ficheros (fix B1)
+            skip = Enumerable.Range(0, fileList.Count).Count(i => skipSet.Contains(i));
+            await Parallel.ForEachAsync(
+                Enumerable.Range(0, fileList.Count).Where(fi => !skipSet.Contains(fi)),
+                new ParallelOptions { MaxDegreeOfParallelism = _maxParallel, CancellationToken = ct },
+                async (fi, innerCt) =>
+                {
+                    var (entry, destPath) = fileList[fi];
+                    await ParallelTransferFileAsync(
+                        entry, destPath, isUpload, fi, fileList.Count,
+                        totalTransfer, arrow, failedFiles, lockDoneBytes, aggregate, remoteIp, remotePort, innerCt);
+                });
 
             // Contar OK y actualizar doneBytes final
             var uniqueFailedAfterPass1 = DeduplicateFailures(failedFiles);
@@ -184,7 +195,7 @@ public partial class MainWindow
 
                 SetStatus(L.Format("st.retrying", pending.Count));
                 var backoffMs = Math.Min(2000 * retryPass, 8000);
-                try { await Task.Delay(backoffMs, ct); } catch { goto cleanup; }
+                try { await Task.Delay(backoffMs, ct); } catch (OperationCanceledException) { break; }
 
                 bool reconnected2 = await TryReconnectAsync(remoteIp, remotePort, ct);
                 if (!reconnected2)
@@ -194,21 +205,18 @@ public partial class MainWindow
                 }
 
                 var retryBag = new System.Collections.Concurrent.ConcurrentBag<(FileEntry entry, string destPath)>();
-                var retryTasks = new List<Task>();
-                int ri = 0;
-                foreach (var (entry, destPath) in pending)
-                {
-                    if (ct.IsCancellationRequested) break;
-
-                    var taskRi = ri++;
-                    var task = ParallelTransferFileAsync(
-                        entry, destPath, isUpload, taskRi, pending.Count,
-                        totalTransfer, $"↺{arrow}", retryBag, lockDoneBytes, aggregate, remoteIp, remotePort, ct);
-                    retryTasks.Add(task);
-                }
-
-                if (retryTasks.Count > 0)
-                    await Task.WhenAll(retryTasks);
+                // P1: retry también con Parallel.ForEachAsync — lazy task creation
+                await Parallel.ForEachAsync(
+                    Enumerable.Range(0, pending.Count),
+                    new ParallelOptions { MaxDegreeOfParallelism = _maxParallel, CancellationToken = ct },
+                    async (ri, innerCt) =>
+                    {
+                        if (innerCt.IsCancellationRequested) return;
+                        var (entry, destPath) = pending[ri];
+                        await ParallelTransferFileAsync(
+                            entry, destPath, isUpload, ri, pending.Count,
+                            totalTransfer, $"↺{arrow}", retryBag, lockDoneBytes, aggregate, remoteIp, remotePort, innerCt);
+                    });
 
                 var recoveredThisPass = pending.Count - retryBag.Count;
                 ok += recoveredThisPass;
@@ -225,34 +233,31 @@ public partial class MainWindow
             {
                 var names = string.Join(", ", finalUniqueFailures.Select(x => x.entry.Name).Take(3));
                 var extra = finalUniqueFailures.Count > 3 ? $" +{finalUniqueFailures.Count - 3}" : "";
-                AddHistory(L.Format("hist.incomplete", finalUniqueFailures.Count, $"{names}{extra}"), "#FF6B6B");
+                SetStatusAlert(L.Format("hist.incomplete", finalUniqueFailures.Count, $"{names}{extra}"));
             }
             else if (retryPass > 0 && recoveredOnRetries > 0)
             {
-                AddHistory(L.Format("hist.retryOk", recoveredOnRetries), "#FFD700");
+                SetStatus(L.Format("hist.retryOk", recoveredOnRetries));
             }
 
-        cleanup:
             var msg = skip > 0
                 ? L.Format("msg.copiedSkipped", ok, skip, fileList.Count)
                 : L.Format("msg.copiedFiles", ok, fileList.Count, FileEntry.FormatSize(doneBytes));
             SetStatus(msg);
-            __finalMsg = msg;
-            __finalErr = (ok < fileList.Count - skip) || skip > 0;
-            if (__finalErr) SetStatusAlert(msg); // requiere lectura: parpadeo llamativo
+            finalMsg = msg;
+            finalErr = (ok < fileList.Count - skip) || skip > 0;
+            if (finalErr) SetStatusAlert(msg); // requiere lectura: parpadeo llamativo
             var finalSnapshot = aggregate.Snapshot();
-            if (!ct.IsCancellationRequested && !__finalErr && ok > 0)
-                CompleteTransferUi(receiving: !isUpload, finalSnapshot.DoneBytes, finalSnapshot.TotalBytes, __sw.Elapsed);
+            if (!ct.IsCancellationRequested && !finalErr && ok > 0)
+                CompleteTransferUi(receiving: !isUpload, finalSnapshot.DoneBytes, finalSnapshot.TotalBytes, sw.Elapsed);
             else if (!ct.IsCancellationRequested)
                 SuspendTransferUi();
             else
                 ResetTransferUi();
             if (ok > 0) {
-                AddHistory(L.Format("hist.transferred", arrow, ok, FileEntry.FormatSize(doneBytes)), "#28A745",
-                    isUpload ? "send" : "receive", remoteIp, doneBytes, true);
                 AuditService.Record(remoteIp, isUpload ? "send" : "receive",
                     ok == 1 && fileList.Count == 1 ? fileList[0].entry.Name : $"[{ok} files]",
-                    doneBytes, true, __sw.ElapsedMilliseconds);
+                    doneBytes, true, sw.ElapsedMilliseconds);
             }
 
             if (isUpload) await RefreshRemoteAsync();
@@ -265,13 +270,13 @@ public partial class MainWindow
                 try { _pauseSemaphore.Release(); } catch { }
             if (_progressWin != null)
             {
-                _progressWin.Finish(string.IsNullOrEmpty(__finalMsg) ? L["prog.cancelled"] : __finalMsg, __finalErr);
+                _progressWin.Finish(string.IsNullOrEmpty(finalMsg) ? L["prog.cancelled"] : finalMsg, finalErr);
                 _progressWin = null;
             }
-            SetTransferButtonsEnabled(true, cancelEnabled: false);
             ref int flagEnd = ref (isUpload ? ref _isUploading : ref _isDownloading);
             Interlocked.Exchange(ref flagEnd, 0);
-            if (!__finalErr && !ct.IsCancellationRequested)
+            SetTransferButtonsEnabled(true, cancelEnabled: false);
+            if (!finalErr && !ct.IsCancellationRequested)
                 ClearQueue(); // completada correctamente
             else
                 SetStatusAlert(L["st.queueKeptRetry"]);
@@ -360,10 +365,30 @@ public partial class MainWindow
                     {
                         var fromText = FileEntry.FormatSize(accepted);
                         var totalText = FileEntry.FormatSize(total);
-                        SetStatus($"Reanudando desde {fromText} / {totalText} ({entry.Name})");
+                        SetStatus(L.Format("st.resumingFrom", fromText, totalText, entry.Name));
                     });
             else
+            {
                 await snap.DownloadAsync(entry.FullPath, destPath, throttled, ct);
+
+                // F2: verificación de integridad post-download (SHA-256)
+                if (_checksumEnabled && !ct.IsCancellationRequested && File.Exists(destPath))
+                {
+                    SetStatus(L.Format("st.checksumVerifying", entry.Name));
+                    var remoteHash = await snap.GetSha256Async(entry.FullPath, ct);
+                    string localHash;
+                    using (var sha = System.Security.Cryptography.SHA256.Create())
+                    using (var fs = new FileStream(destPath, FileMode.Open, FileAccess.Read, FileShare.Read, 131072, true))
+                        localHash = BitConverter.ToString(await sha.ComputeHashAsync(fs, ct)).Replace("-", "").ToLowerInvariant();
+
+                    if (remoteHash != null && !string.Equals(remoteHash, localHash, StringComparison.OrdinalIgnoreCase))
+                    {
+                        SetStatus(L.Format("st.checksumFail", entry.Name));
+                        try { File.Delete(destPath); } catch { }
+                        return false; // marcar para reintento
+                    }
+                }
+            }
 
             return true;
         }
@@ -424,13 +449,9 @@ public partial class MainWindow
             {
                 var snapshot = aggregate.Complete(progressKey, entry.Size);
                 ReportTransferUi(receiving: !isUpload, snapshot.DoneBytes, snapshot.TotalBytes);
-                lock (lockDoneBytes)
-                {
-                    var failed = failedBag.Sum(x => (long)x.Item1.Size);
-                    var doneNow = totalTransfer - failed;
-                }
+                // B4: bloque lock con doneNow eliminado — era codigo muerto (doneNow nunca se almacenaba)
             }
-            else if (!ct.IsCancellationRequested)
+            else
             {
                 aggregate.Fail(progressKey);
                 ReportTransferUi(receiving: !isUpload, aggregate.Snapshot().DoneBytes, aggregate.Snapshot().TotalBytes);
@@ -510,7 +531,7 @@ public partial class MainWindow
                             result.Add((new FileEntry { Name = fii.Name, FullPath = f, Size = fii.Length, Tag = "dir" }, dest));
                         }
                     }
-                    catch { }
+                    catch (Exception ex) { SetStatus(L.Format("st.errorListing", item.Name, L[ex.Message])); }
                 }
                 else
                 {
@@ -525,7 +546,17 @@ public partial class MainWindow
                         var remoteFiles = await snap.ListRecursiveAsync(item.FullPath, ct);
                         foreach (var rf in remoteFiles)
                         {
-                            if (!TrySafeCombineUnder(_localPath, out var dest, item.Name, rf.Name)) continue;
+                            // F6: ruta relativa desde root de carpeta para preservar estructura
+                            var relPath = (!string.IsNullOrEmpty(rf.FullPath) &&
+                                          rf.FullPath.Length > item.FullPath.Length &&
+                                          rf.FullPath.StartsWith(item.FullPath, StringComparison.OrdinalIgnoreCase))
+                                ? rf.FullPath[item.FullPath.Length..].TrimStart('/', '\\')
+                                : rf.Name;
+                            if (string.IsNullOrEmpty(relPath)) relPath = rf.Name;
+                            if (!TrySafeCombineUnder(_localPath, out var dest, item.Name, relPath)) continue;
+                            // Crear directorio intermedio para subdirectorios anidados
+                            var destDir = Path.GetDirectoryName(dest);
+                            if (destDir != null) try { Directory.CreateDirectory(destDir); } catch { /* ok */ }
                             result.Add((new FileEntry { Name = rf.Name, FullPath = rf.FullPath, Size = rf.Size, Tag = "dir" }, dest));
                         }
                     }
@@ -537,26 +568,55 @@ public partial class MainWindow
     }
 
     private async Task<HashSet<int>?> CheckOverwriteAsync(
-        List<(FileEntry entry, string destPath)> files, bool isUpload)
+        List<(FileEntry entry, string destPath)> files,
+        bool isUpload,
+        bool forceRemoteProbe = false,
+        CancellationToken ct = default,
+        ConfirmDialog.OverwriteAction? forcedAction = null)
     {
         var conflicts = new List<int>();
+        LanClient? remoteSnap = null;
+        if (isUpload && forceRemoteProbe)
+        {
+            await _clientLock.WaitAsync(ct);
+            try { remoteSnap = _client; }
+            finally { _clientLock.Release(); }
+        }
+
         for (int i = 0; i < files.Count; i++)
         {
             var (entry, dest) = files[i];
             // Items dentro de carpetas expandidas: Tag="dir" → no se puede detectar conflicto (#3)
             if (entry.Tag == "dir") continue;
 
-            bool exists = isUpload
+            var exists = isUpload
                 ? _remoteItems.Any(r => !r.IsDirectory && string.Equals(r.FullPath, dest, StringComparison.OrdinalIgnoreCase))
                 : File.Exists(dest);
+            if (!exists && isUpload && forceRemoteProbe && remoteSnap != null)
+            {
+                try
+                {
+                    var st = await remoteSnap.GetStatAsync(dest, ct);
+                    exists = st is { Exists: true, IsDirectory: false };
+                }
+                catch { }
+            }
             if (exists) conflicts.Add(i);
         }
 
         if (conflicts.Count == 0) return [];
 
-        var dlg = new ConfirmDialog(conflicts.Count, files[conflicts[0]].entry.Name);
-        await dlg.ShowDialog(this); // await correcto: espera cierre del dialogo (#1)
-        var action = await dlg.GetResultAsync();
+        ConfirmDialog.OverwriteAction action;
+        if (forcedAction.HasValue)
+        {
+            action = forcedAction.Value;
+        }
+        else
+        {
+            var dlg = new ConfirmDialog(conflicts.Count, files[conflicts[0]].entry.Name);
+            await dlg.ShowDialog(this); // await correcto: espera cierre del dialogo (#1)
+            action = await dlg.GetResultAsync();
+        }
 
         if (action == ConfirmDialog.OverwriteAction.Rename)
         {
@@ -568,6 +628,35 @@ public partial class MainWindow
                 files[i] = (entry, renamed);
             }
             return [];
+        }
+
+        if (action == ConfirmDialog.OverwriteAction.SkipSameSize)
+        {
+            // Omitir solo archivos que ya existen en el destino con el mismo tamaño
+            var toSkip = new System.Collections.Generic.HashSet<int>();
+            foreach (var i in conflicts)
+            {
+                var (entry, dest) = files[i];
+                long destSize = -1;
+                if (isUpload)
+                {
+                    var r = _remoteItems.FirstOrDefault(remote => !remote.IsDirectory && string.Equals(remote.FullPath, dest, StringComparison.OrdinalIgnoreCase));
+                    if (r != null) destSize = r.Size;
+                }
+                else
+                {
+                    if (File.Exists(dest))
+                    {
+                        try { destSize = new System.IO.FileInfo(dest).Length; } catch { }
+                    }
+                }
+
+                if (destSize != -1 && entry.Size == destSize)
+                {
+                    toSkip.Add(i);
+                }
+            }
+            return toSkip;
         }
 
         return action switch

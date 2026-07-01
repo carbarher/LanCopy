@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.Diagnostics;
@@ -34,7 +34,6 @@ public partial class MainWindow : Window
     // Constantes de validación
     private const int MinPinLength = 4;
     private const int MaxPinLength = 128;
-    private const int MaxHistoryItems = 500;
     private const int SettingsSchemaVersion = 1;
     private readonly FileServer _server = new();
     private static Loc L => Loc.Instance;
@@ -47,13 +46,11 @@ public partial class MainWindow : Window
 
     private string _localPath = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
     private string _remotePath = "";
-    private string _lastConnectedIp = "";      // Track last IP for profile persistence
-    private string _lastConnectedPort = "8742"; // Track last port for profile persistence
-    private int _isLoadingSettings;            // Flag to skip auto-save during restoration
 
     private int _isUploading;    // Feature 2: bidireccional — separado de downloading
     private int _isDownloading;
-    private int _isTransferring => (_isUploading | _isDownloading); // compat: 1 si cualquiera activo
+    // U4+Q1: usar Volatile.Read — _isUploading y _isDownloading son escritos desde hilos distintos
+    private int _isTransferring => (Volatile.Read(ref _isUploading) | Volatile.Read(ref _isDownloading));
     private CancellationTokenSource _uploadCts = new();
     private CancellationTokenSource _downloadCts = new();
     private readonly SemaphoreSlim _pauseSemaphore = new(1, 1); // Feature 1: pausa
@@ -62,17 +59,14 @@ public partial class MainWindow : Window
     // Feature 13: límite de transferencias paralelas (configurable 1-8, por defecto 4)
     private int _maxParallel = 4;
     private SemaphoreSlim _transferSemaphore = new(4, 4);
+    private readonly object _semLock = new(); // Q5: protege swap atómico de _transferSemaphore
 
     private readonly BulkObservableCollection<FileEntry> _localItems = new();
     private List<FileEntry> _localItemsAll = new(); // Feature 9: filtro
     private List<FileEntry> _remoteItemsAll = new(); // Feature 6: sort remoto
     private readonly BulkObservableCollection<FileEntry> _remoteItems = new();
-    private readonly ObservableCollection<TransferRecord> _history = new();
-
-    // Feature 3: perfiles de conexión
+        // Feature 3: perfiles de conexión
     private List<ConnectionProfile> _profiles = new();
-    private readonly object _profilesLock = new();
-
     // Feature 6: ordenación de columnas
     private string _localSortField = "name";
     private bool _localSortAsc = true;
@@ -81,11 +75,15 @@ public partial class MainWindow : Window
 
     // Feature 7: sparkline de velocidad (últimos 10 valores en MB/s)
     private readonly Queue<double> _speedHistory = new();
+    // F3: historial de textos recibidos desde peers
+    private readonly System.Collections.ObjectModel.ObservableCollection<string> _receivedTexts = new();
+    private bool _sortSmallestFirst = false; // F7: enviar archivos peque�os primero
     private const int SparklineLen = 10;
 
     // Feature 8: watch folder
     private FileSystemWatcher? _watcher;
-    private bool _watcherActive;
+    private FileSystemWatcher? _watchFolderWatcher; // B1: watch-folder watcher separado
+    private bool _watchFolderActive; // B2: flag separado para watch-folder (vs browser watcher)
     private System.Timers.Timer? _watchDebounce;
     private readonly object _watchLock = new();
 
@@ -112,10 +110,6 @@ public partial class MainWindow : Window
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
         "LanCopy", "queue.json"); // Feature 3: cola persistente
 
-    private static readonly string HistoryPath = Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-        "LanCopy", "history.json"); // historial persistente entre sesiones
-
     // Cached brushes — evita SolidColorBrush.Parse en cada SetConnStatus (#11)
     private static readonly SolidColorBrush BrushConnected = SolidColorBrush.Parse("#28A745");
     private static readonly SolidColorBrush BrushError = SolidColorBrush.Parse("#FF6B6B");
@@ -123,14 +117,20 @@ public partial class MainWindow : Window
 
     // Cached controls — evita FindControl<T>() en hot paths (#23)
     private TextBlock? _txtStatus;
+    private Button? _btnSend;
+    private Button? _btnReceive;
+    private Button? _btnCancel;
+    private Button? _btnPause;
+    private Button? _btnResume;
+    // F2: verificaci�n checksum tras cada download
+    private bool _checksumEnabled = false;
     private TextBlock? _txtSpeed;
     private TextBlock? _txtProgressPercent;
     private TextBlock? _txtLocalPath;
     private TextBlock? _txtRemotePath;
     private TextBlock? _txtConnStatus;
     private ProgressBar? _progressBar;
-    private Expander? _historyExpander;
-    private WindowNotificationManager? _notifManager; // Feature 7: toast
+        private WindowNotificationManager? _notifManager; // Feature 7: toast
     private ProgressWindow? _progressWin;       // UX: ventana de progreso para procesos largos
     private DispatcherTimer? _statusBlinkTimer; // UX: parpadeo del mensaje de estado que requiere atencion
     private DispatcherTimer? _connectionWatchdogTimer;
@@ -158,7 +158,11 @@ public partial class MainWindow : Window
         _txtRemotePath = this.FindControl<TextBlock>("txtRemotePath");
         _txtConnStatus = this.FindControl<TextBlock>("txtConnStatus");
         _progressBar = this.FindControl<ProgressBar>("transferProgress");
-        _historyExpander = this.FindControl<Expander>("historyExpander");
+                _btnSend    = this.FindControl<Button>("btnSend");
+        _btnReceive = this.FindControl<Button>("btnReceive");
+        _btnCancel  = this.FindControl<Button>("btnCancel");
+        _btnPause   = this.FindControl<Button>("btnPause");
+        _btnResume  = this.FindControl<Button>("btnResume");
         InitializeTransferUi();
         _notifManager = new WindowNotificationManager(TopLevel.GetTopLevel(this)!)
         {
@@ -168,7 +172,7 @@ public partial class MainWindow : Window
 
         this.FindControl<ListBox>("localList")!.ItemsSource = _localItems;
         this.FindControl<ListBox>("remoteList")!.ItemsSource = _remoteItems;
-        this.FindControl<ListBox>("historyList")!.ItemsSource = _history;
+        {  var tl = this.FindControl<ListBox>("receivedTextsList"); if (tl != null) tl.ItemsSource = _receivedTexts; }
 
         // Feature 6: drag & drop desde explorador de Windows al panel local
         var localList = this.FindControl<ListBox>("localList")!;
@@ -203,7 +207,7 @@ public partial class MainWindow : Window
 
             // Feature 12: iniciar auto-descubrimiento UDP
             _discovery = new PeerDiscovery(_server.LocalIp, _server.Port);
-            _discovery.PeersChanged += UpdatePeersCombo;
+            _discovery.PeersChanged += OnPeersChanged; // v5-F7 merged
             _discovery.Start();
 
             SetupTray(); // idea-tray
@@ -228,8 +232,10 @@ public partial class MainWindow : Window
             Interlocked.Exchange(ref _isWindowClosing, 1);
             StopConnectionWatchdog();
             StopBrowserAutoRefresh();
-            try { SaveSettings(_lastConnectedIp, _lastConnectedPort); } catch { }
-            _server.Stop(); _discovery?.Stop(); _client?.Dispose(); _clientDown?.Dispose(); _uploadCts.Cancel(); _downloadCts.Cancel();
+            try { SaveSettings(this.FindControl<TextBox>("txtRemoteIp")?.Text ?? "", this.FindControl<TextBox>("txtRemotePort")?.Text ?? "8742"); } catch { }
+            _server.Stop(); _discovery?.Stop(); _client?.Dispose(); _clientDown?.Dispose();
+        // B3: CTS deben ser disposed despues de Cancel() para liberar el WaitHandle interno
+        _uploadCts.Cancel(); _uploadCts.Dispose(); _downloadCts.Cancel(); _downloadCts.Dispose();
             try { if (_tray != null) _tray.IsVisible = false; } catch { }
         };
         Opened += OnWindowOpened;
@@ -249,12 +255,31 @@ public partial class MainWindow : Window
         {
             _welcomeShown = true;
             try { await new WelcomeDialog().ShowDialog(this); } catch { }
-            // Guardar desde las variables de estado, no desde la UI
-            try { SaveSettings(_lastConnectedIp, _lastConnectedPort); } catch { }
+            try { SaveSettings(this.FindControl<TextBox>("txtRemoteIp")?.Text ?? "", this.FindControl<TextBox>("txtRemotePort")?.Text ?? "8742"); } catch { }
+        }
+
+        // Auto-conectar al arrancar si hay IP/puerto guardados
+        var autoIp = this.FindControl<TextBox>("txtRemoteIp")?.Text?.Trim() ?? "";
+        var autoPortStr = this.FindControl<TextBox>("txtRemotePort")?.Text?.Trim() ?? "8742";
+        if (!string.IsNullOrEmpty(autoIp) && NetworkValidation.TryParsePort(autoPortStr, out var autoPort))
+            { SetStatus(L.Format("st.connecting", $"{autoIp}:{autoPortStr}")); _ = ConnectAsync(autoIp, autoPort); }
+
+        // F1: slider de paralelismo
+        var slider = this.FindControl<Slider>("sldParallel"); // U2: nombre correcto seg�n AXAML
+        var lblPar = this.FindControl<TextBlock>("txtParallelValue");
+        if (slider != null)
+        {
+            slider.Value = _maxParallel;
+            if (lblPar != null) lblPar.Text = _maxParallel.ToString();
+            slider.PropertyChanged += (_, e) =>
+            {
+                if (e.Property.Name != "Value") return;
+                _maxParallel = Math.Clamp((int)(double)e.NewValue!, 1, 8);
+                if (lblPar != null) lblPar.Text = _maxParallel.ToString();
+            };
         }
 
         // No bloquear primer render: refresco local y cola pendiente arrancan sin bloquear Opened.
-        LoadHistory();
         RefreshFavoritesCombo();
         _ = ProcessLaunchArgsAsync();
         _ = CheckPendingQueueAsync();

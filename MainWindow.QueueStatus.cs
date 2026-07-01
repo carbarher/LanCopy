@@ -40,6 +40,35 @@ public partial class MainWindow
             .Select(g => g.Last())
             .ToList();
 
+    // F3: actualizar el panel visual de cola
+    private void UpdateQueuePanel(int pendingCount, IEnumerable<string>? names = null)
+    {
+        Dispatcher.UIThread.Post(() =>
+        {
+            var expander = this.FindControl<Avalonia.Controls.Expander>("queueExpander");
+            var countLbl = this.FindControl<TextBlock>("txtQueueCount");
+            var listBox = this.FindControl<Avalonia.Controls.ListBox>("lstQueue");
+            if (expander == null) return;
+
+            expander.IsVisible = pendingCount > 0;
+            if (countLbl != null) countLbl.Text = pendingCount > 0 ? $"({pendingCount})" : "";
+            if (listBox != null && names != null)
+                listBox.ItemsSource = names.ToList();
+        });
+    }
+
+    private void BtnClearQueue_Click(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
+    {
+        ClearQueue();
+        UpdateQueuePanel(0);
+        SetStatus(L["st.queueCleared"]);
+    }
+
+    private static void ClearQueue()
+    {
+        try { if (File.Exists(QueuePath)) File.Delete(QueuePath); }
+        catch (Exception ex) { Log.Warn("queue", "clear-failed", new { error = ex.Message }); }
+    }
     private void SaveQueue(List<(FileEntry entry, string destPath)> files, bool isUpload, string ip, int port, int attempt = 0)
     {
         try
@@ -49,6 +78,7 @@ public partial class MainWindow
             if (uniquePairs.Count == 0)
             {
                 ClearQueue();
+                UpdateQueuePanel(0);
                 return;
             }
             var item = new Models.QueueItem(
@@ -59,6 +89,9 @@ public partial class MainWindow
             var tmp = QueuePath + ".tmp";
             File.WriteAllText(tmp, System.Text.Json.JsonSerializer.Serialize(item));
             File.Move(tmp, QueuePath, overwrite: true);
+
+            // F3: actualizar panel visual de cola
+            UpdateQueuePanel(uniquePairs.Count, uniquePairs.Select(x => Path.GetFileName(x.Path)));
         }
         catch (Exception ex)
         {
@@ -66,11 +99,6 @@ public partial class MainWindow
         }
     }
 
-    private static void ClearQueue()
-    {
-        try { if (File.Exists(QueuePath)) File.Delete(QueuePath); }
-        catch (Exception ex) { Log.Warn("queue", "clear-failed", new { error = ex.Message }); }
-    }
 
     private async Task CheckPendingQueueAsync()
     {
@@ -94,44 +122,36 @@ public partial class MainWindow
                 .ToList();
             if (valid.Count == 0) { ClearQueue(); return; }
 
-            var result = await Dispatcher.UIThread.InvokeAsync(async () =>
-            {
-                var dlg = new Avalonia.Controls.Window
-                {
-                    Title = L["queue.title"],
-                    Width = 460,
-                    Height = 180,
-                    Background = new Avalonia.Media.SolidColorBrush(Avalonia.Media.Color.Parse("#2D2D30")),
-                    WindowStartupLocation = Avalonia.Controls.WindowStartupLocation.CenterOwner
-                };
-                var whenTxt = DateTime.TryParse(item.CreatedUtc, null, System.Globalization.DateTimeStyles.RoundtripKind, out var ts)
-                    ? ts.ToLocalTime().ToString("dd/MM HH:mm") : "?";
-                var msg = new TextBlock
-                {
-                    Text = L.Format("queue.body", valid.Count, item.IsUpload ? L["word.upload"] : L["word.download"], $"{item.RemoteIp}:{item.RemotePort}") + $"\n(guardada: {whenTxt}, intento #{Math.Max(1, item.Attempt + 1)})",
-                    Foreground = Avalonia.Media.Brushes.White,
-                    TextWrapping = Avalonia.Media.TextWrapping.Wrap,
-                    Margin = new Avalonia.Thickness(16, 16, 16, 8)
-                };
-                var resume = new Avalonia.Controls.Button { Content = L["queue.resume"], Background = new Avalonia.Media.SolidColorBrush(Avalonia.Media.Color.Parse("#28A745")), Foreground = Avalonia.Media.Brushes.White, Padding = new Avalonia.Thickness(16, 6), Margin = new Avalonia.Thickness(8, 0) };
-                var discard = new Avalonia.Controls.Button { Content = L["queue.discard"], Background = new Avalonia.Media.SolidColorBrush(Avalonia.Media.Color.Parse("#6C757D")), Foreground = Avalonia.Media.Brushes.White, Padding = new Avalonia.Thickness(16, 6) };
-                bool ok = false;
-                resume.Click += (_, _) => { ok = true; dlg.Close(); };
-                discard.Click += (_, _) => { ok = false; dlg.Close(); };
-                var row = new Avalonia.Controls.StackPanel { Orientation = Avalonia.Layout.Orientation.Horizontal, HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Center, Children = { resume, discard } };
-                dlg.Content = new Avalonia.Controls.StackPanel { Children = { msg, row } };
-                await dlg.ShowDialog(this);
-                return ok;
-            });
-
-            if (!result) { ClearQueue(); return; }
-
+            // U4: comprobar max intentos ANTES de mostrar el dialogo
             if (item.Attempt >= 3)
             {
-                SetStatus("Cola pendiente descartada: superó el máximo de reintentos");
+                SetStatus(L["st.queueDiscarded"]);
                 ClearQueue();
                 return;
             }
+
+            // F8/U1: Usar dialogo AXAML que hereda el tema de la app
+            var whenTxt = DateTime.TryParse(item.CreatedUtc, null, System.Globalization.DateTimeStyles.RoundtripKind, out var ts)
+                ? ts.ToLocalTime().ToString(System.Globalization.CultureInfo.CurrentCulture.DateTimeFormat.ShortDatePattern + " HH:mm") : "?"; // U4: respeta locale
+            var dialogMsg = L.Format("queue.body",
+                valid.Count,
+                item.IsUpload ? L["word.upload"] : L["word.download"],
+                $"{item.RemoteIp}:{item.RemotePort}")
+                + "\n" + L.Format("queue.savedAt", whenTxt, Math.Max(1, item.Attempt + 1));
+
+            QueueResumeDialog.QueueResumeAction result = QueueResumeDialog.QueueResumeAction.Discard;
+            await Dispatcher.UIThread.InvokeAsync(async () =>
+            {
+                var dlg = new QueueResumeDialog(
+                    dialogMsg,
+                    L["queue.resume"],
+                    L["queue.resumeSkipSameSize"],
+                    L["queue.discard"]);
+                await dlg.ShowDialog(this);
+                result = dlg.Result;
+            });
+
+            if (result == QueueResumeDialog.QueueResumeAction.Discard) { ClearQueue(); return; }
 
             // actualizar intento antes de relanzar
             SaveQueue(valid.Select(v => (new FileEntry { Name = Path.GetFileName(v.Path), FullPath = v.Path }, v.Dest)).ToList(), item.IsUpload, item.RemoteIp, item.RemotePort, item.Attempt + 1);
@@ -165,7 +185,19 @@ public partial class MainWindow
             }).ToList();
 
             var entries = queuedFiles.Select(x => x.Item1).ToList();
-            await TransferAsync(entries, item.IsUpload, queuedFiles);
+            var forceSkipSameSize = result == QueueResumeDialog.QueueResumeAction.ResumeSkipSameSize;
+            var startupSkipSet = await CheckOverwriteAsync(
+                queuedFiles,
+                item.IsUpload,
+                forceRemoteProbe: item.IsUpload,
+                forcedAction: forceSkipSameSize ? ConfirmDialog.OverwriteAction.SkipSameSize : null);
+            if (startupSkipSet == null)
+            {
+                SetStatusAlert(L["st.queueKeptRetry"]);
+                return;
+            }
+
+            await TransferAsync(entries, item.IsUpload, queuedFiles, precomputedSkipSet: startupSkipSet);
         }
         catch (Exception ex)
         {
@@ -214,7 +246,7 @@ public partial class MainWindow
             _server.TextReceived -= OnTextReceived;
             _server.DisconnectNoticeReceived -= OnDisconnectNoticeReceived;
             _server.TransferProgress -= OnServerTransferProgress;
-            if (_discovery != null) _discovery.PeersChanged -= UpdatePeersCombo;
+            if (_discovery != null) _discovery.PeersChanged -= OnPeersChanged;
             _discovery?.Stop();
             _server.Stop();
             _server.Start(port);
@@ -224,7 +256,7 @@ public partial class MainWindow
             this.FindControl<TextBlock>("txtMyIp")!.Text = $"{_server.LocalIp}:{_server.Port}";
 
             _discovery = new PeerDiscovery(_server.LocalIp, _server.Port);
-            _discovery.PeersChanged += UpdatePeersCombo;
+            _discovery.PeersChanged += OnPeersChanged;
             _discovery.Start();
 
             SetStatus(L.Format("st.serverRestarted", $"{_server.LocalIp}:{_server.Port}"));
@@ -237,7 +269,13 @@ public partial class MainWindow
             SetStatus(L.Format("st.portChangeFailed", ex.Message));
         }
     }
-    private List<string> _knownPeerIps = [];
+    private HashSet<string> _knownPeerIps = []; // P3: was List<string> � O(1) Contains
+
+    private void OnPeersChanged()
+    {
+        UpdatePeersCombo();
+        UpdateBroadcastButton();
+    }
 
     private void UpdatePeersCombo()
     {
@@ -246,28 +284,71 @@ public partial class MainWindow
             var combo = this.FindControl<ComboBox>("cmbPeers");
             if (combo == null) return;
             var peers = _discovery?.GetPeers() ?? [];
-            combo.ItemsSource = peers.Select(p => $"{p.Name} ({p.Ip}:{p.Port})").ToList();
+            var newItems = peers.Select(p => $"{p.Name} ({p.Ip}:{p.Port})").ToList();
 
-            // Notificar cuando aparece un nuevo peer
+            var prev = combo.SelectedItem as string;
+            combo.ItemsSource = newItems;
+
+            // Seleccionar peer guardado o el primero disponible
+            if (newItems.Count > 0)
+            {
+                string toSelect;
+                if (prev != null && newItems.Contains(prev))
+                    toSelect = prev;
+                else
+                {
+                    var savedIp = this.FindControl<TextBox>("txtRemoteIp")?.Text?.Trim() ?? "";
+                    toSelect = (!string.IsNullOrEmpty(savedIp) ? newItems.FirstOrDefault(i => i.Contains(savedIp)) : null) ?? newItems[0];
+                }
+                if (combo.SelectedItem as string != toSelect)
+                    combo.SelectedItem = toSelect;
+            }
+
+            // AUTO-CONECTAR cuando aparece un peer nuevo y no hay conexion activa
             var newPeers = peers.Where(p => !_knownPeerIps.Contains(p.Ip)).ToList();
+            // B8: revisar _isReconnectInProgress para evitar race con watchdog
+            if (newPeers.Count > 0 && _client == null && _isReconnectInProgress == 0)
+            {
+                var savedIp2 = this.FindControl<TextBox>("txtRemoteIp")?.Text?.Trim() ?? "";
+                var target = (!string.IsNullOrEmpty(savedIp2)
+                    ? peers.FirstOrDefault(p => p.Ip == savedIp2)
+                    : null) ?? newPeers[0];
+                _ = ConnectAsync(target.Ip, target.Port);
+            }
+
+            // Notificar peer nuevo
             foreach (var p in newPeers)
             {
-                var msg = $"🖥 {p.Name} ({p.Ip}) disponible en la red";
+                var msg = L.Format("st.peerDiscovered", p.Name, p.Ip);
                 SetStatus(msg);
                 _notifManager?.Show(new Notification("LanCopy", msg, NotificationType.Information));
             }
-            _knownPeerIps = peers.Select(p => p.Ip).ToList();
+            _knownPeerIps = peers.Select(p => p.Ip).ToHashSet(); // P3: HashSet<string>
         });
     }
     private void CmbPeers_SelectionChanged(object? sender, SelectionChangedEventArgs e)
     {
         var combo = (ComboBox)sender!;
-        if (combo.SelectedItem is not string item) return;
+        if (combo.SelectedItem is not string item || string.IsNullOrEmpty(item)) return;
         var peers = _discovery?.GetPeers() ?? [];
         var selected = peers.FirstOrDefault(p => item.Contains(p.Ip));
-        if (selected == null) return;
-        this.FindControl<TextBox>("txtRemoteIp")!.Text = selected.Ip;
-        this.FindControl<TextBox>("txtRemotePort")!.Text = selected.Port.ToString();
+        string ip, port;
+        if (selected != null)
+        {
+            ip = selected.Ip;
+            port = selected.Port.ToString();
+        }
+        else
+        {
+            // Fallback: parsear IP:puerto directamente del texto "Nombre (IP:Puerto)"
+            var m = System.Text.RegularExpressions.Regex.Match(item, @"\((\d+\.\d+\.\d+\.\d+):(\d+)\)");
+            if (!m.Success) return;
+            ip = m.Groups[1].Value;
+            port = m.Groups[2].Value;
+        }
+        this.FindControl<TextBox>("txtRemoteIp")!.Text = ip;
+        this.FindControl<TextBox>("txtRemotePort")!.Text = port;
+        SaveSettingsDeferred(ip, port); // P6: debounced - evitar escrituras rapidas
     }
 
     // ── Drag & Drop (Feature 6) ───────────────────────────────────────────
@@ -293,26 +374,56 @@ public partial class MainWindow
         var fileList = files?.ToList();
         if (fileList == null || fileList.Count == 0) return;
 
-        // Si hay directorios, navegar al primero; de lo contrario iniciar upload
-        var dirs = fileList.OfType<IStorageFolder>().ToList();
-        if (dirs.Count > 0 && fileList.Count == 1)
+        var dropDirs = fileList.OfType<IStorageFolder>().ToList();
+
+        // Si solo hay UNA carpeta y es el unico item -> navegar (comportamiento original)
+        if (dropDirs.Count == 1 && fileList.Count == 1)
         {
-            var path = dirs[0].TryGetLocalPath();
-            if (path != null) { _localPath = path; await RefreshLocalAsync(); return; }
+            var navPath = dropDirs[0].TryGetLocalPath();
+            if (navPath != null) { _localPath = navPath; await RefreshLocalAsync(); return; }
         }
 
-        // Convertir a FileEntry y enviar al remoto si hay cliente
+        // U6: mezcla de carpetas + archivos -> enviar todo al remoto
         if (_client == null) { SetStatus(L["st.connectBeforeDrag"]); return; }
         var entries = fileList
-            .Select(f => f.TryGetLocalPath())
-            .Where(p => p != null && System.IO.File.Exists(p))
-            .Select(p => { var fi = new FileInfo(p!); return new FileEntry { Name = fi.Name, FullPath = fi.FullName, Size = fi.Length }; })
+            .Select(f => (item: f, path: f.TryGetLocalPath()))
+            .Where(x => x.path != null)
+            .Select(x =>
+            {
+                if (x.item is IStorageFolder)
+                {
+                    if (!Directory.Exists(x.path!)) return null;
+                    var di = new DirectoryInfo(x.path!);
+                    // IsDirectory=true -> ExpandItemsAsync expandira recursivamente
+                    return new FileEntry { Name = di.Name, FullPath = di.FullName, IsDirectory = true };
+                }
+                if (!System.IO.File.Exists(x.path!)) return null;
+                var fi = new FileInfo(x.path!);
+                return new FileEntry { Name = fi.Name, FullPath = fi.FullName, Size = fi.Length };
+            })
+            .Where(e => e != null).Select(e => e!)
             .ToList();
         if (entries.Count > 0)
             await TransferAsync(entries, isUpload: true);
     }
 
     // ── UI helpers ───────────────────────────────────────────────────────────
+
+    // F6: Descargar archivos seleccionados del panel remoto (pull download)
+    private async void DownloadSelected_Click(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
+    {
+        var selected = this.FindControl<ListBox>("remoteList")
+            ?.SelectedItems?.OfType<FileEntry>()
+            .Where(f => f.Name != ".." && !f.IsDirectory).ToList() ?? [];
+        if (selected.Count == 0) { SetStatus(L["st.selectFiles"]); return; }
+        if (_client == null) { SetStatus(L["st.noConnection"]); return; }
+        await TransferAsync(selected, isUpload: false);
+    }
+
+    private void OnRemoteListPointerPressed(object? sender, Avalonia.Input.PointerPressedEventArgs e)
+    {
+        // F6: placeholder para D&D remoto. La descarga real se hace via DownloadSelected_Click.
+    }
 
     private void ShowSelectionStatus(ListBox list)
     {
@@ -348,19 +459,19 @@ public partial class MainWindow
     private void SetStatus(string text)
     {
         _progressWin?.SetLine(text);
-        Dispatcher.UIThread.Post(() =>
+        void DoSet()
         {
             StopStatusBlink();
             if (_txtStatus != null)
             {
                 _txtStatus.Text = text;
-                _txtStatus.ClearValue(TextBlock.ForegroundProperty); // vuelve al color normal del tema
+                _txtStatus.ClearValue(TextBlock.ForegroundProperty);
             }
-        });
+        }
+        if (Dispatcher.UIThread.CheckAccess()) DoSet();
+        else Dispatcher.UIThread.Post(DoSet);
     }
 
-    // UX: mensaje que requiere lectura del usuario -> color llamativo parpadeante
-    // (alterna entre el color vivo y su version apagada). Cualquier SetStatus normal lo detiene.
     private void SetStatusAlert(string text, string vivid = "#FF3B30", string dim = "#7A201C")
     {
         Dispatcher.UIThread.Post(() =>
@@ -399,26 +510,32 @@ public partial class MainWindow
 
     private void SetTransferButtonsEnabled(bool enabled, bool cancelEnabled)
     {
-        Dispatcher.UIThread.Post(() =>
+        void DoSet()
         {
-            // Con bidireccional: send/receive habilitados solo si el contrario inactivo
             var sendEnabled = enabled && _isDownloading == 0;
             var receiveEnabled = enabled && _isUploading == 0;
             var anyCancelable = cancelEnabled || _isUploading == 1 || _isDownloading == 1;
-
-            var send = this.FindControl<Button>("btnSend");
-            var receive = this.FindControl<Button>("btnReceive");
-            var cancel = this.FindControl<Button>("btnCancel");
-            var pause = this.FindControl<Button>("btnPause");
-            var resume = this.FindControl<Button>("btnResume");
-            if (send != null) send.IsEnabled = sendEnabled;
-            if (receive != null) receive.IsEnabled = receiveEnabled;
+            var send = _btnSend ?? this.FindControl<Button>("btnSend");
+            var receive = _btnReceive ?? this.FindControl<Button>("btnReceive");
+            var cancel = _btnCancel ?? this.FindControl<Button>("btnCancel");
+            var pause = _btnPause ?? this.FindControl<Button>("btnPause");
+            var resume = _btnResume ?? this.FindControl<Button>("btnResume");
+            if (send != null)
+            {
+                send.IsEnabled = sendEnabled;
+                ToolTip.SetTip(send, (!sendEnabled && _isDownloading != 0) ? L["tip.sendDisabledDownload"] : L["tip.send"]);
+            }
+            if (receive != null)
+            {
+                receive.IsEnabled = receiveEnabled;
+                ToolTip.SetTip(receive, (!receiveEnabled && _isUploading != 0) ? L["tip.receiveDisabledUpload"] : L["tip.receive"]);
+            }
             if (cancel != null) cancel.IsEnabled = anyCancelable;
             if (pause != null) pause.IsEnabled = cancelEnabled;
             if (resume != null) resume.IsEnabled = false;
-
-            // ══ Context menus — Local ═════════════════════════════════════════════════════
-        });
+        }
+        if (Dispatcher.UIThread.CheckAccess()) DoSet();
+        else Dispatcher.UIThread.Post(DoSet);
     }
 
 }

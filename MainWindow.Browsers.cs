@@ -31,8 +31,10 @@ namespace LanCopy;
 
 public partial class MainWindow
 {
+    private bool _debounceInited = false;
     private void StartBrowserAutoRefresh()
     {
+        if (!_debounceInited) { InitDebounce(); _debounceInited = true; } // B4: inicializar handler una vez
         if (_browserRefreshTimer != null) return;
         _browserRefreshTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(3) };
         _browserRefreshTimer.Tick += BrowserAutoRefresh_Tick;
@@ -45,12 +47,81 @@ public partial class MainWindow
         _browserRefreshTimer.Stop();
         _browserRefreshTimer.Tick -= BrowserAutoRefresh_Tick;
         _browserRefreshTimer = null;
+        // P3: detener tambien el watcher local
+        StopLocalWatcher();
+    }
+
+    // P3: FileSystemWatcher para detectar cambios locales sin polling cada 3s
+    private void SetupLocalWatcher(string path)
+    {
+        lock (_watchLock)
+        {
+            _watcher?.Dispose();
+            _watcher = null;
+            if (string.IsNullOrEmpty(path) || !Directory.Exists(path)) return;
+            try
+            {
+                _watcher = new FileSystemWatcher(path)
+                {
+                    NotifyFilter = NotifyFilters.FileName | NotifyFilters.DirectoryName | NotifyFilters.Size | NotifyFilters.LastWrite,
+                    IncludeSubdirectories = false,
+                    EnableRaisingEvents = true
+                };
+                _watcher.Created += OnLocalFileSystemEvent;
+                _watcher.Deleted += OnLocalFileSystemEvent;
+                _watcher.Renamed += OnLocalFileSystemEvent;
+                _watcher.Changed += OnLocalFileSystemEvent;
+            }
+            catch
+            {
+                _watcher?.Dispose();
+                _watcher = null;
+            }
+        }
+    }
+
+    private void StopLocalWatcher()
+    {
+        lock (_watchLock)
+        {
+            _watcher?.Dispose();
+            _watcher = null;
+
+            _debounce.Stop(); // B4: usa el campo pre-inicializado
+        }
+    }
+
+    private readonly System.Timers.Timer _debounce = new(300) { AutoReset = false }; // B4: inicializado en ctor, no en handler
+
+    private void InitDebounce()
+    {
+        _debounce.Elapsed += (_, _) =>
+        {
+            // B4: != 0 en lugar de == 1 — mismo bug que el guard del tick principal; el OR puede devolver 3
+            if (Volatile.Read(ref _isWindowClosing) == 1 || _isTransferring != 0) return;
+            Dispatcher.UIThread.Post(async () =>
+            {
+                if (Interlocked.CompareExchange(ref _isBrowserAutoRefreshRunning, 1, 0) == 0)
+                {
+                    try { await RefreshLocalAsync(autoRefresh: true); }
+                    finally { Interlocked.Exchange(ref _isBrowserAutoRefreshRunning, 0); }
+                }
+            });
+        };
+    }
+
+    private void OnLocalFileSystemEvent(object sender, FileSystemEventArgs e)
+    {
+        // B4: _debounce inicializado en campo (thread-safe, no race en la creación)
+        _debounce.Stop();
+        _debounce.Start();
     }
 
     private async void BrowserAutoRefresh_Tick(object? sender, EventArgs e)
     {
         if (Volatile.Read(ref _isWindowClosing) == 1) return;
-        if (_isTransferring == 1 || _connectButtonIsBusy || Volatile.Read(ref _isReconnectInProgress) == 1) return;
+        // U1: != 0 en lugar de == 1 — cuando hay upload Y download simultáneos el OR da 3, no 1
+        if (_isTransferring != 0 || _connectButtonIsBusy || Volatile.Read(ref _isReconnectInProgress) == 1) return;
         if (Interlocked.CompareExchange(ref _isBrowserAutoRefreshRunning, 1, 0) != 0) return;
 
         try
@@ -138,6 +209,10 @@ public partial class MainWindow
 
     private async Task RefreshLocalAsync(bool autoRefresh = false)
     {
+        if (!string.IsNullOrEmpty(_localPath))
+        {
+            LanCopy.Services.ShareRoot.SetRoot(_localPath);
+        }
         try
         {
             var entries = await Task.Run(() => GetLocalEntries(_localPath));
@@ -159,12 +234,15 @@ public partial class MainWindow
         // la lista completa en cada pulsacion cuando hay miles de ficheros).
         _pendingLocalFilter = ((TextBox)sender!).Text?.Trim() ?? "";
         _localFilterDebounce?.Stop();
-        _localFilterDebounce ??= new Avalonia.Threading.DispatcherTimer
+        if (_localFilterDebounce == null)
         {
-            Interval = TimeSpan.FromMilliseconds(250)
-        };
-        _localFilterDebounce.Tick -= OnLocalFilterTick;
-        _localFilterDebounce.Tick += OnLocalFilterTick;
+            // Q2: suscribir Tick una sola vez al crear el timer (no en cada keystroke)
+            _localFilterDebounce = new Avalonia.Threading.DispatcherTimer
+            {
+                Interval = TimeSpan.FromMilliseconds(250)
+            };
+            _localFilterDebounce.Tick += OnLocalFilterTick;
+        }
         _localFilterDebounce.Start();
     }
 
@@ -208,11 +286,17 @@ public partial class MainWindow
         {
             var di = new DirectoryInfo(path);
             foreach (var d in di.GetDirectories().OrderBy(x => x.Name))
+            {
+                if (d.Name.StartsWith(".")) continue;
                 list.Add(new FileEntry { Name = d.Name, FullPath = d.FullName, IsDirectory = true });
+            }
             foreach (var f in di.GetFiles().OrderBy(x => x.Name))
+            {
+                if (f.Name.StartsWith(".")) continue;
                 list.Add(new FileEntry { Name = f.Name, FullPath = f.FullName, Size = f.Length, LastWriteUtcTicks = f.LastWriteTimeUtc.Ticks });
+            }
         }
-        catch { }
+        catch { /* directorio inaccesible - devolver lista parcial */ }
 
         return list;
     }
@@ -256,8 +340,8 @@ public partial class MainWindow
 
     private async Task RefreshRemoteAsync(bool isRetry = false, bool autoRefresh = false)
     {
-        // No interrumpir transferencia activa (#13)
-        if (_isTransferring == 1 && !isRetry) return;
+        // B3: != 0 en lugar de == 1 — OR bit a bit de _isUploading|_isDownloading puede devolver 3 en transferencia bidireccional
+        if (_isTransferring != 0 && !isRetry) return;
         if (Volatile.Read(ref _isReconnectInProgress) == 1 && !isRetry) return;
 
         LanClient? snap;
@@ -314,7 +398,7 @@ public partial class MainWindow
             foreach (var entry in entries)
             {
                 hash = (hash * 1099511628211L) ^ StringComparer.OrdinalIgnoreCase.GetHashCode(entry.Name);
-                hash = (hash * 1099511628211L) ^ StringComparer.OrdinalIgnoreCase.GetHashCode(entry.FullPath);
+                // P1: excluir FullPath — su ruta absoluta cambia al navegar aunque el contenido sea idéntico
                 hash = (hash * 1099511628211L) ^ entry.Size.GetHashCode();
                 hash = (hash * 1099511628211L) ^ entry.LastWriteUtcTicks.GetHashCode();
                 hash = (hash * 1099511628211L) ^ entry.IsDirectory.GetHashCode();
@@ -367,15 +451,18 @@ public partial class MainWindow
 
     private void CancelTransfer_Click(object? sender, RoutedEventArgs e)
     {
-        if (_isUploading == 1) _uploadCts.Cancel();
-        if (_isDownloading == 1) _downloadCts.Cancel();
+        // U2: usar Volatile.Read — los campos son escritos desde background threads con Interlocked
+        if (Volatile.Read(ref _isUploading) == 1) _uploadCts.Cancel();
+        if (Volatile.Read(ref _isDownloading) == 1) _downloadCts.Cancel();
     }
 
     private void PauseTransfer_Click(object? sender, RoutedEventArgs e)
     {
         if (Interlocked.CompareExchange(ref _isPaused, 1, 0) == 0)
         {
-            _pauseSemaphore.Wait(0); // drain el semáforo → bloquear en siguiente WaitAsync
+            // B1: verificar CurrentCount antes de Wait(0) para garantizar el drain
+            // (Wait(0) retorna false silenciosamente si el semáforo ya está en 0)
+            while (_pauseSemaphore.CurrentCount > 0) _pauseSemaphore.Wait(0);
             Dispatcher.UIThread.Post(() =>
             {
                 var bp = this.FindControl<Button>("btnPause");

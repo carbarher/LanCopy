@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Net;
 using System.Globalization;
 
@@ -39,7 +39,7 @@ public static class PairingLink
                     var val = Uri.UnescapeDataString(kv[1]);
                     if (key == "ip") ip = val;
                     else if (key == "port") int.TryParse(val, out port);
-                    else if (key == "pin") pin = val;
+                    else if (key == "pin") pin = val.Length <= 64 ? val : val[..64]; // S5: max 64 chars
                 }
                 if (string.IsNullOrEmpty(ip)) return null;
                 if (port <= 0 || port > 65535) port = 8742;
@@ -54,8 +54,19 @@ public static class PairingLink
             && int.TryParse(text[(idx + 1)..], NumberStyles.Integer, CultureInfo.InvariantCulture, out var p2)
             && p2 > 0 && p2 <= 65535)
             return new Parsed(text[..idx], p2, null);
-        if (!text.Contains('/') && !text.Contains(' '))
+        // S3: validar que es un IP o hostname razonablemente válido (no paths ni URIs)
+        if (!text.Contains('/') && !text.Contains(' ') && IsValidHostOrIp(text))
             return new Parsed(text, 8742, null);
         return null;
+    }
+
+    // S3: acepta IPv4, IPv6 bracket notation o hostname RFC 952 simple
+    private static bool IsValidHostOrIp(string s)
+    {
+        if (string.IsNullOrEmpty(s) || s.Length > 253) return false;
+        if (System.Net.IPAddress.TryParse(s, out _)) return true;
+        // Hostname: segmentos separados por punto, sólo alfanumérico y guiones
+        return System.Text.RegularExpressions.Regex.IsMatch(s,
+            @"^[a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?)*$");
     }
 }

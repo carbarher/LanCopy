@@ -31,50 +31,6 @@ namespace LanCopy;
 
 public partial class MainWindow
 {
-    private void AddHistory(string text, string color,
-        string operation = "", string peerIp = "", long bytes = 0, bool success = true)
-    {
-        Dispatcher.UIThread.Post(() =>
-        {
-            _history.Insert(0, new TransferRecord
-            {
-                Time      = DateTime.Now.ToString("HH:mm:ss"),
-                Text      = text,
-                Color     = color,
-                Operation = operation,
-                PeerIp    = peerIp,
-                Bytes     = bytes,
-                Success   = success
-            });
-            while (_history.Count > 50) _history.RemoveAt(_history.Count - 1);
-
-            // Auto-expand historial al primer item (#21)
-            if (_historyExpander != null && !_historyExpander.IsExpanded)
-                _historyExpander.IsExpanded = true;
-
-            // Feature 7: toast notificación al completar
-            if (_notifManager != null && color == "#28A745")
-                _notifManager.Show(new Notification("LanCopy", text, NotificationType.Success));
-
-            SaveHistory();
-        });
-    }
-
-    private void SaveHistory() => HistoryStore.Save(HistoryPath, _history);
-
-    private void LoadHistory()
-    {
-        var items = HistoryStore.Load(HistoryPath);
-        if (items.Count == 0) return;
-        Dispatcher.UIThread.Post(() =>
-        {
-            _history.Clear();
-            foreach (var it in items) _history.Add(it);
-            if (_historyExpander != null && _history.Count > 0)
-                _historyExpander.IsExpanded = true;
-        });
-    }
-
     // ── Settings ─────────────────────────────────────────────────────────────
 
     private async Task LoadSettingsAsync()
@@ -86,25 +42,37 @@ public partial class MainWindow
             var doc = JsonSerializer.Deserialize<JsonElement>(json);
             await Dispatcher.UIThread.InvokeAsync(() =>
             {
-                Interlocked.Exchange(ref _isLoadingSettings, 1);
-                if (doc.TryGetProperty("remoteIp", out var ip))
-                {
-                    var ipStr = ip.GetString();
-                    this.FindControl<TextBox>("txtRemoteIp")!.Text = ipStr;
-                    _lastConnectedIp = ipStr ?? "";
-                }
-                if (doc.TryGetProperty("remotePort", out var port))
-                {
-                    var portStr = port.GetString();
-                    this.FindControl<TextBox>("txtRemotePort")!.Text = portStr;
-                    _lastConnectedPort = portStr ?? "8742";
-                }
+                if (doc.TryGetProperty("remoteIp", out var ip)) this.FindControl<TextBox>("txtRemoteIp")!.Text = ip.GetString();
+                if (doc.TryGetProperty("remotePort", out var port)) this.FindControl<TextBox>("txtRemotePort")!.Text = port.GetString();
                 if (doc.TryGetProperty("localPort", out var lport))
                 {
                     var lpTxt = lport.ValueKind == JsonValueKind.Number ? lport.GetInt32().ToString() : lport.GetString();
                     var lpc = this.FindControl<TextBox>("txtLocalPort"); if (lpc != null && !string.IsNullOrEmpty(lpTxt)) lpc.Text = lpTxt;
                 }
-                Interlocked.Exchange(ref _isLoadingSettings, 0);
+                // Restaurar último peer descubierto en cmbPeers antes de que arranque la discovery
+                if (doc.TryGetProperty("lastPeer", out var lpeerEl))
+                {
+                    var lastPeer = lpeerEl.GetString() ?? "";
+                    if (!string.IsNullOrEmpty(lastPeer))
+                    {
+                        var combo = this.FindControl<ComboBox>("cmbPeers");
+                        if (combo != null)
+                        {
+                            combo.ItemsSource = new List<string> { lastPeer };
+                            combo.SelectedItem = lastPeer;
+                        }
+                    }
+                }
+                // Carpeta local guardada
+                if (doc.TryGetProperty("localPath", out var lpEl))
+                {
+                    var lp = lpEl.GetString() ?? "";
+                    if (!string.IsNullOrEmpty(lp) && Directory.Exists(lp))
+                    {
+                        _localPath = lp;
+                        _ = RefreshLocalAsync();
+                    }
+                }
             });
             if (doc.TryGetProperty("pin", out var pin))
             {
@@ -182,10 +150,8 @@ public partial class MainWindow
                 _advancedMode = advEl.GetBoolean();
                 await Dispatcher.UIThread.InvokeAsync(ApplyUiMode);
             }
-            // NOTE: welcomeShown is already loaded in Constructor from StartupSettings.Load
-            // Do NOT override it here, to preserve the logic in OnWindowOpened
-            // if (doc.TryGetProperty("welcomeShown", out var welEl))
-            //     _welcomeShown = welEl.GetBoolean();
+            if (doc.TryGetProperty("welcomeShown", out var welEl))
+                _welcomeShown = welEl.GetBoolean();
             // Tema UI
             if (doc.TryGetProperty("theme", out var themeEl))
             {
@@ -218,20 +184,37 @@ public partial class MainWindow
                 _profiles = JsonSerializer.Deserialize<List<ConnectionProfile>>(profilesEl.GetRawText()) ?? new();
                 await Dispatcher.UIThread.InvokeAsync(() =>
                 {
-                    // Primero restaura IP/puerto, LUEGO busca el perfil que coincida
-                    var ipTxt = this.FindControl<TextBox>("txtRemoteIp");
-                    var portTxt = this.FindControl<TextBox>("txtRemotePort");
-                    if (ipTxt != null && portTxt != null)
+                    // Restaurar perfil seleccionado por nombre guardado; si no, buscar por IP.
+                    string? select = null;
+                    if (doc.TryGetProperty("selectedProfile", out var spEl))
+                        select = spEl.GetString();
+                    if (string.IsNullOrEmpty(select))
                     {
-                        var curIp = ipTxt.Text?.Trim() ?? "";
-                        var curPort = portTxt.Text?.Trim() ?? "";
-                        var match = _profiles.FirstOrDefault(p => p.Ip == curIp && p.Port == curPort)?.Name;
-                        RefreshProfilesCombo(match);
+                        var curIp = this.FindControl<TextBox>("txtRemoteIp")?.Text?.Trim() ?? "";
+                        var curPort = this.FindControl<TextBox>("txtRemotePort")?.Text?.Trim() ?? "";
+                        select = _profiles.FirstOrDefault(p => p.Ip == curIp && p.Port == curPort)?.Name;
                     }
+                    RefreshProfilesCombo(select);
                 });
             }
         }
         catch (Exception ex) { Log.Error("persistence", "load-settings", new { error = ex.Message }); }
+    }
+
+    // P6: versi�n debounceda para callers frecuentes (combo, perfiles)
+    private DispatcherTimer? _saveDebounce;
+    private string _savePendingIp = "", _savePendingPort = "8742";
+
+    private void SaveSettingsDeferred(string ip, string port)
+    {
+        _savePendingIp = ip; _savePendingPort = port;
+        if (_saveDebounce == null)
+        {
+            _saveDebounce = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(600) };
+            _saveDebounce.Tick += (_, _) => { _saveDebounce?.Stop(); SaveSettings(_savePendingIp, _savePendingPort); };
+        }
+        _saveDebounce.Stop();
+        _saveDebounce.Start();
     }
 
     private void SaveSettings(string ip, string port)
@@ -244,6 +227,9 @@ public partial class MainWindow
             {
                 remoteIp = ip,
                 remotePort = port,
+                localPath = _localPath,
+                lastPeer = this.FindControl<ComboBox>("cmbPeers")?.SelectedItem as string ?? "",
+                selectedProfile = this.FindControl<ComboBox>("cmbProfiles")?.SelectedItem as string ?? "",
                 localPort = this.FindControl<TextBox>("txtLocalPort")?.Text?.Trim() ?? "8742",
                 pin,
                 tlsEnabled = _tlsEnabled,
@@ -267,11 +253,9 @@ public partial class MainWindow
             // Escritura atomica centralizada (temp + replace).
             JsonStore.WriteRawAtomic(SettingsPath, __json);
         }
-        catch (Exception ex) { Log.Error("persistence", "load-settings", new { error = ex.Message }); }
+        catch (Exception ex) { Log.Error("persistence", "save-settings", new { error = ex.Message }); }
     }
 
 }
-
-
 
 

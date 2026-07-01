@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.Diagnostics;
@@ -31,7 +31,7 @@ namespace LanCopy;
 
 public partial class MainWindow
 {
-    // ── Feature 3: Perfiles de conexión ─────────────────────────────────────
+    // ÔöÇÔöÇ Feature 3: Perfiles de conexi├│n ÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇ
 
     private void CmbProfiles_SelectionChanged(object? sender, SelectionChangedEventArgs e)
     {
@@ -45,6 +45,7 @@ public partial class MainWindow
         this.FindControl<TextBox>("txtPin")!.Text = p.Pin;
         var chkT = this.FindControl<CheckBox>("chkTls"); if (chkT != null) chkT.IsChecked = p.Tls;
         var chkC = this.FindControl<CheckBox>("chkCompress"); if (chkC != null) chkC.IsChecked = p.Compress;
+        SaveSettings(p.Ip, p.Port); // Persistir perfil seleccionado para restaurarlo al arrancar
         SetStatus(L.Format("st.profileLoaded", name));
     }
 
@@ -54,7 +55,7 @@ public partial class MainWindow
         var port = this.FindControl<TextBox>("txtRemotePort")?.Text?.Trim() ?? "8742";
         if (string.IsNullOrEmpty(ip)) { SetStatus(L["st.enterIpFirst"]); return; }
         var dlg = new InputDialog(L["dlg.profile.title"], L["dlg.profile.prompt"], ip);
-        _ = dlg.ShowDialog(this);
+        await dlg.ShowDialog(this); // Q4: era _ = dlg.ShowDialog — fire-and-forget descartaba excepciones del diálogo
         var name = await dlg.GetResultAsync();
         if (string.IsNullOrWhiteSpace(name)) return;
         var pin = this.FindControl<TextBox>("txtPin")?.Text?.Trim() ?? "";
@@ -87,7 +88,7 @@ public partial class MainWindow
         if (keep != null && names.Contains(keep)) combo.SelectedItem = keep;
     }
 
-    // ── Feature 6: Ordenación de columnas ────────────────────────────────────
+    // ÔöÇÔöÇ Feature 6: Ordenaci├│n de columnas ÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇ
 
     private void LocalSortName_Click(object? sender, RoutedEventArgs e) => SetLocalSort("name");
     private void LocalSortSize_Click(object? sender, RoutedEventArgs e) => SetLocalSort("size");
@@ -113,7 +114,7 @@ public partial class MainWindow
     private static IEnumerable<FileEntry> SortEntries(IEnumerable<FileEntry> items, string field, bool asc)
         => FileSorter.Sort(items, field, asc);
 
-    // ── Feature 7: Sparkline de velocidad ────────────────────────────────────
+    // ÔöÇÔöÇ Feature 7: Sparkline de velocidad ÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇ
 
     private void UpdateSparkline(double bytesPerSec)
     {
@@ -131,30 +132,45 @@ public partial class MainWindow
         });
     }
 
-    // ── Feature 8: Watch folder ───────────────────────────────────────────────
+    // ÔöÇÔöÇ Feature 8: Watch folder ÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇ
 
-    private void WatchFolder_Click(object? sender, RoutedEventArgs e)
+    private async void WatchFolder_Click(object? sender, RoutedEventArgs e)
     {
-        if (_watcherActive) StopWatch();
-        else StartWatch();
+        if (_watchFolderActive) StopWatch(); // B5: era _watcherActive (browser flag) — incorrecto
+        else await StartWatchAsync();
     }
 
-    private void StartWatch()
+    private async Task StartWatchAsync()
     {
-        if (_client == null) { SetStatus(L["st.connectFirstRemote"]); return; }
+        // U1: snapshot _client bajo _clientLock para evitar TOCTOU con DisconnectAsync
+        // (DisconnectAsync adquiere _clientLock y luego nula _client; leer sin lock es carrera)
+        bool clientAvailable;
+        // B2: ConfigureAwait(true) para continuar en el UI thread despues del await
+        // (ConfigureAwait(false) puede correr la continuacion en thread-pool, y SetStatus requiere UI thread)
+        await _clientLock.WaitAsync().ConfigureAwait(true);
+        try { clientAvailable = _client != null; }
+        finally { _clientLock.Release(); }
+        if (!clientAvailable) { SetStatus(L["st.connectFirstRemote"]); return; }
         if (string.IsNullOrEmpty(_localPath)) { SetStatus(L["st.navLocalFirst"]); return; }
 
         try
         {
-            _watcher = new FileSystemWatcher(_localPath)
+            _watchFolderWatcher = new FileSystemWatcher(_localPath)
             {
                 NotifyFilter = NotifyFilters.LastWrite | NotifyFilters.FileName | NotifyFilters.Size,
                 IncludeSubdirectories = false,
                 EnableRaisingEvents = true
             };
-            _watcher.Changed += OnWatcherEvent;
-            _watcher.Created += OnWatcherEvent;
-            _watcherActive = true;
+            _watchFolderWatcher.Changed += OnWatcherEvent;
+            _watchFolderWatcher.Created += OnWatcherEvent;
+            _watchFolderActive = true; // B2: campo separado del watcher de browser
+
+            // U2: pre-alocar el timer una vez — OnWatcherEvent solo llama Stop()+Start() sin alloc
+            lock (_watchLock)
+            {
+                _watchDebounce = new System.Timers.Timer(WatchDebounceMs) { AutoReset = false };
+                _watchDebounce.Elapsed += StartWatchDebounceCallback;
+            }
 
             var btn = this.FindControl<Button>("btnWatch");
             if (btn != null) { btn.Content = L["btn.watchStop"]; btn.Background = SolidColorBrush.Parse("#C0392B"); }
@@ -170,15 +186,15 @@ public partial class MainWindow
 
     private void StopWatch()
     {
-        if (_watcher != null)
+        if (_watchFolderWatcher != null)
         {
-            _watcher.Changed -= OnWatcherEvent;
-            _watcher.Created -= OnWatcherEvent;
-            _watcher.Dispose();
+            _watchFolderWatcher.Changed -= OnWatcherEvent;
+            _watchFolderWatcher.Created -= OnWatcherEvent;
+            _watchFolderWatcher.Dispose(); // B1: era _watcher.Dispose() — bug: watcher seguía activo
+            _watchFolderWatcher = null;    // B1: era _watcher = null — nullaba el objeto incorrecto
         }
-        _watcher = null;
         lock (_watchLock) { _watchDebounce?.Dispose(); _watchDebounce = null; }
-        _watcherActive = false;
+        _watchFolderActive = false; // Q7+B1: era _watcherActive — flag incorrecto
 
         var btn = this.FindControl<Button>("btnWatch");
         if (btn != null) { btn.Content = L["btn.watch"]; btn.Background = SolidColorBrush.Parse("#795548"); }
@@ -187,53 +203,71 @@ public partial class MainWindow
         SetStatus(L["st.watchStopped"]);
     }
 
+    private const int WatchDebounceMs = 700;
+
     private void OnWatcherEvent(object sender, FileSystemEventArgs e)
     {
-        // FileSystemWatcher dispara en hilos del pool: serializar el reinicio del debounce.
         var changedPath = e.FullPath;
         lock (_watchLock)
         {
-            _watchDebounce?.Dispose();
-            var timer = new System.Timers.Timer(700) { AutoReset = false };
-            // Bug fix: no async void en Timer.Elapsed — las excepciones no capturadas crashean.
-            // Usamos Task.Run para que el async sea manejable.
-            timer.Elapsed += (_, _) =>
-            {
-                _ = Task.Run(async () =>
-                {
-                    if (!File.Exists(changedPath)) return;
-                    // SEGURIDAD: no transferir ficheros bajo junctions (podrían ser externos a la carpeta watched).
-                    if (SafeFileOps.ContainsReparsePoint(changedPath)) return;
-                    try
-                    {
-                        var fi = new FileInfo(changedPath);
-                        var entry = new FileEntry { Name = fi.Name, FullPath = fi.FullName, Size = fi.Length };
-                        await Dispatcher.UIThread.InvokeAsync(() =>
-                        {
-                            SetStatus(L.Format("st.changeDetected", fi.Name));
-                            _ = TransferAsync(new List<FileEntry> { entry }, isUpload: true);
-                        });
-                    }
-                    catch (Exception ex)
-                    {
-                        System.Diagnostics.Debug.WriteLine($"[Watch] {ex.Message}");
-                        SetStatus(L.Format("st.watchError", ex.Message));
-                    }
-                });
-            };
-            _watchDebounce = timer;
-            timer.Start();
+            if (_watchDebounce == null) return;
+            _watchDebounce.Stop();
+            _watchDebounce.Start();
+            _watchPendingPath = changedPath;
         }
     }
 
-    // ── Feature 1: Sync de carpetas ───────────────────────────────────────────
+    private volatile string? _watchPendingPath;
+
+    private void StartWatchDebounceCallback(object? sender, System.Timers.ElapsedEventArgs e)
+    {
+        string? pendingPath;
+        lock (_watchLock) { pendingPath = _watchPendingPath; }
+        if (pendingPath == null) return;
+        _ = Task.Run(async () =>
+        {
+            if (!File.Exists(pendingPath)) return;
+            if (SafeFileOps.ContainsReparsePoint(pendingPath)) return;
+            // B3/U1: comprobar conexión antes de transferir
+            bool connected;
+            await _clientLock.WaitAsync().ConfigureAwait(false);
+            try { connected = _client != null; }
+            finally { _clientLock.Release(); }
+            if (!connected) return;
+            try
+            {
+                var fi = new FileInfo(pendingPath);
+                var entry = new FileEntry { Name = fi.Name, FullPath = fi.FullName, Size = fi.Length };
+                await Dispatcher.UIThread.InvokeAsync(() =>
+                {
+                    SetStatus(L.Format("st.changeDetected", fi.Name));
+                    _ = TransferAsync(new List<FileEntry> { entry }, isUpload: true);
+                });
+            }
+            catch (Exception ex)
+            {
+                Log.Warn("watch", "debounce-error", new { error = ex.Message });
+                await Dispatcher.UIThread.InvokeAsync(() => SetStatus(L.Format("st.watchError", ex.Message)));
+            }
+        });
+    }
+
+    // Feature: Sync de carpetas
 
     private async void SyncToRemote_Click(object? sender, RoutedEventArgs e) => await SyncAsync(toRemote: true);
     private async void SyncToLocal_Click(object? sender, RoutedEventArgs e) => await SyncAsync(toRemote: false);
 
     private async Task SyncAsync(bool toRemote)
     {
-        if (_client == null) { SetStatus(L["st.connectFirstRemote"]); return; }
+        // U1: snapshot _client bajo _clientLock para evitar TOCTOU con DisconnectAsync
+        // (DisconnectAsync adquiere _clientLock y luego nula _client; leer sin lock es carrera)
+        bool clientAvailable;
+        // B2: ConfigureAwait(true) para continuar en el UI thread despues del await
+        // (ConfigureAwait(false) puede correr la continuacion en thread-pool, y SetStatus requiere UI thread)
+        await _clientLock.WaitAsync().ConfigureAwait(true);
+        try { clientAvailable = _client != null; }
+        finally { _clientLock.Release(); }
+        if (!clientAvailable) { SetStatus(L["st.connectFirstRemote"]); return; }
         if (string.IsNullOrEmpty(_localPath)) { SetStatus(L["st.navLocalFirst"]); return; }
         if (string.IsNullOrEmpty(_remotePath)) { SetStatus(L["st.navRemoteFirst"]); return; }
 
@@ -241,11 +275,16 @@ public partial class MainWindow
         try
         {
             // Lista remota (soporta recursivo con LastWriteUtcTicks)
-            var snap = _client;
-            List<FileEntry> remoteFiles;
+            // P3: snapshot del cliente bajo lock, luego soltar ANTES del await de red
+            // (ListRecursiveAsync puede tardar segundos; retener el lock bloqueaba disconnect/watchdog)
+            LanClient? snap;
             await _clientLock.WaitAsync();
-            try { remoteFiles = await snap.ListRecursiveAsync(_remotePath); }
+            try { snap = _client; }
             finally { _clientLock.Release(); }
+            if (snap == null) { SetStatus(L["st.connectFirstRemote"]); return; }
+
+            List<FileEntry> remoteFiles;
+            remoteFiles = await snap.ListRecursiveAsync(_remotePath);
 
             var remoteDict = remoteFiles.ToDictionary(f => f.Name, f => f, StringComparer.OrdinalIgnoreCase);
 
@@ -286,7 +325,8 @@ public partial class MainWindow
                     .Select(rf => new FileEntry
                     {
                         Name = rf.Name,
-                        FullPath = Path.Combine(_remotePath, rf.Name.Replace('/', Path.DirectorySeparatorChar)),
+                        // Q7: normalizar separadores: el servidor envía '/', Windows usa '\\'
+                        FullPath = Path.Combine(_remotePath, rf.Name.Replace('/', System.IO.Path.DirectorySeparatorChar)),
                         Size = rf.Size,
                         LastWriteUtcTicks = rf.LastWriteUtcTicks
                     }).ToList();
@@ -295,12 +335,12 @@ public partial class MainWindow
             if (toTransfer.Count == 0) { SetStatus(L["st.syncDone"]); return; }
 
             SetStatus(L.Format("st.syncToTransfer", toTransfer.Count));
-            await TransferAsync(toTransfer, isUpload: toRemote);
+            await TransferAsync(toTransfer, isUpload: toRemote, targetIp: snap.Host, targetPort: snap.Port);
         }
         catch (Exception ex) { SetStatus(L.Format("st.syncError", ex.Message)); }
     }
 
-    // ── Feature 9+2: TLS + compresión ────────────────────────────────────────
+    // ÔöÇÔöÇ Feature 9+2: TLS + compresi├│n ÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇ
 
     private void ChkTls_Changed(object? sender, RoutedEventArgs e)
     {
@@ -354,6 +394,8 @@ public partial class MainWindow
 
     // Llamado por el servidor (hilo de red) antes de aceptar un fichero. Marshala a la UI,
     // muestra el dialogo y aplica un timeout de 60s que rechaza por seguridad si nadie responde.
+    // B4+Q4: ConsentDialog ya tiene su propio AutoRejectAsync(60s); no necesitamos WhenAny externo.
+    // Además, ShowDialog() solo retorna cuando el diálogo cierra → GetResultAsync() ya está resuelta.
     private async Task<bool> OnApproveIncomingAsync(FileServer.IncomingTransfer info, CancellationToken ct)
     {
         try
@@ -361,11 +403,8 @@ public partial class MainWindow
             return await Dispatcher.UIThread.InvokeAsync(async () =>
             {
                 var dlg = new ConsentDialog(info.Ip, info.FileName, info.Size);
-                _ = dlg.ShowDialog(this);
-                var result = dlg.GetResultAsync();
-                var winner = await Task.WhenAny(result, Task.Delay(TimeSpan.FromSeconds(60), ct));
-                if (winner != result) { try { dlg.Close(); } catch { } return false; }
-                return await result;
+                await dlg.ShowDialog(this); // bloqueante hasta que el diálogo cierra (por user o auto-reject)
+                return await dlg.GetResultAsync(); // B4+Q4: TCS ya resuelta, retorna inmediatamente
             });
         }
         catch { return false; }

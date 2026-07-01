@@ -1,10 +1,11 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Linq;
 using Avalonia.Controls;
 using Avalonia.Media;
 using Avalonia.Threading;
 using LanCopy.Models;
+using LanCopy.Services;
 
 namespace LanCopy;
 
@@ -200,12 +201,16 @@ public partial class MainWindow
             var pct = state.TotalBytes > 0
                 ? Math.Clamp(state.DoneBytes * 100.0 / state.TotalBytes, 0, 100)
                 : 0;
-            var elapsedSeconds = Math.Max(0.5, Math.Min(2.0, (now - state.StartedAt).TotalSeconds));
+            // B9: usar ventana real de los samples (2s) como denominador, no el elapsed total
             var recentBytes = state.SpeedSamples.Sum(x => x.Bytes);
-            var speed = recentBytes > 0 ? recentBytes / elapsedSeconds : 0;
+            var sampleWindow = state.SpeedSamples.Count > 0
+                // P4: SpeedSamples es una Queue FIFO — el m\u00e1s antiguo es siempre el primero; Peek() es O(1) vs Min() O(n)
+                ? Math.Max(0.5, (now - state.SpeedSamples.Peek().Timestamp).TotalSeconds)
+                : 2.0;
+            var speed = recentBytes > 0 ? recentBytes / sampleWindow : 0;
             var stalledSeconds = Math.Max(0, (int)Math.Floor((now - state.LastByteAt).TotalSeconds));
             var isStalled = !state.IsCompleted && !state.IsTerminal && state.DoneBytes < state.TotalBytes && stalledSeconds >= 10;
-            var directionText = state.Receiving ? "Recibiendo…" : "Enviando…";
+            var directionText = state.Receiving ? L["st.receiving"] : L["st.sending"];
             var percentText = $"{FormatPercent(pct)}%";
 
             var statusText = directionText;
@@ -215,28 +220,33 @@ public partial class MainWindow
 
             if (state.IsCompleted)
             {
-                statusText = $"Completado  {FormatTransferSize(state.TotalBytes)} en {FormatElapsed(state.CompletedElapsed)}";
+                statusText = L.Format("st.transferComplete", FormatTransferSize(state.TotalBytes), FormatElapsed(state.CompletedElapsed));
                 detailText = FormatElapsed(state.CompletedElapsed);
                 pct = 100;
                 brush = TransferCompletedBrush;
             }
             else if (state.IsTerminal)
             {
-                statusText = $"Completado parcialmente  {FormatTransferSize(state.DoneBytes)} / {FormatTransferSize(state.TotalBytes)}";
+                statusText = L.Format("st.transferPartial", FormatTransferSize(state.DoneBytes), FormatTransferSize(state.TotalBytes));
                 detailText = percentText;
                 brush = TransferStalledBrush;
                 statusBrush = TransferStalledTextBrush;
             }
             else if (isStalled)
             {
-                statusText = $"Estancado – sin datos en {stalledSeconds}s";
-                detailText = $"sin datos {stalledSeconds}s";
+                statusText = L.Format("st.stalled", stalledSeconds);
+                detailText = L.Format("st.transferStalledDetail", stalledSeconds);
                 brush = TransferStalledBrush;
                 statusBrush = TransferStalledTextBrush;
             }
             else
             {
-                statusText = $"{directionText} {FormatTransferSize(state.DoneBytes)} / {FormatTransferSize(state.TotalBytes)} ({percentText})  –  {FormatTransferSpeed(speed)}";
+                // U4: mostrar ETA calculado con la velocidad actual de los samples
+                var remainingBytes = state.TotalBytes - state.DoneBytes;
+                var etaSeconds = speed > 0 ? remainingBytes / speed : 0;
+                var etaStr = FormatEta(etaSeconds);
+                var etaPart = string.IsNullOrEmpty(etaStr) ? "" : $"  ETA {etaStr}";
+                statusText = $"{directionText} {FormatTransferSize(state.DoneBytes)} / {FormatTransferSize(state.TotalBytes)} ({percentText}){etaPart}  —  {FormatTransferSpeed(speed)}";
                 detailText = FormatTransferSpeed(speed);
                 brush = _transferPulseOn ? TransferActiveBrushA : TransferActiveBrushB;
             }
@@ -279,6 +289,7 @@ public partial class MainWindow
             else _txtStatus.Foreground = snapshot.StatusBrush;
         }
 
+        // P3: solo actualizar sparkline si hay velocidad real (o cero al detenerse)
         UpdateSparkline(snapshot.SpeedBytesPerSecond);
         _progressWin?.SetProgress(snapshot.ProgressPercent, snapshot.DetailText);
     }
@@ -296,7 +307,11 @@ public partial class MainWindow
         {
             try
             {
-                SetStatus("Auto-reconectando por estancamiento…");
+                SetStatus(L["st.autoReconnecting"]);
+                // U5: cancelar transferencias activas ANTES de disponer el cliente
+                // Sin esto, el transfer loop sigue usando el cliente dispuesto y lanza excepciones confusas
+                try { _uploadCts?.Cancel(); } catch { }
+                try { _downloadCts?.Cancel(); } catch { }
                 await _clientLock.WaitAsync();
                 try { _client?.Dispose(); _client = null; }
                 finally { _clientLock.Release(); }
@@ -307,7 +322,7 @@ public partial class MainWindow
             }
             catch (Exception ex)
             {
-                System.Diagnostics.Debug.WriteLine($"[LanCopy] Stall auto-recover failed: {ex.Message}");
+                Log.Warn("transfer", "stall-recover-failed", new { error = ex.Message });
             }
             finally
             {
@@ -339,6 +354,16 @@ public partial class MainWindow
         return $"{Math.Max(0, elapsed.Seconds)}s";
     }
 
+
+    // U7: formateador de ETA
+    private static string FormatEta(double seconds)
+    {
+        if (seconds <= 0 || double.IsInfinity(seconds) || double.IsNaN(seconds)) return "";
+        var ts = TimeSpan.FromSeconds(seconds);
+        if (ts.TotalHours >= 1) return $"{(int)ts.TotalHours}h {ts.Minutes}m";
+        if (ts.TotalMinutes >= 1) return $"{(int)ts.TotalMinutes}m {ts.Seconds}s";
+        return $"{Math.Max(1, (int)ts.TotalSeconds)}s";
+    }
     private sealed class TransferUiState
     {
         public TransferUiState(bool receiving, long totalBytes, DateTimeOffset now)

@@ -1,4 +1,4 @@
-<Window xmlns="https://github.com/avaloniaui"
+﻿<Window xmlns="https://github.com/avaloniaui"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:models="clr-namespace:LanCopy.Models"
         xmlns:l="using:LanCopy.Localization"
@@ -84,7 +84,7 @@
                 <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Spacing="6" Margin="0,2,0,2">
                     <TextBlock Text="{l:Tr label.manual}" Foreground="{DynamicResource TextFg}" VerticalAlignment="Center" FontSize="12"/>
                     <TextBox x:Name="txtRemoteIp" Width="120" Background="{DynamicResource InputBg}" Foreground="{DynamicResource InputFg}"
-                             PlaceholderText="{l:Tr remoteip.placeholder}" Padding="6,4" BorderBrush="{DynamicResource BorderFg}" KeyDown="TxtRemoteIp_KeyDown" TextChanged="TxtRemoteIp_TextChanged"
+                             PlaceholderText="{l:Tr remoteip.placeholder}" Padding="6,4" BorderBrush="{DynamicResource BorderFg}" KeyDown="TxtRemoteIp_KeyDown"
                              ToolTip.Tip="{l:Tr tip.remoteip}"/>
                     <TextBlock Text=":" Foreground="{DynamicResource TextFg}" VerticalAlignment="Center"/>
                     <TextBox x:Name="txtRemotePort" Text="8742" Width="58" Background="{DynamicResource InputBg}"
@@ -390,7 +390,7 @@
 
         <!-- ══ Barra de estado / progreso ══════════════════════════════════════ -->
         <Border Grid.Row="2" Background="{DynamicResource ToolbarBg}" Padding="12,6" BorderBrush="{DynamicResource DividerBg}" BorderThickness="0,1,0,0">
-            <Grid RowDefinitions="Auto,Auto,Auto">
+            <Grid RowDefinitions="Auto,Auto">
                 <!-- Progreso + velocidad (#12) -->
                 <Grid Grid.Row="0" ColumnDefinitions="*,Auto,Auto" Margin="0,0,0,4">
                     <ProgressBar Grid.Column="0" x:Name="transferProgress"
@@ -408,26 +408,6 @@
                 <TextBlock Grid.Row="1" x:Name="txtStatus"
                            Text="{l:Tr status.ready}"
                            Foreground="{DynamicResource TextFg}" FontSize="12" ToolTip.Tip="{l:Tr tip.status}"/>
-                <!-- Historial de transferencias (#17) -->
-                <Expander x:Name="historyExpander" Grid.Row="2" Header="{l:Tr history.header}" Foreground="{DynamicResource MutedFg}" FontSize="12"
-                          IsExpanded="False" Margin="0,4,0,0" ToolTip.Tip="{l:Tr tip.history}">
-                    <ListBox x:Name="historyList" MaxHeight="110"
-                             Background="Transparent" BorderThickness="0"
-                             IsHitTestVisible="False">
-                        <ListBox.ItemTemplate>
-                            <DataTemplate x:DataType="models:TransferRecord">
-                                <StackPanel Orientation="Horizontal" Spacing="6">
-                                    <TextBlock Text="{Binding Time}"     Foreground="{DynamicResource SubtleFg}" FontSize="11" FontFamily="Consolas"/>
-                                    <TextBlock Text="{Binding Text}"     Foreground="{Binding Color}" FontSize="12"/>
-                                    <TextBlock Text="{Binding PeerIp}"   Foreground="{DynamicResource MutedFg}" FontSize="11"
-                                               IsVisible="{Binding PeerIp, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"/>
-                                    <TextBlock Text="{Binding BytesText}" Foreground="{DynamicResource MutedFg}" FontSize="11"
-                                               IsVisible="{Binding HasBytes}"/>
-                                </StackPanel>
-                            </DataTemplate>
-                        </ListBox.ItemTemplate>
-                    </ListBox>
-                </Expander>
             </Grid>
         </Border>
     </Grid>
