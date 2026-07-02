@@ -249,6 +249,38 @@ bash ./scripts/api/lancopy-api-curl.sh
 - **FR**: Importez la collection Postman, configurez `baseUrl` + `token`, puis lancez.
 - **DE**: Postman-Collection importieren, `baseUrl` + `token` setzen, Requests ausführen.
 
+### Guide d'integration (Francais)
+- Collection Postman officielle: `scripts/api/LanCopy-Local-API.postman_collection.json`
+- Script curl (Linux/macOS): `scripts/api/lancopy-api-curl.sh`
+- Script PowerShell (Windows): `scripts/api/lancopy-api-curl.ps1`
+
+Utilisation rapide:
+```powershell
+# PowerShell
+$env:LANCOPY_API_TOKEN="<token>"
+.\scripts\api\lancopy-api-curl.ps1
+
+# Bash
+export LANCOPY_API_TOKEN="<token>"
+bash ./scripts/api/lancopy-api-curl.sh
+```
+
+### Integrationsleitfaden (Deutsch)
+- Offizielle Postman-Collection: `scripts/api/LanCopy-Local-API.postman_collection.json`
+- Curl-Skript (Linux/macOS): `scripts/api/lancopy-api-curl.sh`
+- PowerShell-Skript (Windows): `scripts/api/lancopy-api-curl.ps1`
+
+Schnellstart:
+```powershell
+# PowerShell
+$env:LANCOPY_API_TOKEN="<token>"
+.\scripts\api\lancopy-api-curl.ps1
+
+# Bash
+export LANCOPY_API_TOKEN="<token>"
+bash ./scripts/api/lancopy-api-curl.sh
+```
+
 ### Plataformas soportadas
 
 | Plataforma           | RID          | Descarga                                                                 | Notas                          |
@@ -294,7 +326,6 @@ git push origin v1.0.0
 
 ### Licencia
 [MIT](LICENSE) © 2026 carbar. Libre para usar, modificar y distribuir.
-
 
 
 

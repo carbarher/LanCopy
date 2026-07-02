@@ -14,9 +14,14 @@ public partial class QueueResumeDialog : Window
 
     public QueueResumeAction Result { get; private set; } = QueueResumeAction.Discard;
 
-    public QueueResumeDialog(string message, string resumeLabel, string resumeSkipSameSizeLabel, string discardLabel)
+    public QueueResumeDialog()
     {
         InitializeComponent();
+    }
+
+    public QueueResumeDialog(string message, string resumeLabel, string resumeSkipSameSizeLabel, string discardLabel)
+        : this()
+    {
         var msg = this.FindControl<TextBlock>("txtMessage");
         if (msg != null) msg.Text = message;
         var btnR = this.FindControl<Button>("btnResume");
