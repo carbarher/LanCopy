@@ -16,20 +16,22 @@ Welcome to the LanCopy wiki.
 - macOS Apple Silicon DMG: [LanCopy-osx-arm64.dmg](https://github.com/carbarher/LanCopy/releases/latest/download/LanCopy-osx-arm64.dmg)
 - All assets: [GitHub Releases](https://github.com/carbarher/LanCopy/releases/latest)
 
-## Start in 5 minutes
+## Navigation
+
+### 🚀 Quick Start
 - [Quick Start (5 min)](Quick-Start-5-min)
 - [Troubleshooting](Troubleshooting)
 
-## Integrations and automation
+### 🔌 Integrations
 - [CLI & API Cookbook](CLI-API-Cookbook)
 - [Compatibility Matrix](Compatibility-Matrix)
 
-## Security and operations
+### 🔒 Security & Ops
 - [LAN Hardening](LAN-Hardening)
 - [Security Model](Security-Model)
 - [Release & Packaging](Release-Packaging)
 
-## Help
+### ❓ Help
 - [FAQ](FAQ)
 
 ## Languages
