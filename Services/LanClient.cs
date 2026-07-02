@@ -85,6 +85,7 @@ public sealed class LanClient : IDisposable, IAsyncDisposable
             {
                 // El servidor cerró la conexión durante el handshake TLS (servidor sin TLS o en
                 // texto plano). Reconectar sin TLS para compatibilidad con servidores no-TLS.
+                TlsFallbackOccurred?.Invoke(this, _host);
                 ssl.Dispose();
                 tcp.Dispose();
                 tcp = new TcpClient
@@ -395,16 +396,17 @@ public sealed class LanClient : IDisposable, IAsyncDisposable
             long compressedSize = 0;
             if (doCompress)
             {
+                var payloadStream = compressedPayload ?? throw new InvalidOperationException("Compression buffer was not initialized.");
 
-                await using (var ds = new DeflateStream(compressedPayload, CompressionLevel.Fastest, leaveOpen: true))
+                await using (var ds = new DeflateStream(payloadStream, CompressionLevel.Fastest, leaveOpen: true))
                     await fs.CopyToAsync(ds, ct);
-                compressedSize = compressedPayload.Length;
+                compressedSize = payloadStream.Length;
                 // BUG-FIX-003: Validate compression ratio to prevent unbounded memory growth
                 if (size > 0 && compressedSize > size * 1.1)
                 {
                     throw new InvalidOperationException("File incompressible - compression exceeded 110% of original");
                 }
-                compressedPayload.Seek(0, SeekOrigin.Begin);
+                payloadStream.Seek(0, SeekOrigin.Begin);
             }
 
             var idleTimeout = SelectIdleTimeout(size);

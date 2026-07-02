@@ -92,6 +92,22 @@ curl http://127.0.0.1:3489/api/v1/openapi.json
 curl -N -H "X-LanCopy-Token: <token>" http://127.0.0.1:3489/api/v1/events
 ```
 
+### Official integration pack
+- Postman collection: `scripts/api/LanCopy-Local-API.postman_collection.json`
+- Curl script (Linux/macOS): `scripts/api/lancopy-api-curl.sh`
+- Curl script (PowerShell/Windows): `scripts/api/lancopy-api-curl.ps1`
+
+Quick use:
+```powershell
+# PowerShell
+$env:LANCOPY_API_TOKEN="<token>"
+.\scripts\api\lancopy-api-curl.ps1
+
+# Bash
+export LANCOPY_API_TOKEN="<token>"
+bash ./scripts/api/lancopy-api-curl.sh
+```
+
 ### Supported platforms
 
 | Platform            | RID          | Download                                                                 | Notes                          |
@@ -211,6 +227,28 @@ curl http://127.0.0.1:3489/api/v1/openapi.json
 curl -N -H "X-LanCopy-Token: <token>" http://127.0.0.1:3489/api/v1/events
 ```
 
+### Pack oficial de integración
+- Colección Postman: `scripts/api/LanCopy-Local-API.postman_collection.json`
+- Script curl (Linux/macOS): `scripts/api/lancopy-api-curl.sh`
+- Script curl (PowerShell/Windows): `scripts/api/lancopy-api-curl.ps1`
+
+Uso rápido:
+```powershell
+# PowerShell
+$env:LANCOPY_API_TOKEN="<token>"
+.\scripts\api\lancopy-api-curl.ps1
+
+# Bash
+export LANCOPY_API_TOKEN="<token>"
+bash ./scripts/api/lancopy-api-curl.sh
+```
+
+### Integrator quick notes (EN/ES/FR/DE)
+- **EN**: Import Postman collection, set `baseUrl` + `token`, run requests.
+- **ES**: Importa la colección Postman, define `baseUrl` + `token` y ejecuta.
+- **FR**: Importez la collection Postman, configurez `baseUrl` + `token`, puis lancez.
+- **DE**: Postman-Collection importieren, `baseUrl` + `token` setzen, Requests ausführen.
+
 ### Plataformas soportadas
 
 | Plataforma           | RID          | Descarga                                                                 | Notas                          |
@@ -256,7 +294,6 @@ git push origin v1.0.0
 
 ### Licencia
 [MIT](LICENSE) © 2026 carbar. Libre para usar, modificar y distribuir.
-
 
 
 

@@ -1,0 +1,151 @@
+{
+  "info": {
+    "_postman_id": "e0828cbf-8878-4ea0-ac39-f35e96dfdc26",
+    "name": "LanCopy Local API",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+    "description": "Official LanCopy local API collection for localhost automation."
+  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://127.0.0.1:3489"
+    },
+    {
+      "key": "token",
+      "value": "replace-with-lancopy-token"
+    },
+    {
+      "key": "transferId",
+      "value": "replace-with-transfer-id"
+    }
+  ],
+  "item": [
+    {
+      "name": "Health",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": "{{baseUrl}}/api/v1/health"
+      }
+    },
+    {
+      "name": "OpenAPI",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": "{{baseUrl}}/api/v1/openapi.json"
+      }
+    },
+    {
+      "name": "Peers",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "X-LanCopy-Token",
+            "value": "{{token}}"
+          }
+        ],
+        "url": "{{baseUrl}}/api/v1/peers"
+      }
+    },
+    {
+      "name": "Send",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          },
+          {
+            "key": "X-LanCopy-Token",
+            "value": "{{token}}"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"localPath\": \"C:\\\\tmp\\\\file.zip\",\n  \"to\": \"192.168.1.50:8742\",\n  \"pin\": \"1234\"\n}"
+        },
+        "url": "{{baseUrl}}/api/v1/transfers/send"
+      }
+    },
+    {
+      "name": "Sync",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          },
+          {
+            "key": "X-LanCopy-Token",
+            "value": "{{token}}"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"localDir\": \"C:\\\\data\",\n  \"to\": \"192.168.1.50:8742\",\n  \"remoteRoot\": \"backup\"\n}"
+        },
+        "url": "{{baseUrl}}/api/v1/sync"
+      }
+    },
+    {
+      "name": "Transfer Status",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "X-LanCopy-Token",
+            "value": "{{token}}"
+          }
+        ],
+        "url": "{{baseUrl}}/api/v1/transfers/{{transferId}}"
+      }
+    },
+    {
+      "name": "Transfer Cancel",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "X-LanCopy-Token",
+            "value": "{{token}}"
+          }
+        ],
+        "url": "{{baseUrl}}/api/v1/transfers/{{transferId}}/cancel"
+      }
+    },
+    {
+      "name": "Transfer Retry",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "X-LanCopy-Token",
+            "value": "{{token}}"
+          }
+        ],
+        "url": "{{baseUrl}}/api/v1/transfers/{{transferId}}/retry"
+      }
+    },
+    {
+      "name": "Events (SSE)",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "X-LanCopy-Token",
+            "value": "{{token}}"
+          },
+          {
+            "key": "Accept",
+            "value": "text/event-stream"
+          }
+        ],
+        "url": "{{baseUrl}}/api/v1/events"
+      }
+    }
+  ]
+}
