@@ -16,9 +16,9 @@
     <PublishReadyToRun>false</PublishReadyToRun>
     <EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>
     <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
-    <Version>1.0.31</Version>
-    <AssemblyVersion>1.0.31</AssemblyVersion>
-    <FileVersion>1.0.31</FileVersion>
+    <Version>1.0.32</Version>
+    <AssemblyVersion>1.0.32</AssemblyVersion>
+    <FileVersion>1.0.32</FileVersion>
     <Company>carbar</Company>
     <Authors>carbar</Authors>
     <Product>LanCopy</Product>
