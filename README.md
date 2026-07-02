@@ -96,6 +96,7 @@ curl -N -H "X-LanCopy-Token: <token>" http://127.0.0.1:3489/api/v1/events
 - Postman collection: `scripts/api/LanCopy-Local-API.postman_collection.json`
 - Curl script (Linux/macOS): `scripts/api/lancopy-api-curl.sh`
 - Curl script (PowerShell/Windows): `scripts/api/lancopy-api-curl.ps1`
+- Wiki pages (repo docs): `docs/wiki/`
 
 Quick use:
 ```powershell
@@ -231,6 +232,7 @@ curl -N -H "X-LanCopy-Token: <token>" http://127.0.0.1:3489/api/v1/events
 - Colección Postman: `scripts/api/LanCopy-Local-API.postman_collection.json`
 - Script curl (Linux/macOS): `scripts/api/lancopy-api-curl.sh`
 - Script curl (PowerShell/Windows): `scripts/api/lancopy-api-curl.ps1`
+- Páginas wiki (docs del repo): `docs/wiki/`
 
 Uso rápido:
 ```powershell
@@ -326,6 +328,5 @@ git push origin v1.0.0
 
 ### Licencia
 [MIT](LICENSE) © 2026 carbar. Libre para usar, modificar y distribuir.
-
 
 
