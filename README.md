@@ -109,6 +109,13 @@ export LANCOPY_API_TOKEN="<token>"
 bash ./scripts/api/lancopy-api-curl.sh
 ```
 
+### Where to find...
+- Quick Start: `docs/wiki/Quick-Start-5-min.md`
+- Troubleshooting: `docs/wiki/Troubleshooting.md`
+- CLI/API cookbook: `docs/wiki/CLI-API-Cookbook.md`
+- LAN hardening: `docs/wiki/LAN-Hardening.md`
+- Compatibility matrix: `docs/wiki/Compatibility-Matrix.md`
+
 ### Supported platforms
 
 | Platform            | RID          | Download                                                                 | Notes                          |
@@ -245,6 +252,13 @@ export LANCOPY_API_TOKEN="<token>"
 bash ./scripts/api/lancopy-api-curl.sh
 ```
 
+### Dónde encontrar...
+- Inicio rápido: `docs/wiki/Quick-Start-5-min.md`
+- Troubleshooting: `docs/wiki/Troubleshooting.md`
+- Recetas CLI/API: `docs/wiki/CLI-API-Cookbook.md`
+- Hardening de red LAN: `docs/wiki/LAN-Hardening.md`
+- Matriz de compatibilidad: `docs/wiki/Compatibility-Matrix.md`
+
 ### Integrator quick notes (EN/ES/FR/DE)
 - **EN**: Import Postman collection, set `baseUrl` + `token`, run requests.
 - **ES**: Importa la colección Postman, define `baseUrl` + `token` y ejecuta.
@@ -328,5 +342,4 @@ git push origin v1.0.0
 
 ### Licencia
 [MIT](LICENSE) © 2026 carbar. Libre para usar, modificar y distribuir.
-
 
