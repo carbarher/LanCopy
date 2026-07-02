@@ -99,6 +99,7 @@ public partial class MainWindow : Window
     private bool _safeModeNoRemoteDelete; // SEGURIDAD: bloquea solo el borrado remoto
     private bool _requireApproval; // SEGURIDAD: pedir consentimiento antes de aceptar ficheros
     private bool _compressEnabled;
+    private int _bandwidthLimitMbps;
     private string _theme = "Dark"; // tema UI: Dark|Light
 
 

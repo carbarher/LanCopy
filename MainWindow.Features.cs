@@ -291,10 +291,14 @@ public partial class MainWindow
     // idea-bwlimit: el slider fija el limite global de ancho de banda (0 = ilimitado).
     private void Bandwidth_Changed(object? sender, RangeBaseValueChangedEventArgs e)
     {
-        var mbps = (int)Math.Round(e.NewValue);
+        var mbps = Math.Clamp((int)Math.Round(e.NewValue), 0, 12);
+        _bandwidthLimitMbps = mbps;
         RateLimiter.Global.BytesPerSecond = mbps <= 0 ? 0 : (long)mbps * 1024 * 1024;
         var lbl = this.FindControl<TextBlock>("txtBwValue");
         if (lbl != null) lbl.Text = mbps <= 0 ? L["bw.unlimited"] : $"{mbps} MB/s";
+        SaveSettingsDeferred(
+            this.FindControl<TextBox>("txtRemoteIp")?.Text ?? "",
+            this.FindControl<TextBox>("txtRemotePort")?.Text ?? "8742");
     }
 
     // idea-clipboard: enviar un texto corto al remoto (se copia a su portapapeles).

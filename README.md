@@ -46,6 +46,52 @@ dotnet test tests/LanCopy.Tests/LanCopy.Tests.csproj
 They cover path confinement (ShareRoot), real server↔client transfers,
 upload/download validation and hash integrity.
 
+### CLI & local API (preview)
+```powershell
+# CLI peer discovery
+dotnet run --project LanCopy.Cli/LanCopy.Cli.csproj -- peers --wait 5 --json
+
+# CLI send
+dotnet run --project LanCopy.Cli/LanCopy.Cli.csproj -- send C:\tmp\file.zip --to 192.168.1.50:8742 --pin 1234
+
+# CLI sync
+dotnet run --project LanCopy.Cli/LanCopy.Cli.csproj -- sync C:\tmp\folder --to 192.168.1.50:8742 --remote-root backup
+
+# Start local API on localhost (token persists in %LOCALAPPDATA%\LanCopy\cli-api.json)
+dotnet run --project LanCopy.Cli/LanCopy.Cli.csproj -- api --port 3489
+
+# Query peers (replace token shown on startup)
+curl -H "X-LanCopy-Token: <token>" http://127.0.0.1:3489/api/v1/peers
+
+# Start send transfer via API
+curl -X POST http://127.0.0.1:3489/api/v1/transfers/send ^
+  -H "Content-Type: application/json" ^
+  -H "X-LanCopy-Token: <token>" ^
+  -d "{\"localPath\":\"C:\\\\tmp\\\\file.zip\",\"to\":\"192.168.1.50:8742\",\"pin\":\"1234\"}"
+
+# Start sync via API
+curl -X POST http://127.0.0.1:3489/api/v1/sync ^
+  -H "Content-Type: application/json" ^
+  -H "X-LanCopy-Token: <token>" ^
+  -d "{\"localDir\":\"C:\\\\data\",\"to\":\"192.168.1.50:8742\",\"remoteRoot\":\"backup\"}"
+
+# Cancel transfer
+curl -X POST -H "X-LanCopy-Token: <token>" http://127.0.0.1:3489/api/v1/transfers/<id>/cancel
+
+# Retry a failed/canceled transfer
+curl -X POST -H "X-LanCopy-Token: <token>" http://127.0.0.1:3489/api/v1/transfers/<id>/retry
+
+# Same operations from CLI helper
+dotnet run --project LanCopy.Cli/LanCopy.Cli.csproj -- transfer cancel <id> --token <token>
+dotnet run --project LanCopy.Cli/LanCopy.Cli.csproj -- transfer retry <id> --token <token>
+
+# OpenAPI document for integrations
+curl http://127.0.0.1:3489/api/v1/openapi.json
+
+# Stream live events (SSE)
+curl -N -H "X-LanCopy-Token: <token>" http://127.0.0.1:3489/api/v1/events
+```
+
 ### Supported platforms
 
 | Platform            | RID          | Download                                                                 | Notes                          |
@@ -119,6 +165,52 @@ dotnet run --project LanCopy.csproj
 dotnet test tests/LanCopy.Tests/LanCopy.Tests.csproj
 ```
 
+### CLI y API local (preview)
+```powershell
+# Descubrimiento de peers por CLI
+dotnet run --project LanCopy.Cli/LanCopy.Cli.csproj -- peers --wait 5 --json
+
+# Envío por CLI
+dotnet run --project LanCopy.Cli/LanCopy.Cli.csproj -- send C:\tmp\file.zip --to 192.168.1.50:8742 --pin 1234
+
+# Sincronización por CLI
+dotnet run --project LanCopy.Cli/LanCopy.Cli.csproj -- sync C:\tmp\folder --to 192.168.1.50:8742 --remote-root backup
+
+# Arrancar API local en localhost (el token se persiste en %LOCALAPPDATA%\LanCopy\cli-api.json)
+dotnet run --project LanCopy.Cli/LanCopy.Cli.csproj -- api --port 3489
+
+# Consultar peers (usa el token mostrado al arrancar)
+curl -H "X-LanCopy-Token: <token>" http://127.0.0.1:3489/api/v1/peers
+
+# Lanzar envío por API
+curl -X POST http://127.0.0.1:3489/api/v1/transfers/send ^
+  -H "Content-Type: application/json" ^
+  -H "X-LanCopy-Token: <token>" ^
+  -d "{\"localPath\":\"C:\\\\tmp\\\\file.zip\",\"to\":\"192.168.1.50:8742\",\"pin\":\"1234\"}"
+
+# Lanzar sincronización por API
+curl -X POST http://127.0.0.1:3489/api/v1/sync ^
+  -H "Content-Type: application/json" ^
+  -H "X-LanCopy-Token: <token>" ^
+  -d "{\"localDir\":\"C:\\\\data\",\"to\":\"192.168.1.50:8742\",\"remoteRoot\":\"backup\"}"
+
+# Cancelar transferencia
+curl -X POST -H "X-LanCopy-Token: <token>" http://127.0.0.1:3489/api/v1/transfers/<id>/cancel
+
+# Reintentar transferencia fallida/cancelada
+curl -X POST -H "X-LanCopy-Token: <token>" http://127.0.0.1:3489/api/v1/transfers/<id>/retry
+
+# Las mismas operaciones desde CLI helper
+dotnet run --project LanCopy.Cli/LanCopy.Cli.csproj -- transfer cancel <id> --token <token>
+dotnet run --project LanCopy.Cli/LanCopy.Cli.csproj -- transfer retry <id> --token <token>
+
+# Documento OpenAPI para integraciones
+curl http://127.0.0.1:3489/api/v1/openapi.json
+
+# Ver eventos en tiempo real (SSE)
+curl -N -H "X-LanCopy-Token: <token>" http://127.0.0.1:3489/api/v1/events
+```
+
 ### Plataformas soportadas
 
 | Plataforma           | RID          | Descarga                                                                 | Notas                          |
@@ -164,3 +256,8 @@ git push origin v1.0.0
 
 ### Licencia
 [MIT](LICENSE) © 2026 carbar. Libre para usar, modificar y distribuir.
+
+
+
+
+

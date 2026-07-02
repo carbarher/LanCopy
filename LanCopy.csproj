@@ -16,9 +16,9 @@
     <PublishReadyToRun>false</PublishReadyToRun>
     <EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>
     <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
-    <Version>1.0.30</Version>
-    <AssemblyVersion>1.0.30</AssemblyVersion>
-    <FileVersion>1.0.30</FileVersion>
+    <Version>1.0.16</Version>
+    <AssemblyVersion>1.0.16</AssemblyVersion>
+    <FileVersion>1.0.16</FileVersion>
     <Company>carbar</Company>
     <Authors>carbar</Authors>
     <Product>LanCopy</Product>
@@ -35,9 +35,13 @@
   </ItemGroup>
   <ItemGroup>
     <Compile Remove="tests\**\*.cs" />
+    <Compile Remove="LanCopy.Cli\**\*.cs" />
     <AvaloniaResource Remove="tests\**" />
+    <AvaloniaResource Remove="LanCopy.Cli\**" />
     <EmbeddedResource Remove="tests\**" />
+    <EmbeddedResource Remove="LanCopy.Cli\**" />
     <None Remove="tests\**" />
+    <None Remove="LanCopy.Cli\**" />
   </ItemGroup>
   <ItemGroup>
     <PackageReference Include="Avalonia" Version="12.0.0" />

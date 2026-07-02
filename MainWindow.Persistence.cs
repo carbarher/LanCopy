@@ -144,6 +144,24 @@ public partial class MainWindow
                     if (chk != null) chk.IsChecked = _compressEnabled;
                 });
             }
+            if (doc.TryGetProperty("bandwidthLimitMbps", out var bwEl))
+            {
+                var bwValue = bwEl.ValueKind switch
+                {
+                    JsonValueKind.Number => bwEl.TryGetInt32(out var n) ? n : 0,
+                    JsonValueKind.String when int.TryParse(bwEl.GetString(), out var n) => n,
+                    _ => 0
+                };
+                _bandwidthLimitMbps = Math.Clamp(bwValue, 0, 12);
+            }
+            RateLimiter.Global.BytesPerSecond = _bandwidthLimitMbps <= 0 ? 0 : (long)_bandwidthLimitMbps * 1024 * 1024;
+            await Dispatcher.UIThread.InvokeAsync(() =>
+            {
+                var slider = this.FindControl<Slider>("sldBandwidth");
+                if (slider != null) slider.Value = _bandwidthLimitMbps;
+                var lbl = this.FindControl<TextBlock>("txtBwValue");
+                if (lbl != null) lbl.Text = _bandwidthLimitMbps <= 0 ? L["bw.unlimited"] : $"{_bandwidthLimitMbps} MB/s";
+            });
 // UX: modo simple/avanzado y asistente de bienvenida
             if (doc.TryGetProperty("advancedMode", out var advEl))
             {
@@ -238,6 +256,7 @@ public partial class MainWindow
                 safeModeNoRemoteDelete = _safeModeNoRemoteDelete,
                 requireApproval = _requireApproval,
                 compressEnabled = _compressEnabled,
+                bandwidthLimitMbps = _bandwidthLimitMbps,
 
                 advancedMode = _advancedMode,
                 welcomeShown = _welcomeShown,
@@ -257,5 +276,4 @@ public partial class MainWindow
     }
 
 }
-
 

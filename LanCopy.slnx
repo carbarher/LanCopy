@@ -3,4 +3,6 @@
     <Project Path="tests/LanCopy.Tests/LanCopy.Tests.csproj" />
   </Folder>
   <Project Path="LanCopy.csproj" />
+  <Project Path="LanCopy.Cli/LanCopy.Cli.csproj" />
 </Solution>
+

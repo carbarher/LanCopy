@@ -16,5 +16,6 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\LanCopy.csproj" />
+    <ProjectReference Include="..\..\LanCopy.Cli\LanCopy.Cli.csproj" />
   </ItemGroup>
 </Project>
