@@ -158,7 +158,7 @@ jobs:
           ditto -c -k --sequesterRsrc --keepParent LanCopy.app LanCopy-${{ matrix.rid }}.zip
           hdiutil create -volname "LanCopy" -srcfolder LanCopy.app -ov -format UDZO LanCopy-${{ matrix.rid }}.dmg
       - name: Upload
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: LanCopy-${{ matrix.rid }}
           path: |
@@ -206,7 +206,7 @@ jobs:
           $version = "${{ github.ref_name }}".TrimStart('v')
           & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" /DMyAppVersion=$version installer\LanCopy.iss
       - name: Upload installer
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: LanCopy-Setup
           path: installer/Output/*.exe
