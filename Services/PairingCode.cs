@@ -39,7 +39,11 @@ public static class PairingCode
             port = (data[4] << 8) | data[5];
             return port is >= 0 and <= 65535;
         }
-        catch { return false; }
+        catch (Exception ex)
+        {
+            Log.Debug("pairing", "decode-failed", new { error = ex.Message });
+            return false;
+        }
     }
 
     private static string Normalize(string code)

@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.Diagnostics;
@@ -74,7 +74,9 @@ public partial class MainWindow
 
         private TransferProgressSnapshot SnapshotLocked()
         {
-            var done = Math.Min(totalBytes, _completedBytes + _activeBytes.Values.Sum());
+            long active = 0;
+            foreach (var v in _activeBytes.Values) active += v;
+            var done = Math.Min(totalBytes, _completedBytes + active);
             return new TransferProgressSnapshot(done, totalBytes);
         }
     }
@@ -85,7 +87,8 @@ public partial class MainWindow
         List<(FileEntry entry, string destPath)>? replayQueueFiles = null,
         string? targetIp = null,
         int? targetPort = null,
-        HashSet<int>? precomputedSkipSet = null)
+        HashSet<int>? precomputedSkipSet = null,
+        bool silent = false)
     {
         ref int isFlag = ref (isUpload ? ref _isUploading : ref _isDownloading);
         if (Interlocked.CompareExchange(ref isFlag, 1, 0) == 1) return;
@@ -103,11 +106,18 @@ public partial class MainWindow
         else remotePort = targetPort.Value;
 
         var pwTitle = isUpload ? L["prog.title.send"] : L["prog.title.receive"]; // Q1: sin prefijo __
-        _progressWin = new ProgressWindow(pwTitle, cts);
-        _progressWin.Show(this);
-        string finalMsg = ""; // Q1
-        bool finalErr = false; // Q1
-        SetTransferButtonsEnabled(false, cancelEnabled: true);
+        if (!silent)
+        {
+            _progressWin = new ProgressWindow(pwTitle, cts);
+            _progressWin.Show(this);
+            SetTransferButtonsEnabled(false, cancelEnabled: true);
+        }
+        else
+        {
+            _progressWin = null;
+        }
+        string finalMsg = "";
+        bool finalErr = false;
         var sw = System.Diagnostics.Stopwatch.StartNew(); // Q1
         try
         {
@@ -184,7 +194,7 @@ public partial class MainWindow
             ok = fileList.Count - skip - uniqueFailedAfterPass1.Count;
 
             // -- Pase 2+: reintentar archivos fallidos (múltiples intentos) ------
-            const int maxRetryPasses = 4;
+            const int maxRetryPasses = TransferOptions.MaxRetryPasses; // centralizado en TransferOptions
             int retryPass = 0;
             int recoveredOnRetries = 0;
             while (failedFiles.Count > 0 && !ct.IsCancellationRequested && retryPass < maxRetryPasses)
@@ -249,7 +259,12 @@ public partial class MainWindow
             if (finalErr) SetStatusAlert(msg); // requiere lectura: parpadeo llamativo
             var finalSnapshot = aggregate.Snapshot();
             if (!ct.IsCancellationRequested && !finalErr && ok > 0)
+            {
                 CompleteTransferUi(receiving: !isUpload, finalSnapshot.DoneBytes, finalSnapshot.TotalBytes, sw.Elapsed);
+                // Notificación cuando la ventana no es visible (minimizada a tray)
+                NotifyTransferComplete(isUpload, ok, doneBytes, sw.Elapsed);
+                PlayTransferSound();
+            }
             else if (!ct.IsCancellationRequested)
                 SuspendTransferUi();
             else
@@ -267,7 +282,13 @@ public partial class MainWindow
         {
             // Resetear pausa por si cancelaron mientras pausado
             if (Interlocked.Exchange(ref _isPaused, 0) == 1)
-                try { _pauseSemaphore.Release(); } catch { }
+            {
+                try { _pauseSemaphore.Release(); }
+                catch (SemaphoreFullException ex)
+                {
+                    Log.Debug("transfer", "pause-semaphore-already-released", new { error = ex.Message });
+                }
+            }
             if (_progressWin != null)
             {
                 _progressWin.Finish(string.IsNullOrEmpty(finalMsg) ? L["prog.cancelled"] : finalMsg, finalErr);
@@ -275,7 +296,10 @@ public partial class MainWindow
             }
             ref int flagEnd = ref (isUpload ? ref _isUploading : ref _isDownloading);
             Interlocked.Exchange(ref flagEnd, 0);
-            SetTransferButtonsEnabled(true, cancelEnabled: false);
+            if (!silent)
+            {
+                SetTransferButtonsEnabled(true, cancelEnabled: false);
+            }
             if (!finalErr && !ct.IsCancellationRequested)
                 ClearQueue(); // completada correctamente
             else
@@ -301,9 +325,10 @@ public partial class MainWindow
                 _ = await snap.ListAsync(_remotePath, probeCts.Token);
                 return true;
             }
-            catch
+            catch (Exception ex)
             {
                 // conexión inválida; intentar reconectar abajo
+                Log.Debug("transfer", "connection-health-probe-failed", new { ip, port, error = ex.Message });
             }
         }
 
@@ -323,7 +348,8 @@ public partial class MainWindow
     private async Task<bool> DoTransferFileAsync(
         FileEntry entry, string destPath, bool isUpload,
         int fi, int total, long totalTransfer, TransferProgressAggregate aggregate, int progressKey,
-        string remoteIp, int remotePort, CancellationToken ct)
+        string remoteIp, int remotePort, CancellationToken ct,
+        bool isParallel = false)
     {
         var prog = new Progress<(long done, long total)>(v =>
         {
@@ -334,58 +360,112 @@ public partial class MainWindow
         var throttled = new ThrottledProgress<(long, long)>(prog, intervalMs: 200);
 
         // Feature 2: upload usa _client/_clientLock, download usa _clientDown/_clientLockDown
+        // BUG-FIX-B3: En modo paralelo (isParallel=true), cada tarea crea su propio LanClient
+        // en lugar de compartir _clientDown, que no es thread-safe (causa corrupcion de protocolo).
         var clientLock = isUpload ? _clientLock : _clientLockDown;
 
         LanClient? snap = null;
+        LanClient? ownedParallelClient = null; // cliente propio si isParallel && !isUpload
         try
         {
-            await clientLock.WaitAsync(ct);
-            try
+            if (!isUpload && isParallel)
             {
-                if (isUpload)
-                {
-                    if (_client == null) return false;
-                    snap = _client;
-                }
-                else
-                {
-                    if (_clientDown == null) _clientDown = new LanClient(remoteIp, remotePort);
-                    snap = _clientDown;
-                }
+                // Modo paralelo download: cliente dedicado por tarea (LanClient no es thread-safe).
+                // DownloadAsync gestiona la conexion internamente (igual que Broadcast usa MakeClient+UploadAsync).
+                ownedParallelClient = MakeClient(remoteIp, remotePort);
+                snap = ownedParallelClient;
             }
-            finally { clientLock.Release(); }
-
-            if (isUpload)
-                await snap.UploadAsync(
-                    entry.FullPath,
-                    destPath,
-                    throttled,
-                    ct,
-                    (accepted, total) =>
-                    {
-                        var fromText = FileEntry.FormatSize(accepted);
-                        var totalText = FileEntry.FormatSize(total);
-                        SetStatus(L.Format("st.resumingFrom", fromText, totalText, entry.Name));
-                    });
             else
             {
-                await snap.DownloadAsync(entry.FullPath, destPath, throttled, ct);
-
-                // F2: verificación de integridad post-download (SHA-256)
-                if (_checksumEnabled && !ct.IsCancellationRequested && File.Exists(destPath))
+                await clientLock.WaitAsync(ct);
+                try
                 {
-                    SetStatus(L.Format("st.checksumVerifying", entry.Name));
-                    var remoteHash = await snap.GetSha256Async(entry.FullPath, ct);
-                    string localHash;
-                    using (var sha = System.Security.Cryptography.SHA256.Create())
-                    using (var fs = new FileStream(destPath, FileMode.Open, FileAccess.Read, FileShare.Read, 131072, true))
-                        localHash = BitConverter.ToString(await sha.ComputeHashAsync(fs, ct)).Replace("-", "").ToLowerInvariant();
-
-                    if (remoteHash != null && !string.Equals(remoteHash, localHash, StringComparison.OrdinalIgnoreCase))
+                    if (isUpload)
                     {
-                        SetStatus(L.Format("st.checksumFail", entry.Name));
-                        try { File.Delete(destPath); } catch { }
-                        return false; // marcar para reintento
+                        if (_client == null) return false;
+                        snap = _client;
+                    }
+                    else
+                    {
+                        if (_clientDown == null) _clientDown = new LanClient(remoteIp, remotePort);
+                        snap = _clientDown;
+                    }
+                }
+                finally { clientLock.Release(); }
+            }
+
+            if (isUpload)
+            {
+                bool deltaSuccess = false;
+                try
+                {
+                    // Intentar subida delta primero (se autocancela y pasa a normal si no existe el remoto)
+                    deltaSuccess = await snap.UploadDeltaAsync(entry.FullPath, destPath, throttled, ct);
+                }
+                catch (Exception dEx)
+                {
+                    Log.Debug("transfer", "upload-delta-failed-fallback", new { file = entry.Name, error = dEx.Message });
+                }
+
+                if (!deltaSuccess)
+                {
+                    await snap.UploadAsync(
+                        entry.FullPath,
+                        destPath,
+                        throttled,
+                        ct,
+                        (accepted, total) =>
+                        {
+                            var fromText = FileEntry.FormatSize(accepted);
+                            var totalText = FileEntry.FormatSize(total);
+                            SetStatus(L.Format("st.resumingFrom", fromText, totalText, entry.Name));
+                        });
+                }
+            }
+            else
+            {
+                bool deltaSuccess = false;
+                try
+                {
+                    // Intentar descarga delta primero
+                    deltaSuccess = await snap.DownloadDeltaAsync(entry.FullPath, destPath, throttled, ct);
+                }
+                catch (Exception dEx)
+                {
+                    Log.Debug("transfer", "download-delta-failed-fallback", new { file = entry.Name, error = dEx.Message });
+                }
+
+                if (!deltaSuccess)
+                {
+                    // Si el archivo es grande (> 10 MB), usar descarga paralela multi-hilo
+                    if (entry.Size > 10L * 1024 * 1024)
+                    {
+                        await snap.DownloadParallelAsync(entry.FullPath, destPath, threads: 4, throttled, ct);
+                    }
+                    else
+                    {
+                        await snap.DownloadAsync(entry.FullPath, destPath, throttled, ct);
+                    }
+
+                    // F2: verificación de integridad post-download (SHA-256) si no fue delta (delta ya verifica)
+                    if (_checksumEnabled && !ct.IsCancellationRequested && File.Exists(destPath))
+                    {
+                        SetStatus(L.Format("st.checksumVerifying", entry.Name));
+                        var remoteHash = await snap.GetSha256Async(entry.FullPath, ct);
+                        string localHash;
+                        await using (var fs = new FileStream(destPath, FileMode.Open, FileAccess.Read, FileShare.Read, 131072, true))
+                            localHash = Convert.ToHexString(await System.Security.Cryptography.SHA256.HashDataAsync(fs, ct)).ToLowerInvariant();
+
+                        if (remoteHash != null && !string.Equals(remoteHash, localHash, StringComparison.OrdinalIgnoreCase))
+                        {
+                            SetStatus(L.Format("st.checksumFail", entry.Name));
+                            try { File.Delete(destPath); }
+                            catch (Exception deleteEx)
+                            {
+                                Log.Warn("transfer", "delete-corrupt-download-failed", new { path = destPath, error = deleteEx.Message });
+                            }
+                            return false; // marcar para reintento
+                        }
                     }
                 }
             }
@@ -395,17 +475,25 @@ public partial class MainWindow
         catch (OperationCanceledException) { return false; }
         catch (Exception ex)
         {
-            Debug.WriteLine($"[LanCopy] {entry.Name}: {ex.Message}");
-            // Invalidar cliente para forzar reconexión. Usa None (no el ct que puede estar
-            // cancelado) y solo invalida si sigue siendo el mismo cliente que fallo, para no
-            // tirar uno recien reconectado por otra tarea paralela (evita fallos en cascada).
-            await _clientLock.WaitAsync(CancellationToken.None);
-            try { if (isUpload && _client == snap) { _client?.Dispose(); _client = null; } }
-            finally { _clientLock.Release(); }
-            await _clientLockDown.WaitAsync(CancellationToken.None);
-            try { if (!isUpload && _clientDown == snap) { _clientDown?.Dispose(); _clientDown = null; } }
-            finally { _clientLockDown.Release(); }
+            Log.Warn("transfer", "file-transfer-failed", new { file = entry.Name, dest = destPath, isUpload, error = ex.Message });
+            // Invalidar cliente para forzar reconexión. Para clientes propios (isParallel download),
+            // simplemente se descartan al final del finally. Para clientes compartidos, invalidar.
+            if (!isParallel)
+            {
+                await _clientLock.WaitAsync(CancellationToken.None);
+                try { if (isUpload && _client == snap) { _client?.Dispose(); _client = null; } }
+                finally { _clientLock.Release(); }
+                await _clientLockDown.WaitAsync(CancellationToken.None);
+                try { if (!isUpload && _clientDown == snap) { _clientDown?.Dispose(); _clientDown = null; } }
+                finally { _clientLockDown.Release(); }
+            }
             return false;
+        }
+        finally
+        {
+            // Liberar cliente propio de descarga paralela
+            if (ownedParallelClient != null)
+                try { await ownedParallelClient.DisposeAsync(); } catch { }
         }
     }
 
@@ -421,10 +509,22 @@ public partial class MainWindow
         bool semaphoreHeld = false;
         try
         {
-            // Feature 1: punto de pausa
-            await _pauseSemaphore.WaitAsync(ct);
-            if (!ct.IsCancellationRequested) _pauseSemaphore.Release();
+            // Feature 1: punto de pausa — WaitAsync bloquea solo cuando la transferencia está pausada.
+            // BUG-FIX: si ct se cancela en la ventana de race entre el retorno de WaitAsync y la
+            // comprobación, el semáforo quedaba adquirido sin liberarse (→ deadlock en futuros WaitAsync).
+            // Fix: Release siempre en try/finally si WaitAsync completa sin OCE.
+            bool pauseAcquired = false;
+            try
+            {
+                await _pauseSemaphore.WaitAsync(ct);
+                pauseAcquired = true;
+            }
+            finally
+            {
+                if (pauseAcquired) _pauseSemaphore.Release();
+            }
             if (ct.IsCancellationRequested) return;
+
 
             // Limitar a máx 4 simultáneas
             await _transferSemaphore.WaitAsync(ct);
@@ -433,7 +533,7 @@ public partial class MainWindow
             var progressKey = fi;
 
             bool fileOk = await DoTransferFileAsync(
-                entry, destPath, isUpload, fi, total, totalTransfer, aggregate, progressKey, remoteIp, remotePort, ct);
+                entry, destPath, isUpload, fi, total, totalTransfer, aggregate, progressKey, remoteIp, remotePort, ct, isParallel: true);
 
             if (!fileOk && !ct.IsCancellationRequested)
             {
@@ -442,7 +542,7 @@ public partial class MainWindow
                 bool reconnected = await TryReconnectAsync(remoteIp, remotePort, ct);
                 if (reconnected)
                     fileOk = await DoTransferFileAsync(
-                        entry, destPath, isUpload, fi, total, totalTransfer, aggregate, progressKey, remoteIp, remotePort, ct);
+                        entry, destPath, isUpload, fi, total, totalTransfer, aggregate, progressKey, remoteIp, remotePort, ct, isParallel: true);
             }
 
             if (fileOk)
@@ -556,7 +656,14 @@ public partial class MainWindow
                             if (!TrySafeCombineUnder(_localPath, out var dest, item.Name, relPath)) continue;
                             // Crear directorio intermedio para subdirectorios anidados
                             var destDir = Path.GetDirectoryName(dest);
-                            if (destDir != null) try { Directory.CreateDirectory(destDir); } catch { /* ok */ }
+                            if (destDir != null)
+                            {
+                                try { Directory.CreateDirectory(destDir); }
+                                catch (Exception dirEx)
+                                {
+                                    Log.Debug("transfer", "create-subdirectory-failed", new { path = destDir, error = dirEx.Message });
+                                }
+                            }
                             result.Add((new FileEntry { Name = rf.Name, FullPath = rf.FullPath, Size = rf.Size, Tag = "dir" }, dest));
                         }
                     }
@@ -583,14 +690,30 @@ public partial class MainWindow
             finally { _clientLock.Release(); }
         }
 
+        // N7: Pre-construir índices de paths/tamaños remotos ANTES del bucle.
+        // _remoteItems.Any(predicate) en el bucle era O(n×m) — con 100 archivos y 100 entradas = 10.000 comparaciones.
+        // HashSet<string> + Dictionary<string,long> lo reducen a O(n+m): 1 scan inicial + O(1) por archivo.
+        HashSet<string>? remotePathSet = null;
+        Dictionary<string, long>? remoteSizeMap = null;
+        if (isUpload)
+        {
+            remotePathSet = new HashSet<string>(
+                _remoteItems.Where(r => !r.IsDirectory).Select(r => r.FullPath),
+                StringComparer.OrdinalIgnoreCase);
+            remoteSizeMap = _remoteItems
+                .Where(r => !r.IsDirectory)
+                .ToDictionary(r => r.FullPath, r => r.Size, StringComparer.OrdinalIgnoreCase);
+        }
+
         for (int i = 0; i < files.Count; i++)
         {
             var (entry, dest) = files[i];
             // Items dentro de carpetas expandidas: Tag="dir" → no se puede detectar conflicto (#3)
             if (entry.Tag == "dir") continue;
 
+            // N7: O(1) lookup en lugar de O(m) .Any() scan
             var exists = isUpload
-                ? _remoteItems.Any(r => !r.IsDirectory && string.Equals(r.FullPath, dest, StringComparison.OrdinalIgnoreCase))
+                ? remotePathSet?.Contains(dest) == true
                 : File.Exists(dest);
             if (!exists && isUpload && forceRemoteProbe && remoteSnap != null)
             {
@@ -599,7 +722,10 @@ public partial class MainWindow
                     var st = await remoteSnap.GetStatAsync(dest, ct);
                     exists = st is { Exists: true, IsDirectory: false };
                 }
-                catch { }
+                catch (Exception ex)
+                {
+                    Log.Debug("transfer", "overwrite-remote-probe-failed", new { path = dest, error = ex.Message });
+                }
             }
             if (exists) conflicts.Add(i);
         }
@@ -640,14 +766,18 @@ public partial class MainWindow
                 long destSize = -1;
                 if (isUpload)
                 {
-                    var r = _remoteItems.FirstOrDefault(remote => !remote.IsDirectory && string.Equals(remote.FullPath, dest, StringComparison.OrdinalIgnoreCase));
-                    if (r != null) destSize = r.Size;
+                    // N7: O(1) lookup en lugar de O(m) FirstOrDefault scan
+                    if (remoteSizeMap?.TryGetValue(dest, out destSize) == true) { /* destSize ya asignado */ }
                 }
                 else
                 {
                     if (File.Exists(dest))
                     {
-                        try { destSize = new System.IO.FileInfo(dest).Length; } catch { }
+                        try { destSize = new System.IO.FileInfo(dest).Length; }
+                        catch (Exception ex)
+                        {
+                            Log.Debug("transfer", "overwrite-local-size-read-failed", new { path = dest, error = ex.Message });
+                        }
                     }
                 }
 

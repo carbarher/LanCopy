@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.IO;
 using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
@@ -33,7 +33,10 @@ public static class CertTrust
                        ?? new Dictionary<string, string>();
             }
         }
-        catch { }
+        catch (Exception ex)
+        {
+            Log.Warn("cert", "load-known-hosts-failed", new { error = ex.Message });
+        }
         return new Dictionary<string, string>();
     }
 
@@ -42,19 +45,53 @@ public static class CertTrust
         try
         {
             Directory.CreateDirectory(Path.GetDirectoryName(StorePath)!);
-            // Escritura atomica: temp + replace. Evita corromper el store (y perder TODOS
-            // los pins TOFU) si el proceso muere a media escritura.
-            var tmp = StorePath + ".tmp";
+            // Escritura atomica: temp unico + replace. Se usa GUID en el nombre del temp para
+            // BUG-FIX-B3: evitar colision si multiples hilos guardan concurrentemente (sharing violation).
+            var tmp = StorePath + "." + Guid.NewGuid().ToString("N") + ".tmp";
             File.WriteAllText(tmp, JsonSerializer.Serialize(map));
             File.Move(tmp, StorePath, overwrite: true);
         }
-        catch { }
+        catch (Exception ex)
+        {
+            Log.Warn("cert", "save-known-hosts-failed", new { error = ex.Message });
+        }
     }
 
     public static string Fingerprint(X509Certificate cert)
     {
         var raw = cert.GetRawCertData();
         return Convert.ToHexString(SHA256.HashData(raw)).ToLowerInvariant();
+    }
+
+    /// <summary>
+    /// Convierte la huella del certificado en 4 emojis memorables para verificación visual anti-MITM.
+    /// Ambos peers deberían ver los mismos emojis si la conexión no está interceptada.
+    /// </summary>
+    public static string EmojiFingerprint(X509Certificate cert)
+    {
+        var hash = SHA256.HashData(cert.GetRawCertData());
+        // 256 emojis distinguibles — cada byte del hash selecciona uno
+        ReadOnlySpan<string> palette =
+        [
+            "🐶","🐱","🐭","🐹","🐰","🦊","🐻","🐼","🐨","🐯","🦁","🐮","🐷","🐸","🐵","🐔",
+            "🐧","🐦","🐤","🦆","🦅","🦉","🦇","🐺","🐗","🐴","🦄","🐝","🐛","🦋","🐌","🐞",
+            "🐙","🦑","🦀","🐠","🐟","🐡","🐬","🦈","🐳","🐋","🐊","🐆","🐅","🐃","🐂","🐄",
+            "🦌","🐪","🐫","🦒","🐘","🦏","🦍","🐎","🐖","🐐","🐏","🐑","🐕","🐩","🐈","🐓",
+            "🦃","🕊️","🐇","🐁","🐀","🐿️","🦔","🐾","🐉","🎄","🌲","🌳","🌴","🌵","🌷","🌸",
+            "🌹","🌺","🌻","🌼","🌽","🌾","🌿","🍀","🍁","🍂","🍃","🍄","🍅","🍆","🍇","🍈",
+            "🍉","🍊","🍋","🍌","🍍","🍎","🍏","🍐","🍑","🍒","🍓","🥝","🍔","🍕","🍖","🍗",
+            "🍘","🍙","🍚","🍛","🍜","🍝","🍞","🍟","🍠","🍡","🍢","🍣","🍤","🍥","🍦","🍧",
+            "🍨","🍩","🍪","🍫","🍬","🍭","🍮","🍯","🍰","🎂","🍿","☕","🍵","🍶","🍷","🍸",
+            "🍹","🍺","🍻","🥂","🥃","🍼","⚽","🏀","🏈","⚾","🎾","🏐","🏉","🎱","🏓","🏸",
+            "🥊","🥋","⛳","⛸️","🎣","🎿","🛷","🥌","🎯","🎮","🎲","🧩","🎪","🎨","🎭","🎬",
+            "🎤","🎧","🎵","🎶","🎹","🥁","🎷","🎺","🎸","🎻","🎼","🏆","🥇","🥈","🥉","🏅",
+            "🎖️","🏵️","🎗️","🎟️","🎫","🎪","🎠","🎡","🎢","🚀","🛸","✈️","🚁","🚂","🚃","🚄",
+            "🚅","🚆","🚇","🚈","🚉","🚊","🚋","🚌","🚍","🚎","🚐","🚑","🚒","🚓","🚔","🚕",
+            "🚖","🚗","🚘","🚙","🚚","🚛","🚜","🏎️","🏍️","🛵","🚲","🛴","🛑","⚓","🌍","🌎",
+            "🌏","🌐","🗺️","🌋","🏔️","🏕️","🏖️","🏗️","🏘️","🏙️","🏚️","🏛️","🏜️","🏝️","🏞️","🏟️"
+        ];
+        // Usar los primeros 4 bytes del hash para seleccionar 4 emojis con límite seguro modulo
+        return $"{palette[hash[0] % palette.Length]} {palette[hash[1] % palette.Length]} {palette[hash[2] % palette.Length]} {palette[hash[3] % palette.Length]}";
     }
 
     /// <summary>
@@ -115,7 +152,7 @@ public static class CertTrust
             var pk = cert.GetRSAPublicKey() ?? (AsymmetricAlgorithm?)cert.GetECDsaPublicKey();
             // S1: devolver false (rechazar) en vez de true cuando el tipo de clave es desconocido
             // Un cert CA con DSA u otro algoritmo exótico no debería pasar como self-signed
-            if (pk == null) return false; // clave desconocida — tratar como no self-signed (rechazar)→ asumir auto-firmado (fallback permisivo)
+            if (pk == null) return false; // clave desconocida (DSA u otro exótico) — rechazar: no tratar como auto-firmado
 
             // Construir un chain sin anclas externas y comprobar si el cert se valida a sí mismo
             using var chain = new X509Chain();

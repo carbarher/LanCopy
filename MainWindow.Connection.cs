@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.Diagnostics;
@@ -68,8 +68,9 @@ public partial class MainWindow
             using var probeCts = new CancellationTokenSource(TimeSpan.FromSeconds(2));
             _ = await snap.GetHealthAsync(probeCts.Token);
         }
-        catch (Exception)
+        catch (Exception ex)
         {
+            Log.Debug("conn", "watchdog-health-probe-failed", new { error = ex.Message });
             if (Volatile.Read(ref _isWindowClosing) == 1 || _isTransferring != 0) return;
             await DisconnectAsync(silent: true);
             SetStatus(L["st.disconnected"]);
@@ -82,20 +83,31 @@ public partial class MainWindow
 
     private async void Connect_Click(object? sender, RoutedEventArgs e)
     {
-        if (await IsConnectedAsync()) await DisconnectAsync(notifyPeer: true);
-        else await TryConnectAsync();
+        try
+        {
+            if (await IsConnectedAsync()) await DisconnectAsync(notifyPeer: true);
+            else await TryConnectAsync();
+        }
+        catch (Exception ex)
+        {
+            Log.Warn("conn", "connect-click-unexpected", new { error = ex.Message });
+            SetStatus(L[ex.Message]);
+        }
     }
 
     private async void TxtRemoteIp_KeyDown(object? sender, KeyEventArgs e)
     {
-        if (e.Key == Key.Enter) await TryConnectAsync();
+        if (e.Key != Key.Enter) return;
+        try { await TryConnectAsync(); }
+        catch (Exception ex) { Log.Warn("conn", "ip-keydown-unexpected", new { error = ex.Message }); }
     }
 
     private void CopyIp_Click(object? sender, RoutedEventArgs e)
     {
-        var full = this.FindControl<TextBlock>("txtMyIp")!.Text ?? "";
+        var full = this.FindControl<TextBlock>("txtMyIp")?.Text ?? "";
         var ip = full.Contains(':') ? full[..full.IndexOf(':')] : full;
-        _ = TopLevel.GetTopLevel(this)!.Clipboard!.SetTextAsync(ip);
+        var clipboard = TopLevel.GetTopLevel(this)?.Clipboard;
+        if (clipboard != null) _ = clipboard.SetTextAsync(ip);
         SetStatus(L["st.ipCopied"]);
     }
 
@@ -108,20 +120,47 @@ public partial class MainWindow
             if (top?.Clipboard != null) await top.Clipboard.SetTextAsync(code);
             SetStatus(L.Format("st.codeCopied", code));
         }
-        catch { SetStatus(L["st.codeError"]); }
+        catch (Exception ex)
+        {
+            Log.Warn("ui", "copy-pairing-code-failed", new { error = ex.Message });
+            SetStatus(L["st.codeError"]);
+        }
     }
 
     private void ApplyTheme()
     {
-        var variant = string.Equals(_theme, "Light", StringComparison.OrdinalIgnoreCase)
-            ? ThemeVariant.Light : ThemeVariant.Dark;
+        ThemeVariant variant;
+        string icon;
+        if (string.Equals(_theme, "Light", StringComparison.OrdinalIgnoreCase))
+        {
+            variant = ThemeVariant.Light;
+            icon = "☀️";
+        }
+        else if (string.Equals(_theme, "Auto", StringComparison.OrdinalIgnoreCase))
+        {
+            variant = ThemeVariant.Default; // sigue al OS
+            icon = "🔄";
+        }
+        else // Dark
+        {
+            variant = ThemeVariant.Dark;
+            icon = "🌙";
+        }
         if (Application.Current != null) Application.Current.RequestedThemeVariant = variant;
         this.RequestedThemeVariant = variant;
+        var btn = this.FindControl<Button>("btnTheme");
+        if (btn != null) btn.Content = icon;
     }
 
     private void ToggleTheme_Click(object? sender, RoutedEventArgs e)
     {
-        _theme = string.Equals(_theme, "Light", StringComparison.OrdinalIgnoreCase) ? "Dark" : "Light";
+        // Ciclo: Dark → Light → Auto → Dark
+        _theme = _theme switch
+        {
+            "Dark" => "Light",
+            "Light" => "Auto",
+            _ => "Dark"
+        };
         ApplyTheme();
         var ip = this.FindControl<TextBox>("txtRemoteIp")?.Text?.Trim() ?? "";
         var port = this.FindControl<TextBox>("txtRemotePort")?.Text?.Trim() ?? "8742";
@@ -168,12 +207,22 @@ public partial class MainWindow
 
         try
         {
-            var entries = await newClient.ListAsync(_remotePath);
+            // C9-FIX: añadir timeout explícito de 15s para que ConnectAsync falle rápido si el
+            // servidor no responde. Sin CT, ListAsync solo dependía del KeepAlive TCP (~30s),
+            // lo que dejaba la UI bloqueada en "conectando..." sin posibilidad de cancelación.
+            using var connectCts = new System.Threading.CancellationTokenSource(TimeSpan.FromSeconds(15));
+            var entries = await newClient.ListAsync(_remotePath, connectCts.Token);
             Dispatcher.UIThread.Post(() => { _remoteItemsAll = entries; ApplyRemoteSort(); UpdateRemotePath(); });
             SetConnStatus(L["conn.connectedWord"], BrushConnected);
             UpdateConnectButton(isConnected: true, isBusy: false);
             UpdateRemoteCreateFolderButton(isConnected: true);
-            if (!silent) SetStatus(L.Format("st.connected", $"{ip}:{port}"));
+            if (!silent)
+            {
+                var emojiId = newClient.RemoteCertificate != null
+                    ? $"  🔒 {CertTrust.EmojiFingerprint(newClient.RemoteCertificate)}"
+                    : "";
+                SetStatus(L.Format("st.connected", $"{ip}:{port}") + emojiId);
+            }
         }
         catch (Exception ex)
         {
@@ -183,7 +232,9 @@ public partial class MainWindow
                 try
                 {
                     _remotePath = "";
-                    var entries = await newClient.ListAsync("");
+                    // C9-FIX: mismo timeout de 15s en el fallback a ruta raíz
+                    using var fallbackCts = new System.Threading.CancellationTokenSource(TimeSpan.FromSeconds(15));
+                    var entries = await newClient.ListAsync("", fallbackCts.Token);
                     Dispatcher.UIThread.Post(() => { _remoteItemsAll = entries; ApplyRemoteSort(); UpdateRemotePath(); });
                     SetConnStatus(L["conn.connectedWord"], BrushConnected);
                     UpdateConnectButton(isConnected: true, isBusy: false);
@@ -191,7 +242,10 @@ public partial class MainWindow
                     if (!silent) SetStatus(L.Format("st.connected", $"{ip}:{port}"));
                     return;
                 }
-                catch { }
+                catch (Exception fallbackEx)
+                {
+                    Log.Warn("ui", "connect-fallback-root-list-failed", new { ip, port, error = fallbackEx.Message });
+                }
             }
 
             await _clientLock.WaitAsync();
@@ -223,8 +277,10 @@ public partial class MainWindow
     {
         UpdateConnectButton(isConnected: true, isBusy: true);
         if (notifyPeer) await TrySendDisconnectNoticeAsync();
-        try { _uploadCts.Cancel(); } catch (ObjectDisposedException) { }
-        try { _downloadCts.Cancel(); } catch (ObjectDisposedException) { }
+        try { _uploadCts.Cancel(); }
+        catch (ObjectDisposedException ex) { Log.Debug("conn", "upload-cts-cancel-disposed-on-disconnect", new { error = ex.Message }); }
+        try { _downloadCts.Cancel(); }
+        catch (ObjectDisposedException ex) { Log.Debug("conn", "download-cts-cancel-disposed-on-disconnect", new { error = ex.Message }); }
         if (_watchFolderActive) Dispatcher.UIThread.Post(StopWatch);
 
         await _clientLock.WaitAsync();
@@ -259,21 +315,34 @@ public partial class MainWindow
         try
         {
             using var cli = MakeClient(ip, port);
-            await cli.SendDisconnectNoticeAsync();
+            // C9-FIX: timeout de 3s — best-effort notice; si el peer no responde en 3s no vale la pena esperar.
+            // Sin CT, bloqueaba ~30s por KeepAlive TCP durante el cierre de la app.
+            using var disconnectCts = new System.Threading.CancellationTokenSource(TimeSpan.FromSeconds(3));
+            await cli.SendDisconnectNoticeAsync(disconnectCts.Token);
         }
-        catch { }
+        catch (Exception ex)
+        {
+            Log.Debug("ui", "disconnect-notice-send-failed", new { ip, port, error = ex.Message });
+        }
     }
 
     private void OnDisconnectNoticeReceived(string ip)
     {
         Dispatcher.UIThread.Post(async () =>
         {
-            var remoteIp = this.FindControl<TextBox>("txtRemoteIp")?.Text?.Trim() ?? "";
-            if (!string.Equals(remoteIp, ip, StringComparison.OrdinalIgnoreCase)) return;
-            if (!await IsConnectedAsync()) return;
+            try
+            {
+                var remoteIp = this.FindControl<TextBox>("txtRemoteIp")?.Text?.Trim() ?? "";
+                if (!string.Equals(remoteIp, ip, StringComparison.OrdinalIgnoreCase)) return;
+                if (!await IsConnectedAsync()) return;
 
-            await DisconnectAsync(silent: true);
-            SetStatus(L["st.disconnected"]);
+                await DisconnectAsync(silent: true);
+                SetStatus(L["st.disconnected"]);
+            }
+            catch (Exception ex)
+            {
+                Log.Warn("conn", "disconnect-notice-handler-failed", new { ip, error = ex.Message });
+            }
         });
     }
 
@@ -331,16 +400,27 @@ public partial class MainWindow
             await retryPolicy.ExecuteAsync(async token =>
             {
                 token.ThrowIfCancellationRequested();
-                await _clientLock.WaitAsync(token);
-                try { _client?.Dispose(); _client = MakeClient(ip, port); }
-                finally { _clientLock.Release(); }
-
-                // Ping: verifica que la conexión funciona
-                LanClient? snap;
-                await _clientLock.WaitAsync(token);
-                try { snap = _client; }
-                finally { _clientLock.Release(); }
-                _ = await snap!.ListAsync("", token);
+                var tempClient = MakeClient(ip, port);
+                try
+                {
+                    // C11-FIX: timeout de 8s por intento de reconexión — sin CT propio, cada ListAsync
+                    // esperaba hasta ~30s (KeepAlive TCP). Con 3 retries → 90s de bloqueo potencial.
+                    using var retryCts = CancellationTokenSource.CreateLinkedTokenSource(token);
+                    retryCts.CancelAfter(TimeSpan.FromSeconds(8));
+                    _ = await tempClient.ListAsync("", retryCts.Token);
+                    await _clientLock.WaitAsync(token);
+                    try
+                    {
+                        _client?.Dispose();
+                        _client = tempClient;
+                        tempClient = null;
+                    }
+                    finally { _clientLock.Release(); }
+                }
+                finally
+                {
+                    tempClient?.Dispose();
+                }
             }, ct);
 
             SetConnStatus(L["conn.reconnectedWord"], BrushConnected);
@@ -353,12 +433,18 @@ public partial class MainWindow
         {
             return false;
         }
-        catch
+        catch (Exception ex)
         {
+            Log.Warn("conn", "reconnect-failed", new { ip, port, error = ex.Message });
             SetConnStatus(L["conn.disconnectedWord"], BrushError);
             UpdateConnectButton(isConnected: false, isBusy: false);
             UpdateRemoteCreateFolderButton(isConnected: false);
             SetStatus(L["st.reconnectFailed"]);
+
+            await _clientLock.WaitAsync();
+            try { _client?.Dispose(); _client = null; }
+            finally { _clientLock.Release(); }
+
             return false;
         }
         finally
@@ -374,7 +460,8 @@ public partial class MainWindow
         {
             if (ct.IsCancellationRequested) return false;
             if (Volatile.Read(ref _isReconnectInProgress) == 0) return await IsConnectedAsync();
-            try { await Task.Delay(200, ct); } catch { return false; }
+            try { await Task.Delay(200, ct); }
+            catch (OperationCanceledException) { return false; }
         }
         return await IsConnectedAsync();
     }

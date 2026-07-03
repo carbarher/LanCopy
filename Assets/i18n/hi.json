@@ -335,5 +335,21 @@
     "st.sendtoDone":  "Windows \"भेजें\" मेनू में जोड़ा गया",
     "st.sendtoFailed2":  "शॉर्टकट नहीं बनाया जा सका: {0}",
     "st.minimizedToTray":  "ट्रे में छोटा किया गया — अभी भी प्राप्त कर रहा है",
-    "st.sendtoReady":  "{0} फ़ाइल(ें) तैयार — कनेक्ट करें और भेजें दबाएँ"
+    "st.sendtoReady":  "{0} फ़ाइल(ें) तैयार — कनेक्ट करें और भेजें दबाएँ",
+  "notify.sent": "Sent",
+  "notify.received": "Received",
+  "notify.transferDone": "Transfer {0}",
+  "notify.transferBody1": "{0} in {1}",
+  "notify.transferBodyN": "{0} files — {1} in {2}",
+  "audit.today": "Today",
+  "audit.twoDays": "2 Days",
+  "audit.week": "Week",
+  "audit.allOps": "All",
+  "audit.colTime": "Time",
+  "audit.colOp": "Operation",
+  "audit.colFile": "File",
+  "audit.colSize": "Size",
+  "audit.colDur": "Duration",
+  "audit.exported": "Exported to {0}",
+  "audit.exportFailed": "Export failed: {0}"
 }

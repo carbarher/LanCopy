@@ -1,4 +1,4 @@
-﻿using System.IO;
+using System.IO;
 using System.IO.Compression;
 using System.Net.Security;
 using System.Net.Sockets;
@@ -19,15 +19,19 @@ public sealed class LanClient : IDisposable, IAsyncDisposable
 
     private readonly string _host;
     private readonly int _port;
+    /// <summary>Certificado TLS del peer remoto (disponible tras conexión TLS).</summary>
+    public X509Certificate2? RemoteCertificate { get; private set; }
     private const long MaxCompressInMemory = 200L * 1024 * 1024;
     private const long MaxLocalHashBeforeUploadBytes = 512L * 1024 * 1024; // 512 MB
     private const long ResumeMapBlockSize = 4L * 1024 * 1024;
-    private static readonly TimeSpan TransferIdleTimeoutSmall = TimeSpan.FromSeconds(60);
-    private static readonly TimeSpan TransferIdleTimeoutLarge = TimeSpan.FromSeconds(180);
-    private const long LargeTransferThresholdBytes = 1L * 1024 * 1024 * 1024; // 1 GB
-    private const int KeepAliveIdleSeconds = 15;
-    private const int KeepAliveIntervalSeconds = 5;
-    private const int KeepAliveRetryCount = 3;
+    // Las constantes de timeout, keep-alive y umbral de tamaño se centralizan en TransferOptions.
+    // Usar alias locales para legibilidad interna (evita duplicar los valores aquí).
+    private static readonly TimeSpan TransferIdleTimeoutSmall = TransferOptions.TransferIdleTimeoutSmall;
+    private static readonly TimeSpan TransferIdleTimeoutLarge = TransferOptions.TransferIdleTimeoutLarge;
+    private const long LargeTransferThresholdBytes = TransferOptions.LargeTransferThresholdBytes;
+    private const int KeepAliveIdleSeconds = TransferOptions.KeepAliveIdleSeconds;
+    private const int KeepAliveIntervalSeconds = TransferOptions.KeepAliveIntervalSeconds;
+    private const int KeepAliveRetryCount = TransferOptions.KeepAliveRetryCount;
     private static int _adaptiveSocketBufferSize = 512 * 1024;
     private static readonly ConcurrentDictionary<string, int> _peerSocketBuffers = new(StringComparer.OrdinalIgnoreCase);
     private static int _peerProfilesLoaded;
@@ -76,7 +80,12 @@ public sealed class LanClient : IDisposable, IAsyncDisposable
                 {
                     TargetHost = _host,
                     EnabledSslProtocols = SslProtocols.Tls12 | SslProtocols.Tls13,
-                    RemoteCertificateValidationCallback = (s, c, ch, e) => CertTrust.ValidateOrPin(_host, c),
+                    RemoteCertificateValidationCallback = (s, c, ch, e) =>
+                    {
+                        if (c is X509Certificate2 c2) RemoteCertificate = c2;
+                        else if (c != null) RemoteCertificate = new X509Certificate2(c);
+                        return CertTrust.ValidateOrPin(_host, c);
+                    },
                     CertificateRevocationCheckMode = X509RevocationMode.NoCheck
                 }, ct);
                 stream = ssl;
@@ -117,7 +126,11 @@ public sealed class LanClient : IDisposable, IAsyncDisposable
         catch
         {
             // Si falla el handshake TLS o el auth PIN, no dejar el socket colgado.
-            try { tcp.Dispose(); } catch { }
+            try { tcp.Dispose(); }
+            catch (Exception ex)
+            {
+                Log.Warn("client", "open-cleanup-dispose-failed", new { host = _host, port = _port, error = ex.Message });
+            }
             throw;
         }
     }
@@ -132,7 +145,11 @@ public sealed class LanClient : IDisposable, IAsyncDisposable
         var line = await Protocol.ReadLineAsync(stream, ct);
         var resp = JsonSerializer.Deserialize<JsonElement>(line);
         EnsureOk(resp);
-        return JsonSerializer.Deserialize<List<FileEntry>>(resp.GetProperty("entries").GetRawText())!;
+        if (!resp.TryGetProperty("entries", out var entriesEl))
+            throw new InvalidDataException("svc.missingEntries"); // respuesta del servidor no incluye 'entries'
+        // O2: entriesEl.Deserialize<T>() opera sobre el UTF-8 original directamente.
+        // GetRawText() materializaba el JSON a string UTF-16 para re-parsearlo — doble decodificación.
+        return entriesEl.Deserialize<List<FileEntry>>()!;
     }
 
     // -- LIST RECURSIVE (para transferir carpetas) --
@@ -145,7 +162,10 @@ public sealed class LanClient : IDisposable, IAsyncDisposable
         var line = await Protocol.ReadLineAsync(stream, ct);
         var resp = JsonSerializer.Deserialize<JsonElement>(line);
         EnsureOk(resp);
-        return JsonSerializer.Deserialize<List<FileEntry>>(resp.GetProperty("entries").GetRawText())!;
+        if (!resp.TryGetProperty("entries", out var entriesEl))
+            throw new InvalidDataException("svc.missingEntries"); // respuesta del servidor no incluye 'entries'
+        // O2: misma mejora que ListAsync — sin GetRawText()
+        return entriesEl.Deserialize<List<FileEntry>>()!;
     }
 
     // -- GET --
@@ -182,9 +202,12 @@ public sealed class LanClient : IDisposable, IAsyncDisposable
                 fsFix.SetLength(mappedResume);
                 resume = mappedResume;
             }
-            catch { }
+            catch (Exception ex)
+            {
+                Log.Warn("client", "download-truncate-part-failed", new { path = partPath, error = ex.Message });
+            }
         }
-        bool wantCompress = UseCompress && resume == 0; // no se comprime al reanudar
+        bool wantCompress = UseCompress && resume == 0 && !FileEntry.IsAlreadyCompressed(remotePath);
 
         using var idleCts = StartIdleTimeout(ct);
         var ioCt = idleCts.Token;
@@ -198,7 +221,8 @@ public sealed class LanClient : IDisposable, IAsyncDisposable
         TouchIdleTimeout(idleCts);
         var header = JsonSerializer.Deserialize<JsonElement>(headerLine);
         EnsureOk(header);
-        var size = header.GetProperty("size").GetInt64();
+        if (!header.TryGetProperty("size", out var sizeEl) || !sizeEl.TryGetInt64(out var size))
+            throw new InvalidDataException("svc.missingSize"); // respuesta del servidor no incluye 'size'
         var idleTimeout = SelectIdleTimeout(size);
         TouchIdleTimeout(idleCts, idleTimeout);
         long rangeFrom = header.TryGetProperty("range_from", out var rfEl) ? rfEl.GetInt64() : 0;
@@ -213,7 +237,11 @@ public sealed class LanClient : IDisposable, IAsyncDisposable
         bool doResume = resume > 0 && !serverCompressed && rangeFrom == resume;
         if (resume > 0 && !doResume)
         {
-            try { File.Delete(partPath); } catch { }
+            try { File.Delete(partPath); }
+            catch (Exception ex)
+            {
+                Log.Warn("client", "download-delete-stale-part-failed", new { path = partPath, error = ex.Message });
+            }
             TryDeleteResumeMap(resumeMapPath);
         }
         if (serverCompressed) TryDeleteResumeMap(resumeMapPath);
@@ -228,14 +256,19 @@ public sealed class LanClient : IDisposable, IAsyncDisposable
             {
                 // Pre-hashea los bytes ya descargados para verificar el fichero completo al final.
                 fs.Seek(0, SeekOrigin.Begin);
-                var pre = new byte[Protocol.SelectCopyBufferSize(rangeFrom)];
-                long left = rangeFrom; int pr;
-                while (left > 0 && (pr = await fs.ReadAsync(pre.AsMemory(0, (int)Math.Min(pre.Length, left)), ct)) > 0)
+                var preBufSize = Protocol.SelectCopyBufferSize(rangeFrom);
+                var pre = System.Buffers.ArrayPool<byte>.Shared.Rent(preBufSize);
+                try
                 {
-                    hasher.AppendData(pre, 0, pr);
-                    left -= pr;
-                    TouchIdleTimeout(idleCts, idleTimeout);
+                    long left = rangeFrom; int pr;
+                    while (left > 0 && (pr = await fs.ReadAsync(pre.AsMemory(0, (int)Math.Min(preBufSize, left)), ct)) > 0)
+                    {
+                        hasher.AppendData(pre, 0, pr);
+                        left -= pr;
+                        TouchIdleTimeout(idleCts, idleTimeout);
+                    }
                 }
+                finally { System.Buffers.ArrayPool<byte>.Shared.Return(pre); }
                 fs.Seek(0, SeekOrigin.End);
             }
 
@@ -245,8 +278,9 @@ public sealed class LanClient : IDisposable, IAsyncDisposable
                 if (compressedSize < 0 || compressedSize > MaxCompressInMemory)
                     throw new InvalidDataException("compressed_size excede el limite permitido");
                 
-                // BUG-FIX #2: Usar archivo temporal en lugar de MemoryStream para evitar OOM
-                var compPath = localPath + ".comp~";
+                // BUG-FIX: Usar nombre de archivo temporal unico (GUID) para evitar colision
+                // si dos descargas simultaneas del mismo fichero usan el mismo .comp~ y se corrompen.
+                var compPath = localPath + "." + System.Guid.NewGuid().ToString("N") + ".comp~";
                 try
                 {
                     using (var compFile = File.Create(compPath))
@@ -258,29 +292,43 @@ public sealed class LanClient : IDisposable, IAsyncDisposable
                     using (var compFile = File.OpenRead(compPath))
                     {
                         await using var ds = new DeflateStream(compFile, CompressionMode.Decompress);
-                        var dbuf = new byte[Protocol.SelectCopyBufferSize(size)];
-                        int dr; long written = 0;
-                        while ((dr = await ds.ReadAsync(dbuf, ioCt)) > 0)
+                        // M4: ArrayPool evita aloc large-object por descarga (hasta 4MB según SelectCopyBufferSize)
+                        var dbufSize = Protocol.SelectCopyBufferSize(size);
+                        var dbuf = System.Buffers.ArrayPool<byte>.Shared.Rent(dbufSize);
+                        try
                         {
-                            written += dr;
-                            if (written > size) throw new InvalidDataException("Descompresion excede el tamano declarado (posible zip-bomb)");
-                            await fs.WriteAsync(dbuf.AsMemory(0, dr), ioCt);
-                            TouchIdleTimeout(idleCts, idleTimeout);
-                            hasher.AppendData(dbuf, 0, dr);
+                            int dr; long written = 0;
+                            while ((dr = await ds.ReadAsync(dbuf.AsMemory(0, dbufSize), ioCt)) > 0)
+                            {
+                                written += dr;
+                                if (written > size) throw new InvalidDataException("Descompresion excede el tamano declarado (posible zip-bomb)");
+                                await fs.WriteAsync(dbuf.AsMemory(0, dr), ioCt);
+                                TouchIdleTimeout(idleCts, idleTimeout);
+                                hasher.AppendData(dbuf, 0, dr);
+                            }
+                            if (written != size)
+                                throw new InvalidDataException("Descompresion incompleta: el tamano final no coincide con el esperado");
                         }
-                        if (written != size)
-                            throw new InvalidDataException("Descompresion incompleta: el tamano final no coincide con el esperado");
+                        finally { System.Buffers.ArrayPool<byte>.Shared.Return(dbuf); }
                     }
                 }
                 finally
                 {
-                    try { File.Delete(compPath); } catch { }
+                    try { File.Delete(compPath); }
+                    catch (Exception ex)
+                    {
+                        Log.Warn("client", "download-delete-temp-compressed-failed", new { path = compPath, error = ex.Message });
+                    }
                 }
             }
             else
             {
                 // Recibe (size - rangeFrom) bytes hasheando el contenido completo.
-                var buf = new byte[Protocol.SelectCopyBufferSize(size)];
+                // M4: ArrayPool evita aloc large-object por descarga directa
+                var bufSize = Protocol.SelectCopyBufferSize(size);
+                var buf = System.Buffers.ArrayPool<byte>.Shared.Rent(bufSize);
+                try
+                {
                 long remaining = size - rangeFrom, done = rangeFrom;
                 long nextMapCheckpoint = Math.Max(ResumeMapBlockSize, ((done / ResumeMapBlockSize) + 1) * ResumeMapBlockSize);
                 while (remaining > 0)
@@ -301,7 +349,9 @@ public sealed class LanClient : IDisposable, IAsyncDisposable
                     }
                 }
                 if (!serverCompressed) await SaveResumeMapAsync(resumeMapPath, size, size);
-            }
+                }
+                finally { System.Buffers.ArrayPool<byte>.Shared.Return(buf); }
+            } // cierre del else (M4)
 
             var actualSha256 = Convert.ToHexString(hasher.GetHashAndReset()).ToLowerInvariant();
             string? mismatch = null;
@@ -321,16 +371,21 @@ public sealed class LanClient : IDisposable, IAsyncDisposable
             }
             if (mismatch != null)
             {
-                // Hash incorrecto: el .part esta corrupto, lo borramos para no reanudar sobre basura.
+                // B9: El DisposeAsync explicito es necesario en Windows — no se puede borrar un archivo abierto.
+                // El finally tambien llama DisposeAsync (doble dispose), pero FileStream.DisposeAsync es idempotente.
                 await fs.DisposeAsync();
-                try { File.Delete(partPath); } catch { }
+                try { File.Delete(partPath); }
+                catch (Exception ex)
+                {
+                    Log.Warn("client", "download-delete-corrupt-part-failed", new { path = partPath, error = ex.Message });
+                }
                 TryDeleteResumeMap(resumeMapPath);
                 throw new Exception($"Checksum {mismatch} no coincide para {Path.GetFileName(localPath)}");
             }
         }
         finally
         {
-            await fs.DisposeAsync();
+            await fs.DisposeAsync(); // Idempotente: no-op si ya fue disposed por el bloque de mismatch
         }
 
         // Exito: promover .part al destino final (sobrescribe si existe).
@@ -380,7 +435,10 @@ public sealed class LanClient : IDisposable, IAsyncDisposable
                         usedResumeUpload = true;
                     }
                 }
-                catch { }
+                catch (Exception ex)
+                {
+                    Log.Debug("client", "upload-resume-probe-failed", new { path = remotePath, error = ex.Message });
+                }
             }
 
             // Integridad SHA-256 local: en reanudación la omitimos para no bloquear
@@ -401,12 +459,21 @@ public sealed class LanClient : IDisposable, IAsyncDisposable
                 await using (var ds = new DeflateStream(payloadStream, CompressionLevel.Fastest, leaveOpen: true))
                     await fs.CopyToAsync(ds, ct);
                 compressedSize = payloadStream.Length;
-                // BUG-FIX-003: Validate compression ratio to prevent unbounded memory growth
+                // BUG-FIX: Si la compresión infla el payload >110%, degradar graciosamente a raw
+                // en lugar de lanzar excepción (que causa 4 reintentos fallidos).
+                // La heurística IsLikelyIncompressible es de sampling y puede fallar para
+                // archivos con datos mezclados (ej: ZIP parcialmente encriptados, PDFs con imágenes).
                 if (size > 0 && compressedSize > size * 1.1)
                 {
-                    throw new InvalidOperationException("File incompressible - compression exceeded 110% of original");
+                    doCompress = false;
+                    compressedPayload?.Dispose();
+                    fs.Seek(0, SeekOrigin.Begin);
+                    Log.Debug("client", "upload-compress-ratio-degraded-to-raw", new { path = remotePath, size, compressedSize });
                 }
-                payloadStream.Seek(0, SeekOrigin.Begin);
+                else
+                {
+                    payloadStream.Seek(0, SeekOrigin.Begin);
+                }
             }
 
             var idleTimeout = SelectIdleTimeout(size);
@@ -560,7 +627,7 @@ public sealed class LanClient : IDisposable, IAsyncDisposable
         var resp = JsonSerializer.Deserialize<JsonElement>(line);
         var status = resp.TryGetProperty("status", out var s) ? s.GetString() : null;
         if (status != "ok") return null;
-        return resp.GetProperty("sha1").GetString();
+        return resp.TryGetProperty("sha1", out var sha1El) ? sha1El.GetString() : null;
     }
 
     /// <summary>
@@ -578,10 +645,11 @@ public sealed class LanClient : IDisposable, IAsyncDisposable
             var resp = JsonSerializer.Deserialize<JsonElement>(line);
             var status = resp.TryGetProperty("status", out var s) ? s.GetString() : null;
             if (status != "ok") return null;
-            return resp.GetProperty("sha256").GetString();
+            return resp.TryGetProperty("sha256", out var sha256El2) ? sha256El2.GetString() : null;
         }
-        catch
+        catch (Exception ex)
         {
+            Log.Debug("client", "sha256-query-failed", new { path = remotePath, error = ex.Message });
             return null;
         }
     }
@@ -645,8 +713,8 @@ public sealed class LanClient : IDisposable, IAsyncDisposable
             socket.SetSocketOption(SocketOptionLevel.Tcp, SocketOptionName.TcpKeepAliveInterval, KeepAliveIntervalSeconds);
             socket.SetSocketOption(SocketOptionLevel.Tcp, SocketOptionName.TcpKeepAliveRetryCount, KeepAliveRetryCount);
         }
-        catch (SocketException) { }
-        catch (PlatformNotSupportedException) { }
+        catch (SocketException ex) { Log.Debug("client", "tcp-keepalive-tuning-socket-failed", new { error = ex.Message }); }
+        catch (PlatformNotSupportedException ex) { Log.Debug("client", "tcp-keepalive-tuning-unsupported", new { error = ex.Message }); }
     }
 
     private static CancellationTokenSource StartIdleTimeout(CancellationToken ct, TimeSpan? idleTimeout = null)
@@ -692,11 +760,12 @@ public sealed class LanClient : IDisposable, IAsyncDisposable
         if (size < sampleSize) return false;
 
         var originalPos = fs.Position;
+        // P4: rent buffer from pool to avoid 64KB heap alloc per upload (matches server-side pattern)
+        var sample = System.Buffers.ArrayPool<byte>.Shared.Rent(sampleSize);
         try
         {
             fs.Seek(0, SeekOrigin.Begin);
-            var sample = new byte[sampleSize];
-            var read = fs.Read(sample, 0, sample.Length);
+            var read = fs.Read(sample, 0, sampleSize);
             if (read <= 0) return false;
 
             int distinct = 0;
@@ -722,6 +791,7 @@ public sealed class LanClient : IDisposable, IAsyncDisposable
         }
         finally
         {
+            System.Buffers.ArrayPool<byte>.Shared.Return(sample);
             fs.Seek(originalPos, SeekOrigin.Begin);
         }
     }
@@ -766,7 +836,7 @@ public sealed class LanClient : IDisposable, IAsyncDisposable
         }
         catch (Exception ex)
         {
-            Debug.WriteLine($"[LanCopy] peer profile load error: {ex.Message}");
+            Log.Debug("client", "peer-profile-load-failed", new { error = ex.Message });
         }
     }
 
@@ -789,7 +859,7 @@ public sealed class LanClient : IDisposable, IAsyncDisposable
         }
         catch (Exception ex)
         {
-            Debug.WriteLine($"[LanCopy] peer profile save error: {ex.Message}");
+            Log.Debug("client", "peer-profile-save-failed", new { error = ex.Message });
         }
     }
 
@@ -807,17 +877,17 @@ public sealed class LanClient : IDisposable, IAsyncDisposable
         }
         catch (IOException ex)
         {
-            Debug.WriteLine($"[LanCopy] resume-map read IO error: {ex.Message}");
+            Log.Debug("client", "resume-map-read-io-failed", new { path = mapPath, error = ex.Message });
             return currentPartLength;
         }
         catch (UnauthorizedAccessException ex)
         {
-            Debug.WriteLine($"[LanCopy] resume-map read access error: {ex.Message}");
+            Log.Debug("client", "resume-map-read-access-denied", new { path = mapPath, error = ex.Message });
             return currentPartLength;
         }
         catch (JsonException ex)
         {
-            Debug.WriteLine($"[LanCopy] resume-map parse error: {ex.Message}");
+            Log.Debug("client", "resume-map-parse-failed", new { path = mapPath, error = ex.Message });
             return currentPartLength;
         }
     }
@@ -834,8 +904,8 @@ public sealed class LanClient : IDisposable, IAsyncDisposable
                 UpdatedUtc: DateTime.UtcNow));
             await File.WriteAllTextAsync(mapPath, json, CancellationToken.None); // B7: no cancelar escritura intermedia del mapa
         }
-        catch (IOException ex) { Debug.WriteLine($"[LanCopy] resume-map write IO error: {ex.Message}"); }
-        catch (UnauthorizedAccessException ex) { Debug.WriteLine($"[LanCopy] resume-map write access error: {ex.Message}"); }
+        catch (IOException ex) { Log.Debug("client", "resume-map-write-io-failed", new { path = mapPath, error = ex.Message }); }
+        catch (UnauthorizedAccessException ex) { Log.Debug("client", "resume-map-write-access-denied", new { path = mapPath, error = ex.Message }); }
     }
 
     private static void TryDeleteResumeMap(string mapPath)
@@ -844,8 +914,472 @@ public sealed class LanClient : IDisposable, IAsyncDisposable
         {
             if (File.Exists(mapPath)) File.Delete(mapPath);
         }
-        catch (IOException ex) { Debug.WriteLine($"[LanCopy] resume-map delete IO error: {ex.Message}"); }
-        catch (UnauthorizedAccessException ex) { Debug.WriteLine($"[LanCopy] resume-map delete access error: {ex.Message}"); }
+        catch (IOException ex) { Log.Debug("client", "resume-map-delete-io-failed", new { path = mapPath, error = ex.Message }); }
+        catch (UnauthorizedAccessException ex) { Log.Debug("client", "resume-map-delete-access-denied", new { path = mapPath, error = ex.Message }); }
+    }
+
+    public async Task<List<string>> GetDeltaHashesAsync(string remotePath, int blockSize, CancellationToken ct = default)
+    {
+        using var idleCts = StartIdleTimeout(ct);
+        var ioCt = idleCts.Token;
+
+        var (tcp, stream) = await OpenAsync(ioCt);
+        using var _ = tcp;
+
+        await Protocol.WriteLineAsync(stream,
+            JsonSerializer.Serialize(new { cmd = "delta_hashes", path = remotePath, block_size = blockSize }), ioCt);
+
+        var headerLine = await Protocol.ReadLineAsync(stream, ioCt);
+        var header = JsonSerializer.Deserialize<JsonElement>(headerLine);
+        EnsureOk(header);
+
+        // P3/N9: pre-asignar capacidad con GetArrayLength() — evita rehashes para listas de hashes grandes
+        var hashes = new List<string>(
+            header.TryGetProperty("hashes", out var hashesEl) && hashesEl.ValueKind == JsonValueKind.Array
+                ? hashesEl.GetArrayLength()
+                : 0);
+        if (hashesEl.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var el in hashesEl.EnumerateArray())
+            {
+                var hStr = el.GetString();
+                if (hStr != null) hashes.Add(hStr);
+            }
+        }
+        return hashes;
+    }
+
+    public async Task DownloadChunkAsync(
+        string remotePath, string localPath, long offset, long length,
+        IProgress<long>? progress = null, CancellationToken ct = default)
+    {
+        using var idleCts = StartIdleTimeout(ct);
+        var ioCt = idleCts.Token;
+
+        var (tcp, stream) = await OpenAsync(ioCt);
+        using var _ = tcp;
+
+        await Protocol.WriteLineAsync(stream,
+            JsonSerializer.Serialize(new { cmd = "get_chunk", path = remotePath, offset, length }), ioCt);
+
+        var headerLine = await Protocol.ReadLineAsync(stream, ioCt);
+        var header = JsonSerializer.Deserialize<JsonElement>(headerLine);
+        EnsureOk(header);
+
+        if (!header.TryGetProperty("length", out var lengthEl) || !lengthEl.TryGetInt64(out var actualLength))
+            throw new InvalidDataException("svc.missingLength"); // respuesta del servidor no incluye 'length'
+        if (actualLength <= 0) return;
+
+        // Escribir en el offset exacto del archivo parcial (.part) o final
+        FileStream? fs = null;
+        for (int retry = 0; retry < 5; retry++)
+        {
+            try
+            {
+                fs = new FileStream(localPath, FileMode.Open, FileAccess.Write, FileShare.ReadWrite);
+                break;
+            }
+            catch (IOException)
+            {
+                if (retry == 4) throw;
+                await Task.Delay(50, ct);
+            }
+        }
+        await using var _fs = fs!;
+        _fs.Seek(offset, SeekOrigin.Begin);
+
+        var rentSize = Protocol.SelectCopyBufferSize(actualLength);
+        var rented = System.Buffers.ArrayPool<byte>.Shared.Rent(rentSize);
+        try
+        {
+            long remaining = actualLength;
+            while (remaining > 0)
+            {
+                var toRead = (int)Math.Min(remaining, rented.Length);
+                var read = await stream.ReadAsync(rented.AsMemory(0, toRead), ioCt);
+                if (read == 0) throw new EndOfStreamException("svc.connCut");
+                await _fs.WriteAsync(rented.AsMemory(0, read), ioCt);
+                progress?.Report(read);
+                remaining -= read;
+                TouchIdleTimeout(idleCts);
+            }
+        }
+        finally
+        {
+            System.Buffers.ArrayPool<byte>.Shared.Return(rented);
+        }
+    }
+
+    public async Task UploadDeltaBlocksAsync(
+        string localPath, string remotePath, int blockSize, List<int> blocks, long totalSize,
+        IProgress<long>? progress = null, CancellationToken ct = default)
+    {
+        using var idleCts = StartIdleTimeout(ct);
+        var ioCt = idleCts.Token;
+
+        var (tcp, stream) = await OpenAsync(ioCt);
+        using var _ = tcp;
+
+        await Protocol.WriteLineAsync(stream,
+            JsonSerializer.Serialize(new
+            {
+                cmd = "put_delta_blocks",
+                path = remotePath,
+                block_size = blockSize,
+                blocks,
+                size = totalSize
+            }), ioCt);
+
+        if (blocks.Count > 0)
+        {
+            await using var fs = new FileStream(localPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+            var rentSize = Protocol.SelectCopyBufferSize(blockSize);
+            var rented = System.Buffers.ArrayPool<byte>.Shared.Rent(rentSize);
+            try
+            {
+                for (int i = 0; i < blocks.Count; i++)
+                {
+                    var idx = blocks[i];
+                    long blockOffset = (long)idx * blockSize;
+                    long blockLen = Math.Min(blockSize, totalSize - blockOffset);
+                    if (blockLen <= 0) continue;
+
+                    fs.Seek(blockOffset, SeekOrigin.Begin);
+                    long remaining = blockLen;
+                    while (remaining > 0)
+                    {
+                        var toRead = (int)Math.Min(remaining, rented.Length);
+                        var read = await fs.ReadAsync(rented.AsMemory(0, toRead), ioCt);
+                        if (read == 0) throw new EndOfStreamException("svc.fileTruncated");
+                        await stream.WriteAsync(rented.AsMemory(0, read), ioCt);
+                        progress?.Report(read);
+                        remaining -= read;
+                        TouchIdleTimeout(idleCts);
+                    }
+                }
+                await stream.FlushAsync(ioCt);
+            }
+            finally
+            {
+                System.Buffers.ArrayPool<byte>.Shared.Return(rented);
+            }
+        }
+
+        var ackLine = await Protocol.ReadLineAsync(stream, ioCt);
+        var ack = JsonSerializer.Deserialize<JsonElement>(ackLine);
+        EnsureOk(ack);
+    }
+
+    public async Task DownloadParallelAsync(
+        string remotePath, string localPath, int threads,
+        IProgress<(long done, long total)>? progress = null,
+        CancellationToken ct = default)
+    {
+        // 1. Obtener detalles del archivo
+        var stat = await GetStatAsync(remotePath, ct);
+        if (stat == null || !stat.Exists) throw new FileNotFoundException("svc.fileNotFound", remotePath);
+        if (stat.IsDirectory) throw new InvalidOperationException("svc.isDir");
+
+        var size = stat.Size;
+        if (size <= 4L * 1024 * 1024 || threads <= 1)
+        {
+            // Fichero pequeño -> descargar directo por canal único para ahorrar overhead
+            await DownloadAsync(remotePath, localPath, progress, ct);
+            return;
+        }
+
+        var partPath = localPath + ".part";
+        var dir = Path.GetDirectoryName(localPath);
+        if (!string.IsNullOrEmpty(dir)) Directory.CreateDirectory(dir);
+
+        // Pre-asignar archivo de destino
+        await using (var fs = new FileStream(partPath, FileMode.Create, FileAccess.Write, FileShare.ReadWrite))
+        {
+            fs.SetLength(size);
+        }
+
+        // Dividir el archivo en chunks según hilos
+        long chunkSize = size / threads;
+        var tasks = new List<Task>();
+        long totalDone = 0;
+        var doneLock = new object();
+
+        for (int i = 0; i < threads; i++)
+        {
+            long offset = i * chunkSize;
+            long length = (i == threads - 1) ? (size - offset) : chunkSize;
+
+            if (length <= 0) continue;
+
+            var threadClient = new LanClient(_host, _port)
+            {
+                UseTls = this.UseTls,
+                UseCompress = this.UseCompress,
+                Pin = this.Pin
+            };
+
+            var chunkProgress = new Progress<long>(chunkDone =>
+            {
+                lock (doneLock)
+                {
+                    totalDone += chunkDone;
+                    progress?.Report((totalDone, size));
+                }
+            });
+
+            tasks.Add(Task.Run(async () =>
+            {
+                try
+                {
+                    await threadClient.DownloadChunkAsync(remotePath, partPath, offset, length, chunkProgress, ct);
+                }
+                finally
+                {
+                    await threadClient.DisposeAsync();
+                }
+            }, ct));
+        }
+
+        try
+        {
+            await Task.WhenAll(tasks);
+
+            // Validar hash local al final
+            string localSha;
+            await using (var finalFs = new FileStream(partPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
+            {
+                localSha = Convert.ToHexString(await SHA256.HashDataAsync(finalFs, ct)).ToLowerInvariant();
+            }
+
+            var expectedSha = await GetSha256Async(remotePath, ct);
+            if (expectedSha != null && !string.Equals(localSha, expectedSha, StringComparison.OrdinalIgnoreCase))
+            {
+                throw new InvalidDataException("svc.hashMismatch");
+            }
+
+            // Promover el archivo parcial a final (overwrite:true para evitar TOCTOU entre Delete+Move)
+            File.Move(partPath, localPath, overwrite: true);
+        }
+        catch
+        {
+            try { if (File.Exists(partPath)) File.Delete(partPath); } catch { }
+            throw;
+        }
+    }
+
+    public async Task<bool> UploadDeltaAsync(
+        string localPath, string remotePath,
+        IProgress<(long done, long total)>? progress = null,
+        CancellationToken ct = default)
+    {
+        if (!File.Exists(localPath)) throw new FileNotFoundException("svc.fileNotFound", localPath);
+        var size = new FileInfo(localPath).Length;
+        
+        // 128 KB es un tamaño óptimo para delta sync en redes LAN
+        int blockSize = 128 * 1024;
+        
+        // Intentar obtener hashes remotos del archivo destino
+        List<string> remoteHashes;
+        try
+        {
+            remoteHashes = await GetDeltaHashesAsync(remotePath, blockSize, ct);
+        }
+        catch
+        {
+            // Si falla u ocurre error (no existe o no lo soporta), hacemos upload normal
+            return false;
+        }
+
+        if (remoteHashes.Count == 0) return false; // si no existe el remoto, subir normal
+
+        // M6: ComputeLocalBlockHashesAsync — extracción del bloque duplicado en UploadDelta/DownloadDelta
+        var localHashes = await ComputeLocalBlockHashesAsync(localPath, blockSize, ct);
+
+        // Comparar bloques
+        var modifiedBlocks = new List<int>();
+        for (int i = 0; i < localHashes.Count; i++)
+        {
+            if (i >= remoteHashes.Count || !string.Equals(localHashes[i], remoteHashes[i], StringComparison.OrdinalIgnoreCase))
+            {
+                modifiedBlocks.Add(i);
+            }
+        }
+
+        // Si todos los bloques coinciden y los tamaños coinciden, no es necesario transferir nada
+        if (modifiedBlocks.Count == 0 && localHashes.Count == remoteHashes.Count)
+        {
+            progress?.Report((size, size));
+            return true;
+        }
+
+        // Si son demasiados bloques modificados (ej: más del 70%), preferimos upload normal
+        if (modifiedBlocks.Count > localHashes.Count * 0.7)
+        {
+            return false;
+        }
+
+        // Subir únicamente los bloques modificados
+        long deltaDone = 0;
+        var p = new Progress<long>(b =>
+        {
+            deltaDone += b;
+            progress?.Report((deltaDone, size)); // reportar progreso respecto al archivo completo
+        });
+
+        await UploadDeltaBlocksAsync(localPath, remotePath, blockSize, modifiedBlocks, size, p, ct);
+        return true;
+    }
+
+    public async Task<bool> DownloadDeltaAsync(
+        string remotePath, string localPath,
+        IProgress<(long done, long total)>? progress = null,
+        CancellationToken ct = default)
+    {
+        // Obtener stat remoto para saber el tamaño real
+        var stat = await GetStatAsync(remotePath, ct);
+        if (stat == null || !stat.Exists) return false;
+        
+        var size = stat.Size;
+        int blockSize = 128 * 1024;
+        
+        // Si el archivo local no existe, no podemos hacer delta sync
+        if (!File.Exists(localPath)) return false;
+
+        // Intentar obtener hashes remotos
+        List<string> remoteHashes;
+        try
+        {
+            remoteHashes = await GetDeltaHashesAsync(remotePath, blockSize, ct);
+        }
+        catch
+        {
+            return false;
+        }
+
+        if (remoteHashes.Count == 0) return false;
+
+        // M6: ComputeLocalBlockHashesAsync reutilizado — antes había código duplicado idéntico
+        var localHashes = await ComputeLocalBlockHashesAsync(localPath, blockSize, ct);
+
+        var missingBlocks = new List<int>();
+        for (int i = 0; i < remoteHashes.Count; i++)
+        {
+            if (i >= localHashes.Count || !string.Equals(remoteHashes[i], localHashes[i], StringComparison.OrdinalIgnoreCase))
+            {
+                missingBlocks.Add(i);
+            }
+        }
+
+        if (missingBlocks.Count == 0 && remoteHashes.Count == localHashes.Count)
+        {
+            progress?.Report((size, size));
+            return true;
+        }
+
+        if (missingBlocks.Count > remoteHashes.Count * 0.7)
+        {
+            return false;
+        }
+
+        // Crear una copia temporal del archivo local para actualizarla con los bloques correctos
+        var partPath = localPath + ".part";
+        File.Copy(localPath, partPath, overwrite: true);
+        
+        // Truncar/ajustar al tamaño objetivo por si acaso
+        await using (var fs = new FileStream(partPath, FileMode.Open, FileAccess.Write, FileShare.ReadWrite))
+        {
+            fs.SetLength(size);
+        }
+
+        try
+        {
+            long deltaDone = 0;
+            var p = new Progress<long>(b =>
+            {
+                deltaDone += b;
+                progress?.Report((deltaDone, size));
+            });
+
+            // Descargar cada bloque faltante secuencialmente en el archivo parcial
+            foreach (var idx in missingBlocks)
+            {
+                long offset = (long)idx * blockSize;
+                long length = Math.Min(blockSize, size - offset);
+                if (length <= 0) continue;
+
+                await DownloadChunkAsync(remotePath, partPath, offset, length, p, ct);
+            }
+
+            // Verificar integridad
+            string localSha;
+            await using (var finalFs = new FileStream(partPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
+            {
+                localSha = Convert.ToHexString(await SHA256.HashDataAsync(finalFs, ct)).ToLowerInvariant();
+            }
+
+            var expectedSha = await GetSha256Async(remotePath, ct);
+            if (expectedSha != null && !string.Equals(localSha, expectedSha, StringComparison.OrdinalIgnoreCase))
+            {
+                throw new InvalidDataException("svc.hashMismatch");
+            }
+
+            // Promover el archivo parcial a final (overwrite:true para evitar TOCTOU entre Delete+Move)
+            File.Move(partPath, localPath, overwrite: true);
+            return true;
+        }
+        catch
+        {
+            try { if (File.Exists(partPath)) File.Delete(partPath); } catch { }
+            throw;
+        }
+    }
+
+    public async Task SendPowerAsync(string action, CancellationToken ct = default)
+    {
+        using var idleCts = StartIdleTimeout(ct);
+        var ioCt = idleCts.Token;
+
+        var (tcp, stream) = await OpenAsync(ioCt);
+        using var _ = tcp;
+
+        await Protocol.WriteLineAsync(stream,
+            JsonSerializer.Serialize(new { cmd = "power", action }), ioCt);
+
+        var headerLine = await Protocol.ReadLineAsync(stream, ioCt);
+        var header = JsonSerializer.Deserialize<JsonElement>(headerLine);
+        EnsureOk(header);
+    }
+
+    public async Task<List<FileEntry>> SearchRemoteAsync(string remotePath, string query, CancellationToken ct = default)
+    {
+        using var idleCts = StartIdleTimeout(ct);
+        var ioCt = idleCts.Token;
+
+        var (tcp, stream) = await OpenAsync(ioCt);
+        using var _ = tcp;
+
+        await Protocol.WriteLineAsync(stream,
+            JsonSerializer.Serialize(new { cmd = "search", path = remotePath, query }), ioCt);
+
+        var headerLine = await Protocol.ReadLineAsync(stream, ioCt);
+        var header = JsonSerializer.Deserialize<JsonElement>(headerLine);
+        EnsureOk(header);
+
+        // P3/N9: pre-asignar capacidad — servidor limita resultados a 250, GetArrayLength() da el exacto
+        var results = new List<FileEntry>(
+            header.TryGetProperty("results", out var resEl) && resEl.ValueKind == JsonValueKind.Array
+                ? Math.Min(resEl.GetArrayLength(), 250)
+                : 0);
+        if (resEl.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var el in resEl.EnumerateArray())
+            {
+                // O2: el.Deserialize<FileEntry>() en lugar de el.GetRawText() — sin string intermedia
+                var entry = el.Deserialize<FileEntry>();
+                if (entry != null) results.Add(entry);
+            }
+        }
+        return results;
     }
 
     private static void EnsureOk(JsonElement resp)
@@ -866,14 +1400,47 @@ public sealed class LanClient : IDisposable, IAsyncDisposable
 
     private void Dispose(bool disposing)
     {
-        // No hay recursos locales a liberar, el pool es global
+        if (disposing)
+        {
+            // BUG-FIX: RemoteCertificate puede ser un new X509Certificate2(c) creado en el
+            // callback TLS cuando el runtime no entrega directamente un X509Certificate2.
+            // X509Certificate2 implementa IDisposable (SafeHandle nativo) y debe ser dispuesto.
+            var cert = RemoteCertificate;
+            RemoteCertificate = null;
+            try { cert?.Dispose(); }
+            catch (Exception ex) { Log.Debug("client", "cert-dispose-failed", new { host = _host, error = ex.Message }); }
+        }
+    }
+
+    /// <summary>
+    /// M6: Método compartido entre UploadDeltaAsync y DownloadDeltaAsync — antes cada uno
+    /// tenía el mismo bloque de 18 líneas duplicadas. Usa ArrayPool para el buffer de lectura
+    /// y calcula hashes SHA-256 por bloques de blockSize bytes.
+    /// </summary>
+    private static async Task<List<string>> ComputeLocalBlockHashesAsync(
+        string localPath, int blockSize, CancellationToken ct)
+    {
+        var hashes = new List<string>();
+        await using var fs = new FileStream(localPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite, 0, true);
+        var buffer = System.Buffers.ArrayPool<byte>.Shared.Rent(blockSize);
+        try
+        {
+            int read;
+            while ((read = await fs.ReadAsync(buffer.AsMemory(0, blockSize), ct)) > 0)
+                // O5: ToLowerInvariant() eliminado — la comparación usa OrdinalIgnoreCase. -1 alloc/bloque.
+                hashes.Add(Convert.ToHexString(SHA256.HashData(buffer.AsSpan(0, read))));
+        }
+        finally { System.Buffers.ArrayPool<byte>.Shared.Return(buffer); }
+        return hashes;
     }
 
     // OPT-FIX #1: Implementar IAsyncDisposable correctamente
-    public async ValueTask DisposeAsync()
+    public ValueTask DisposeAsync()
     {
-        Dispose(false);
-        await Task.Yield();
+        // BUG-FIX: Dispose(false) saltaba el bloque if (disposing), causando fuga del
+        // SafeHandle de RemoteCertificate. Usar Dispose(true) igual que Dispose() síncrono.
+        Dispose(true);
         GC.SuppressFinalize(this);
+        return ValueTask.CompletedTask;
     }
 }

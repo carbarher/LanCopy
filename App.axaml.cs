@@ -14,6 +14,20 @@ public partial class App : Application
 
     public override void OnFrameworkInitializationCompleted()
     {
+        // C12-FIX: registrar handlers globales de excepciones para diagnóstico.
+        // Sin esto, las excepciones de background tasks (fire-and-forget) eran silenciosamente
+        // ignoradas y nunca llegaban al log de diagnóstico — ocultan bugs en Task.Run sin await.
+        TaskScheduler.UnobservedTaskException += (_, args) =>
+        {
+            Services.Log.Warn("app", "unobserved-task-exception", new { error = args.Exception?.Message, inner = args.Exception?.InnerException?.Message });
+            args.SetObserved(); // Evita el crash en .NET 4.x y previene logs redundantes de .NET runtime
+        };
+        AppDomain.CurrentDomain.UnhandledException += (_, args) =>
+        {
+            var ex = args.ExceptionObject as Exception;
+            Services.Log.Warn("app", "unhandled-domain-exception", new { error = ex?.Message, isTerminating = args.IsTerminating });
+        };
+
         if (ApplicationLifetime is IClassicDesktopStyleApplicationLifetime desktop)
         {
             var splash = new SplashScreen();
@@ -34,7 +48,7 @@ public partial class App : Application
 
                     await Dispatcher.UIThread.InvokeAsync(async () =>
                     {
-                        var main = new MainWindow();
+                        var main = new MainWindow(desktop.Args);
                         desktop.MainWindow = main;
                         main.Show();
                         await splash.FadeOutAsync();

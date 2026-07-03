@@ -1,16 +1,11 @@
-﻿using System.Collections.Concurrent;
+using System.Collections.Concurrent;
 using System.Text.Json;
 
 namespace LanCopy.Services;
 
 internal static class SafeFileOps
 {
-    private static readonly string AuditPath = Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-        "LanCopy", "audit-log.jsonl");
-
     private static readonly ConcurrentDictionary<string, DateTime> _cooldowns = new(StringComparer.OrdinalIgnoreCase);
-    private static readonly object _auditLock = new();
 
     // Stat cache: evita re-stat en batch verify (TTL 5s)
     private static readonly ConcurrentDictionary<string, (DateTime Ts, long Size, long LastWriteUtcTicks, bool Exists, bool IsDir)> _statCache
@@ -229,15 +224,24 @@ internal static class SafeFileOps
 
         try
         {
-            var root = Path.GetPathRoot(normalizedPath);
-            if (string.IsNullOrWhiteSpace(root))
+            // BUG-FIX-B2: No crear el trash en la raiz del volumen (C:\$LanCopyTrash) ya que
+            // los usuarios estandar no tienen permiso de escritura en C:\. Usar una subcarpeta
+            // al lado del fichero (mismo volumen -> File.Move atomico) o LocalAppData como fallback.
+            var fileDir = Path.GetDirectoryName(normalizedPath) ?? "";
+            string trashRoot;
+            try
             {
-                error = "svc.driveResolve";
-                return false;
+                trashRoot = Path.Combine(fileDir, "$LanCopyTrash");
+                Directory.CreateDirectory(trashRoot);
             }
-
-            var trashRoot = Path.Combine(root, "$LanCopyTrash");
-            Directory.CreateDirectory(trashRoot);
+            catch
+            {
+                // Fallback: AppData del usuario (puede ser en distinto volumen, pero seguro)
+                trashRoot = Path.Combine(
+                    Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                    "LanCopy", "$LanCopyTrash");
+                Directory.CreateDirectory(trashRoot);
+            }
 
             var stamp = DateTime.UtcNow.ToString("yyyyMMdd_HHmmssfff");
             var baseName = Path.GetFileName(normalizedPath);
@@ -264,38 +268,15 @@ internal static class SafeFileOps
 
     public static void Audit(string op, string target, string result, string details = "", string actor = "local")
     {
+        // S6-FIX: Redirigir audit a Log.Warn (rotacion diaria, retencion 14 dias) en lugar de
+        // audit-log.jsonl plano sin rotacion que crecia sin limite.
         try
         {
-            var dir = Path.GetDirectoryName(AuditPath);
-            if (!string.IsNullOrWhiteSpace(dir)) Directory.CreateDirectory(dir);
-
-            var line = JsonSerializer.Serialize(new
-            {
-                tsUtc = DateTime.UtcNow,
-                op,
-                target,
-                result,
-                details,
-                actor
-            });
-            lock (_auditLock) 
-            {
-                try
-                {
-                    // BUG-FIX #3: Arreglar exception silenciosa en auditorÃ­a
-                    File.AppendAllText(AuditPath, line + Environment.NewLine);
-                }
-                catch (Exception ex)
-                {
-                    // Fallback: intentar escribir en console debugger si falla disco
-                    System.Diagnostics.Debug.WriteLine(
-                        $"[LanCopy Audit] Failed to write: {ex.Message}\n{line}");
-                }
-            }
+            Log.Warn("audit", op, new { target, result, details, actor });
         }
         catch
         {
-            // no-op: auditorÃ­a nunca debe romper flujo principal
+            // no-op: auditoria nunca debe romper flujo principal
         }
     }
 

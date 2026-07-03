@@ -18,25 +18,7 @@ public static class ServiceRegistry
     {
         // Register singleton services (shared instance across the application)
         services.AddSingleton<FileServer>();
-                                return services;
-    }
-
-    /// <summary>
-    /// Creates a configured service provider for the application.
-    /// </summary>
-    public static ServiceProvider BuildServiceProvider()
-    {
-        var services = new ServiceCollection();
-        services.AddLanCopyServices();
-        return services.BuildServiceProvider();
-    }
-
-    /// <summary>
-    /// Factory method to create a LanClient with proper dependency injection.
-    /// </summary>
-    public static LanClient CreateLanClient(string host, int port)
-    {
-        return new LanClient(host, port);
+        return services;
     }
 }
 

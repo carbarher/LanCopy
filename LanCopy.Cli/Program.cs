@@ -18,23 +18,36 @@ internal static class Program
 
     public static async Task<int> Main(string[] args)
     {
-        if (args.Length == 0 || HasFlag(args, "--help") || HasFlag(args, "-h"))
+        try
         {
-            PrintHelp();
-            return 0;
-        }
+            if (args.Length == 0 || HasFlag(args, "--help") || HasFlag(args, "-h"))
+            {
+                PrintHelp();
+                return 0;
+            }
 
-        return args[0].ToLowerInvariant() switch
+            return args[0].ToLowerInvariant() switch
+            {
+                "peers" => await RunPeersAsync(args[1..]),
+                "send" => await RunSendAsync(args[1..]),
+                "sync" => await RunSyncAsync(args[1..]),
+                "transfer" => await RunTransferAsync(args[1..]),
+                "cancel" => await RunCancelAsync(args[1..]),
+                "retry" => await RunRetryAsync(args[1..]),
+                "api" => await RunApiAsync(args[1..]),
+                _ => FailUnknownCommand(args[0])
+            };
+        }
+        catch (ArgumentOutOfRangeException ex)
         {
-            "peers" => await RunPeersAsync(args[1..]),
-            "send" => await RunSendAsync(args[1..]),
-            "sync" => await RunSyncAsync(args[1..]),
-            "transfer" => await RunTransferAsync(args[1..]),
-            "cancel" => await RunCancelAsync(args[1..]),
-            "retry" => await RunRetryAsync(args[1..]),
-            "api" => await RunApiAsync(args[1..]),
-            _ => FailUnknownCommand(args[0])
-        };
+            Console.Error.WriteLine(ex.Message);
+            return 2;
+        }
+        catch (ArgumentException ex)
+        {
+            Console.Error.WriteLine(ex.Message);
+            return 2;
+        }
     }
 
     private static async Task<int> RunPeersAsync(string[] args)
@@ -115,6 +128,9 @@ internal static class Program
             }
         });
 
+        using var cts = new CancellationTokenSource();
+        Console.CancelKeyPress += (_, e) => { e.Cancel = true; cts.Cancel(); };
+
         try
         {
             using var cli = new LanClient(endpoint.Host, endpoint.Port)
@@ -124,7 +140,7 @@ internal static class Program
                 UseCompress = useCompress
             };
 
-            await cli.UploadAsync(localPath, remotePath, progress, CancellationToken.None);
+            await cli.UploadAsync(localPath, remotePath, progress, cts.Token);
             if (!json) Console.WriteLine("\nUpload completed.");
 
             if (json)
@@ -140,6 +156,12 @@ internal static class Program
             }
 
             return 0;
+        }
+        catch (OperationCanceledException)
+        {
+            if (!json) Console.Error.WriteLine("\nUpload cancelled.");
+            else Console.WriteLine(JsonSerializer.Serialize(new { status = "cancelled" }, new JsonSerializerOptions { WriteIndented = true }));
+            return 1;
         }
         catch (Exception ex)
         {
@@ -181,12 +203,21 @@ internal static class Program
         var useTls = !HasFlag(args, "--no-tls");
         var useCompress = !HasFlag(args, "--no-compress");
 
+        // Filter out reparse points (symlinks, junctions) — same policy as the GUI.
         var files = Directory.EnumerateFiles(localDir, "*", SearchOption.AllDirectories)
+            .Where(path =>
+            {
+                try { return (File.GetAttributes(path) & FileAttributes.ReparsePoint) == 0; }
+                catch { return false; }
+            })
             .Select(path => new FileInfo(path))
             .ToArray();
         var totalBytes = files.Sum(f => f.Length);
         long doneBytes = 0;
         var filesDone = 0;
+
+        using var cts = new CancellationTokenSource();
+        Console.CancelKeyPress += (_, e) => { e.Cancel = true; cts.Cancel(); };
 
         try
         {
@@ -199,6 +230,8 @@ internal static class Program
 
             foreach (var file in files)
             {
+                cts.Token.ThrowIfCancellationRequested();
+
                 var rel = Path.GetRelativePath(localDir, file.FullName).Replace('\\', '/');
                 var remotePath = string.IsNullOrWhiteSpace(remoteRoot) ? rel : $"{remoteRoot.TrimEnd('/')}/{rel}";
 
@@ -213,7 +246,7 @@ internal static class Program
                     }
                 });
 
-                await cli.UploadAsync(file.FullName, remotePath, progress, CancellationToken.None);
+                await cli.UploadAsync(file.FullName, remotePath, progress, cts.Token);
                 doneBytes = fileBaseDone + file.Length;
                 filesDone++;
             }
@@ -233,6 +266,12 @@ internal static class Program
             }
 
             return 0;
+        }
+        catch (OperationCanceledException)
+        {
+            if (!json) Console.Error.WriteLine($"\nSync cancelled ({filesDone}/{files.Length} files done).");
+            else Console.WriteLine(JsonSerializer.Serialize(new { status = "cancelled", filesDone, totalFiles = files.Length }, new JsonSerializerOptions { WriteIndented = true }));
+            return 1;
         }
         catch (Exception ex)
         {
@@ -878,7 +917,9 @@ internal static class ApiTokenStore
             updatedUtc = DateTimeOffset.UtcNow
         }, new JsonSerializerOptions { WriteIndented = true });
 
-        var tempPath = TokenPath + ".tmp";
+        // Temp con GUID — evita colisión si dos procesos CLI llaman Save concurrentemente
+        // (mismo patrón defensivo que JsonStore.WriteRawAtomic y CertTrust.Save).
+        var tempPath = TokenPath + "." + Guid.NewGuid().ToString("N") + ".tmp";
         File.WriteAllText(tempPath, payload);
         File.Move(tempPath, TokenPath, overwrite: true);
     }
@@ -905,19 +946,37 @@ internal readonly record struct RetryResult(RetryStatus Status, string? RetryId 
 internal sealed class TransferRuntime : IDisposable
 {
     private readonly ConcurrentDictionary<string, TransferJob> _jobs = new(StringComparer.OrdinalIgnoreCase);
-    private readonly Channel<TransferEvent> _events = Channel.CreateUnbounded<TransferEvent>(new UnboundedChannelOptions
+    private readonly Channel<TransferEvent> _events = Channel.CreateBounded<TransferEvent>(new BoundedChannelOptions(2048)
     {
         SingleWriter = false,
-        SingleReader = false
+        SingleReader = false,
+        FullMode = BoundedChannelFullMode.DropOldest
     });
     private readonly object _persistLock = new();
     private readonly string _persistPath;
+    private DateTimeOffset _lastPersistAtUtc = DateTimeOffset.MinValue;
+    private static readonly TimeSpan PersistProgressInterval = TimeSpan.FromSeconds(1);
 
-    public TransferRuntime()
+    public TransferRuntime() : this(persistPathOverride: null)
     {
-        var dir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "LanCopy");
-        Directory.CreateDirectory(dir);
-        _persistPath = Path.Combine(dir, "cli-transfer-jobs.json");
+    }
+
+    internal TransferRuntime(string? persistPathOverride)
+    {
+        if (string.IsNullOrWhiteSpace(persistPathOverride))
+        {
+            var dir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "LanCopy");
+            Directory.CreateDirectory(dir);
+            _persistPath = Path.Combine(dir, "cli-transfer-jobs.json");
+        }
+        else
+        {
+            var persistDir = Path.GetDirectoryName(persistPathOverride);
+            if (string.IsNullOrWhiteSpace(persistDir))
+                throw new ArgumentException("Persist path must include a directory.", nameof(persistPathOverride));
+            Directory.CreateDirectory(persistDir);
+            _persistPath = persistPathOverride;
+        }
         LoadPersistedJobs();
     }
 
@@ -925,6 +984,7 @@ internal sealed class TransferRuntime : IDisposable
     {
         var endpoint = Program.ParseEndpoint(req.To!, 8742);
         var remotePath = Program.NormalizeRemotePath(req.RemotePath, req.LocalPath!);
+        var pin = string.IsNullOrWhiteSpace(req.Pin) ? null : req.Pin;
         var cts = new CancellationTokenSource();
 
         var status = new TransferStatus
@@ -940,7 +1000,7 @@ internal sealed class TransferRuntime : IDisposable
             StartedUtc = DateTimeOffset.UtcNow
         };
 
-        var job = new TransferJob(status, cts);
+        var job = new TransferJob(status, cts, pin);
         _jobs[status.Id] = job;
         Publish("queued", status);
 
@@ -954,7 +1014,7 @@ internal sealed class TransferRuntime : IDisposable
 
                 using var cli = new LanClient(endpoint.Host, endpoint.Port)
                 {
-                    Pin = string.IsNullOrWhiteSpace(req.Pin) ? null : req.Pin,
+                    Pin = pin,
                     UseTls = status.UseTls,
                     UseCompress = status.UseCompress
                 };
@@ -993,6 +1053,7 @@ internal sealed class TransferRuntime : IDisposable
     {
         var endpoint = Program.ParseEndpoint(req.To!, 8742);
         var remoteRoot = (req.RemoteRoot ?? string.Empty).Trim();
+        var pin = string.IsNullOrWhiteSpace(req.Pin) ? null : req.Pin;
         var cts = new CancellationTokenSource();
 
         var status = new TransferStatus
@@ -1008,7 +1069,7 @@ internal sealed class TransferRuntime : IDisposable
             StartedUtc = DateTimeOffset.UtcNow
         };
 
-        var job = new TransferJob(status, cts);
+        var job = new TransferJob(status, cts, pin);
         _jobs[status.Id] = job;
         Publish("queued", status);
 
@@ -1027,7 +1088,7 @@ internal sealed class TransferRuntime : IDisposable
 
                 using var cli = new LanClient(endpoint.Host, endpoint.Port)
                 {
-                    Pin = string.IsNullOrWhiteSpace(req.Pin) ? null : req.Pin,
+                    Pin = pin,
                     UseTls = status.UseTls,
                     UseCompress = status.UseCompress
                 };
@@ -1084,7 +1145,10 @@ internal sealed class TransferRuntime : IDisposable
 
         job.Status.CancellationRequested = true;
         Publish("cancel_requested", job.Status);
-        job.Cancellation?.Cancel();
+        // Race: the job's finally{cts.Dispose()} may have already run between the IsTerminal
+        // check above and this Cancel() call — guard against ObjectDisposedException.
+        try { job.Cancellation?.Cancel(); }
+        catch (ObjectDisposedException) { /* job completed concurrently; cancellation is moot */ }
         return CancelResult.CancellationRequested;
     }
 
@@ -1106,6 +1170,7 @@ internal sealed class TransferRuntime : IDisposable
                 LocalPath = job.Status.LocalPath,
                 To = job.Status.To,
                 RemotePath = job.Status.RemotePath,
+                Pin = job.Pin,
                 UseTls = job.Status.UseTls,
                 UseCompress = job.Status.UseCompress
             });
@@ -1122,6 +1187,7 @@ internal sealed class TransferRuntime : IDisposable
                 LocalDir = job.Status.LocalPath,
                 To = job.Status.To,
                 RemoteRoot = job.Status.RemotePath,
+                Pin = job.Pin,
                 UseTls = job.Status.UseTls,
                 UseCompress = job.Status.UseCompress
             });
@@ -1153,7 +1219,20 @@ internal sealed class TransferRuntime : IDisposable
             Job = snapshot
         });
 
+        PersistSnapshotThrottled(force: type != "progress");
+    }
+
+    private void PersistSnapshotThrottled(bool force)
+    {
+        if (!force)
+        {
+            var now = DateTimeOffset.UtcNow;
+            if (now - _lastPersistAtUtc < PersistProgressInterval)
+                return;
+        }
+
         PersistSnapshot();
+        _lastPersistAtUtc = DateTimeOffset.UtcNow;
     }
 
     private void PersistSnapshot()
@@ -1190,12 +1269,13 @@ internal sealed class TransferRuntime : IDisposable
                     status.FinishedUtc ??= DateTimeOffset.UtcNow;
                 }
 
-                _jobs[status.Id] = new TransferJob(status, cancellation: null);
+                _jobs[status.Id] = new TransferJob(status, cancellation: null, pin: null);
             }
         }
-        catch
+        catch (Exception ex)
         {
             // Preserve startup robustness; broken persistence file should not stop API boot.
+            Log.Warn("cli", "transfer-snapshot-load-failed", new { path = _persistPath, error = ex.Message });
         }
     }
 
@@ -1205,23 +1285,33 @@ internal sealed class TransferRuntime : IDisposable
     public void Dispose()
     {
         foreach (var job in _jobs.Values)
-            job.Cancellation?.Cancel();
+        {
+            if (job.Cancellation is null) continue;
+            try { job.Cancellation.Cancel(); }
+            catch (ObjectDisposedException)
+            {
+                // Job already finished and disposed its CTS.
+            }
+        }
 
-        PersistSnapshot();
+        try { PersistSnapshot(); }
+        catch (Exception ex) { Log.Warn("cli", "dispose-persist-failed", new { error = ex.Message }); }
         _events.Writer.TryComplete();
     }
 }
 
 internal sealed class TransferJob
 {
-    public TransferJob(TransferStatus status, CancellationTokenSource? cancellation)
+    public TransferJob(TransferStatus status, CancellationTokenSource? cancellation, string? pin)
     {
         Status = status;
         Cancellation = cancellation;
+        Pin = pin;
     }
 
     public TransferStatus Status { get; }
     public CancellationTokenSource? Cancellation { get; }
+    public string? Pin { get; }
 }
 
 internal sealed class SendRequest

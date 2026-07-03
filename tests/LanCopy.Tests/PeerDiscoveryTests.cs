@@ -32,4 +32,14 @@ public class PeerDiscoveryTests
         Assert.Contains("10.0.0.8", ips);
         Assert.Contains("127.0.0.1", ips);
     }
+
+    [Fact]
+    public void GetPeers_ReturnsEmptyWhenNoPeersDiscovered()
+    {
+        // PeerDiscovery with no network activity should return empty peer list immediately.
+        var discovery = new PeerDiscovery("127.0.0.1", 19999) { StealthMode = true };
+        var peers = discovery.GetPeers();
+        Assert.Empty(peers);
+        discovery.Dispose();
+    }
 }

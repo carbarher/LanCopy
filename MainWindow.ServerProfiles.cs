@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.Diagnostics;
@@ -54,15 +54,23 @@ public partial class MainWindow
         var ip = this.FindControl<TextBox>("txtRemoteIp")?.Text?.Trim() ?? "";
         var port = this.FindControl<TextBox>("txtRemotePort")?.Text?.Trim() ?? "8742";
         if (string.IsNullOrEmpty(ip)) { SetStatus(L["st.enterIpFirst"]); return; }
-        var dlg = new InputDialog(L["dlg.profile.title"], L["dlg.profile.prompt"], ip);
-        await dlg.ShowDialog(this); // Q4: era _ = dlg.ShowDialog — fire-and-forget descartaba excepciones del diálogo
-        var name = await dlg.GetResultAsync();
-        if (string.IsNullOrWhiteSpace(name)) return;
-        var pin = this.FindControl<TextBox>("txtPin")?.Text?.Trim() ?? "";
-        ProfileStore.Upsert(_profiles, new ConnectionProfile(name, ip, port, pin, _tlsEnabled, _compressEnabled));
-        SaveSettings(ip, port);
-        RefreshProfilesCombo(name);
-        SetStatus(L.Format("st.profileSaved", name));
+        try
+        {
+            var dlg = new InputDialog(L["dlg.profile.title"], L["dlg.profile.prompt"], ip);
+            await dlg.ShowDialog(this); // Q4: era _ = dlg.ShowDialog — fire-and-forget descartaba excepciones del diálogo
+            var name = await dlg.GetResultAsync();
+            if (string.IsNullOrWhiteSpace(name)) return;
+            var pin = this.FindControl<TextBox>("txtPin")?.Text?.Trim() ?? "";
+            ProfileStore.Upsert(_profiles, new ConnectionProfile(name, ip, port, pin, _tlsEnabled, _compressEnabled));
+            SaveSettings(ip, port);
+            RefreshProfilesCombo(name);
+            SetStatus(L.Format("st.profileSaved", name));
+        }
+        catch (Exception ex)
+        {
+            Log.Warn("profiles", "save-profile-unexpected", new { ip, error = ex.Message });
+            SetStatus(L[ex.Message]);
+        }
     }
 
     private void DeleteProfile_Click(object? sender, RoutedEventArgs e)
@@ -70,9 +78,13 @@ public partial class MainWindow
         var combo = this.FindControl<ComboBox>("cmbProfiles");
         if (combo?.SelectedItem is not string name) return;
         ProfileStore.Remove(_profiles, name);
-        SaveSettings(
-            this.FindControl<TextBox>("txtRemoteIp")?.Text?.Trim() ?? "",
-            this.FindControl<TextBox>("txtRemotePort")?.Text?.Trim() ?? "8742");
+        
+        // Limpiar campos UI ya que el perfil seleccionado fue eliminado
+        this.FindControl<TextBox>("txtRemoteIp")!.Text = "";
+        this.FindControl<TextBox>("txtRemotePort")!.Text = "8742";
+        this.FindControl<TextBox>("txtPin")!.Text = "";
+
+        SaveSettings("", "8742");
         RefreshProfilesCombo();
         SetStatus(L.Format("st.profileDeleted", name));
     }
@@ -111,7 +123,9 @@ public partial class MainWindow
         ApplyRemoteSort();
     }
 
-    private static IEnumerable<FileEntry> SortEntries(IEnumerable<FileEntry> items, string field, bool asc)
+    // M12/M16: devuelve List<FileEntry> directamente (FileSorter.Sort ya materializa el resultado)
+    // — elimina el .ToList() extra en ApplyLocalFilter y ApplyRemoteSort.
+    private static List<FileEntry> SortEntries(IEnumerable<FileEntry> items, string field, bool asc)
         => FileSorter.Sort(items, field, asc);
 
     // ÔöÇÔöÇ Feature 7: Sparkline de velocidad ÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇ
@@ -119,11 +133,14 @@ public partial class MainWindow
     private void UpdateSparkline(double bytesPerSec)
     {
         var mbps = bytesPerSec / (1024.0 * 1024.0);
-        if (_speedHistory.Count >= SparklineLen) _speedHistory.Dequeue();
-        if (bytesPerSec > 0) _speedHistory.Enqueue(mbps);
-        if (_speedHistory.Count == 0) return;
-
-        var spark = SpeedSparkline.Render(_speedHistory);
+        string spark;
+        lock (_speedHistory)
+        {
+            if (_speedHistory.Count >= SparklineLen) _speedHistory.Dequeue();
+            if (bytesPerSec > 0) _speedHistory.Enqueue(mbps);
+            if (_speedHistory.Count == 0) return;
+            spark = SpeedSparkline.Render(_speedHistory);
+        }
 
         Dispatcher.UIThread.Post(() =>
         {
@@ -136,8 +153,12 @@ public partial class MainWindow
 
     private async void WatchFolder_Click(object? sender, RoutedEventArgs e)
     {
-        if (_watchFolderActive) StopWatch(); // B5: era _watcherActive (browser flag) — incorrecto
-        else await StartWatchAsync();
+        try
+        {
+            if (_watchFolderActive) StopWatch();
+            else await StartWatchAsync();
+        }
+        catch (Exception ex) { Log.Warn("watch", "watch-folder-click-unexpected", new { error = ex.Message }); }
     }
 
     private async Task StartWatchAsync()
@@ -163,6 +184,13 @@ public partial class MainWindow
             };
             _watchFolderWatcher.Changed += OnWatcherEvent;
             _watchFolderWatcher.Created += OnWatcherEvent;
+            // B8: suscribir Error para detectar desbordamiento de buffer o directorio inaccesible.
+            // Sin este handler, el watcher deja de funcionar silenciosamente sin notificar al usuario.
+            _watchFolderWatcher.Error += (_, eArgs) =>
+            {
+                Log.Warn("watch", "watcher-error", new { path = _localPath, error = eArgs.GetException().Message });
+                Dispatcher.UIThread.Post(() => { SetStatus(L.Format("st.watchError", eArgs.GetException().Message)); StopWatch(); });
+            };
             _watchFolderActive = true; // B2: campo separado del watcher de browser
 
             // U2: pre-alocar el timer una vez — OnWatcherEvent solo llama Stop()+Start() sin alloc
@@ -236,12 +264,19 @@ public partial class MainWindow
             if (!connected) return;
             try
             {
+                // Esperar a que el archivo sea liberado por el proceso que lo está escribiendo
+                await WaitForFileUnlockAsync(pendingPath);
+
+                // Comprobar si el watcher se detuvo durante la espera del desbloqueo
+                if (!_watchFolderActive) return;
+
                 var fi = new FileInfo(pendingPath);
                 var entry = new FileEntry { Name = fi.Name, FullPath = fi.FullName, Size = fi.Length };
                 await Dispatcher.UIThread.InvokeAsync(() =>
                 {
+                    if (!_watchFolderActive) return;
                     SetStatus(L.Format("st.changeDetected", fi.Name));
-                    _ = TransferAsync(new List<FileEntry> { entry }, isUpload: true);
+                    _ = TransferAsync(new List<FileEntry> { entry }, isUpload: true, silent: true);
                 });
             }
             catch (Exception ex)
@@ -252,10 +287,34 @@ public partial class MainWindow
         });
     }
 
+    private static async Task WaitForFileUnlockAsync(string path)
+    {
+        for (int i = 0; i < 20; i++)
+        {
+            try
+            {
+                using var fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.None);
+                return; // Desbloqueado
+            }
+            catch (IOException)
+            {
+                await Task.Delay(500);
+            }
+        }
+    }
+
     // Feature: Sync de carpetas
 
-    private async void SyncToRemote_Click(object? sender, RoutedEventArgs e) => await SyncAsync(toRemote: true);
-    private async void SyncToLocal_Click(object? sender, RoutedEventArgs e) => await SyncAsync(toRemote: false);
+    private async void SyncToRemote_Click(object? sender, RoutedEventArgs e)
+    {
+        try { await SyncAsync(toRemote: true); }
+        catch (Exception ex) { Log.Warn("sync", "sync-to-remote-unexpected", new { error = ex.Message }); }
+    }
+    private async void SyncToLocal_Click(object? sender, RoutedEventArgs e)
+    {
+        try { await SyncAsync(toRemote: false); }
+        catch (Exception ex) { Log.Warn("sync", "sync-to-local-unexpected", new { error = ex.Message }); }
+    }
 
     private async Task SyncAsync(bool toRemote)
     {
@@ -284,7 +343,11 @@ public partial class MainWindow
             if (snap == null) { SetStatus(L["st.connectFirstRemote"]); return; }
 
             List<FileEntry> remoteFiles;
-            remoteFiles = await snap.ListRecursiveAsync(_remotePath);
+            // C9-FIX: timeout de 60s para ListRecursiveAsync — sin CT se bloqueaba hasta ~30s por
+            // KeepAlive TCP si la conexión caía a mitad del listing. 60s es suficiente incluso para
+            // directorios con miles de archivos en red LAN (latencia típica < 1ms).
+            using var listCts = new System.Threading.CancellationTokenSource(TimeSpan.FromSeconds(60));
+            remoteFiles = await snap.ListRecursiveAsync(_remotePath, listCts.Token);
 
             var remoteDict = remoteFiles.ToDictionary(f => f.Name, f => f, StringComparer.OrdinalIgnoreCase);
 
@@ -292,7 +355,17 @@ public partial class MainWindow
             var localFiles = await Task.Run(() =>
             {
                 if (!Directory.Exists(_localPath)) return new List<FileEntry>();
-                return Directory.EnumerateFiles(_localPath, "*", SearchOption.AllDirectories)
+                // BUG-FIX-B5: SearchOption.AllDirectories seguia symlinks/junctions ANTES de
+                // aplicar el filtro ContainsReparsePoint, causando posibles bucles infinitos o
+                // escape del directorio local. Usar EnumerationOptions sin seguir reparse points.
+                var opts = new System.IO.EnumerationOptions
+                {
+                    RecurseSubdirectories = true,
+                    IgnoreInaccessible = true,
+                    AttributesToSkip = FileAttributes.ReparsePoint | FileAttributes.Hidden | FileAttributes.System,
+                    ReturnSpecialDirectories = false,
+                };
+                return Directory.EnumerateFiles(_localPath, "*", opts)
                     .Where(f => !SafeFileOps.ContainsReparsePoint(f))
                     .Select(f =>
                     {
@@ -417,6 +490,24 @@ public partial class MainWindow
             this.FindControl<TextBox>("txtRemoteIp")?.Text?.Trim() ?? "",
             this.FindControl<TextBox>("txtRemotePort")?.Text?.Trim() ?? "8742");
         SetStatus(_compressEnabled ? L["st.compressOn"] : L["st.compressOff"]);
+    }
+
+    private void ChkAutoClipboard_Changed(object? sender, RoutedEventArgs e)
+    {
+        _autoClipboard = (sender as CheckBox)?.IsChecked == true;
+        SaveSettings(
+            this.FindControl<TextBox>("txtRemoteIp")?.Text?.Trim() ?? "",
+            this.FindControl<TextBox>("txtRemotePort")?.Text?.Trim() ?? "8742");
+        SetStatus(_autoClipboard ? L["st.autoClipboardOn"] : L["st.autoClipboardOff"]);
+    }
+
+    private void ChkAutoOpenLinks_Changed(object? sender, RoutedEventArgs e)
+    {
+        _autoOpenLinks = (sender as CheckBox)?.IsChecked == true;
+        SaveSettings(
+            this.FindControl<TextBox>("txtRemoteIp")?.Text?.Trim() ?? "",
+            this.FindControl<TextBox>("txtRemotePort")?.Text?.Trim() ?? "8742");
+        SetStatus(_autoOpenLinks ? L["st.autoOpenLinksOn"] : L["st.autoOpenLinksOff"]);
     }
 }
 

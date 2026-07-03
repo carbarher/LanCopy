@@ -86,9 +86,11 @@ public partial class MainWindow
                 uniquePairs.Select(x => x.Dest).ToArray(),
                 isUpload, ip, port, DateTime.UtcNow.ToString("O"), attempt);
 
-            var tmp = QueuePath + ".tmp";
-            File.WriteAllText(tmp, System.Text.Json.JsonSerializer.Serialize(item));
-            File.Move(tmp, QueuePath, overwrite: true);
+            // M1-FIX: Usar JsonStore.WriteRawAtomic (GUID-temp) en lugar de temp fijo ".tmp"
+            // para evitar colision entre llamadas concurrentes a SaveQueue.
+            var json = System.Text.Json.JsonSerializer.Serialize(item);
+            if (!Services.JsonStore.WriteRawAtomic(QueuePath, json))
+                throw new IOException("queue write failed");
 
             // F3: actualizar panel visual de cola
             UpdateQueuePanel(uniquePairs.Count, uniquePairs.Select(x => Path.GetFileName(x.Path)));
@@ -170,7 +172,8 @@ public partial class MainWindow
                 long size = 0;
                 if (item.IsUpload)
                 {
-                    try { size = new FileInfo(v.Path).Length; } catch { size = 0; }
+                    try { size = new FileInfo(v.Path).Length; }
+                    catch (Exception ex) { Log.Debug("queue", "file-size-read-failed", new { path = v.Path, error = ex.Message }); size = 0; }
                 }
 
                 return (
@@ -394,7 +397,6 @@ public partial class MainWindow
                 {
                     if (!Directory.Exists(x.path!)) return null;
                     var di = new DirectoryInfo(x.path!);
-                    // IsDirectory=true -> ExpandItemsAsync expandira recursivamente
                     return new FileEntry { Name = di.Name, FullPath = di.FullName, IsDirectory = true };
                 }
                 if (!System.IO.File.Exists(x.path!)) return null;
@@ -404,7 +406,10 @@ public partial class MainWindow
             .Where(e => e != null).Select(e => e!)
             .ToList();
         if (entries.Count > 0)
-            await TransferAsync(entries, isUpload: true);
+        {
+            try { await TransferAsync(entries, isUpload: true); }
+            catch (Exception ex) { Log.Warn("browser", "dragdrop-transfer-unexpected", new { error = ex.Message }); }
+        }
     }
 
     // ── UI helpers ───────────────────────────────────────────────────────────
@@ -417,7 +422,8 @@ public partial class MainWindow
             .Where(f => f.Name != ".." && !f.IsDirectory).ToList() ?? [];
         if (selected.Count == 0) { SetStatus(L["st.selectFiles"]); return; }
         if (_client == null) { SetStatus(L["st.noConnection"]); return; }
-        await TransferAsync(selected, isUpload: false);
+        try { await TransferAsync(selected, isUpload: false); }
+        catch (Exception ex) { Log.Warn("transfer", "download-selected-unexpected", new { error = ex.Message }); }
     }
 
     private void OnRemoteListPointerPressed(object? sender, Avalonia.Input.PointerPressedEventArgs e)
@@ -472,6 +478,9 @@ public partial class MainWindow
         else Dispatcher.UIThread.Post(DoSet);
     }
 
+    private static readonly SolidColorBrush AlertBrushVivid = SolidColorBrush.Parse("#FF3B30");
+    private static readonly SolidColorBrush AlertBrushDim   = SolidColorBrush.Parse("#7A201C");
+
     private void SetStatusAlert(string text, string vivid = "#FF3B30", string dim = "#7A201C")
     {
         Dispatcher.UIThread.Post(() =>
@@ -479,8 +488,9 @@ public partial class MainWindow
             if (_txtStatus == null) return;
             StopStatusBlink();
             _txtStatus.Text = text;
-            var vb = SolidColorBrush.Parse(vivid);
-            var db = SolidColorBrush.Parse(dim);
+            // Use cached brushes for the common case to avoid parsing on every alert
+            var vb = vivid == "#FF3B30" ? AlertBrushVivid : SolidColorBrush.Parse(vivid);
+            var db = dim   == "#7A201C" ? AlertBrushDim   : SolidColorBrush.Parse(dim);
             _txtStatus.Foreground = vb;
             _statusBlinkOn = true;
             _statusBlinkTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(550) };

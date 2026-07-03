@@ -4,8 +4,10 @@ using Avalonia.Layout;
 using Avalonia.Media;
 using Avalonia.Threading;
 using System;
+using System.Diagnostics;
 using System.Threading;
 using LanCopy.Localization;
+using LanCopy.Services;
 
 namespace LanCopy;
 
@@ -17,13 +19,13 @@ internal sealed class ProgressWindow : Window
     private readonly ProgressBar _bar;
     private readonly TextBlock _line;
     private readonly TextBlock _detail;
-    private readonly TextBlock _sparkline; // F1: mini-gráfica de velocidad
+    private readonly TextBlock _sparkline; // F1: mini-grï¿½fica de velocidad
     private readonly TextBlock _eta;       // F1: tiempo restante estimado
     private readonly Button _action;
         private readonly Button _btnOpenFolder; // F5: abrir carpeta destino
-    private readonly Button _btnOpenFile;   // F5b: abrir archivo único descargado
+    private readonly Button _btnOpenFile;   // F5b: abrir archivo ï¿½nico descargado
     private string? _destFolder;            // F5: guardado al iniciar descarga
-    private string? _destFile;             // F5b: ruta del archivo único
+    private string? _destFile;             // F5b: ruta del archivo ï¿½nico
     private readonly CancellationTokenSource? _cts;
     private bool _finished;
 
@@ -89,7 +91,9 @@ internal sealed class ProgressWindow : Window
         _action.Click += (_, _) =>
         {
             if (_finished) { Close(); return; }
-            try { _cts?.Cancel(); } catch { }
+            try { _cts?.Cancel(); }
+            catch (ObjectDisposedException ex) { Log.Debug("progress", "cancel-cts-disposed", new { error = ex.Message }); }
+            catch (Exception ex) { Log.Warn("progress", "cancel-cts-failed", new { error = ex.Message }); }
             _action.IsEnabled = false;
             _line.Text = Loc.Instance["prog.cancelling"];
         };
@@ -105,8 +109,8 @@ internal sealed class ProgressWindow : Window
         _btnOpenFolder.Click += (_, _) =>
         {
             if (_destFolder != null && System.IO.Directory.Exists(_destFolder))
-                try { System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo { FileName = _destFolder, UseShellExecute = true }); }
-                catch { }
+                try { Process.Start(new ProcessStartInfo { FileName = _destFolder, UseShellExecute = true })?.Dispose(); }
+                catch (Exception ex) { Log.Warn("progress", "open-folder-failed", new { path = _destFolder, error = ex.Message }); }
         };
         _btnOpenFile = new Button
         {
@@ -120,8 +124,8 @@ internal sealed class ProgressWindow : Window
         _btnOpenFile.Click += (_, _) =>
         {
             if (_destFile != null && System.IO.File.Exists(_destFile))
-                try { System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo { FileName = _destFile, UseShellExecute = true }); }
-                catch { }
+                try { Process.Start(new ProcessStartInfo { FileName = _destFile, UseShellExecute = true })?.Dispose(); }
+                catch (Exception ex) { Log.Warn("progress", "open-file-failed", new { path = _destFile, error = ex.Message }); }
         };
 
         var panel = new StackPanel { Margin = new Thickness(20), Spacing = 12 };
@@ -140,7 +144,15 @@ internal sealed class ProgressWindow : Window
         Content = panel;
 
         // Cerrar la ventana = cancelar el proceso si sigue activo.
-        Closing += (_, _) => { if (!_finished) { try { _cts?.Cancel(); } catch { } } };
+        Closing += (_, _) =>
+        {
+            if (!_finished)
+            {
+                try { _cts?.Cancel(); }
+                catch (ObjectDisposedException ex) { Log.Debug("progress", "cancel-cts-on-close-disposed", new { error = ex.Message }); }
+                catch (Exception ex) { Log.Warn("progress", "cancel-cts-on-close-failed", new { error = ex.Message }); }
+            }
+        };
     }
 
     // Actualiza el texto del elemento en curso (hilo seguro).
@@ -164,9 +176,9 @@ internal sealed class ProgressWindow : Window
         });
     }
 
-    // F5: Guardar carpeta destino para el botón "Abrir carpeta" (llamar antes de iniciar descarga)
+    // F5: Guardar carpeta destino para el botï¿½n "Abrir carpeta" (llamar antes de iniciar descarga)
     public void SetDestFolder(string? folder) { _destFolder = folder; }
-    // F5b: Guardar archivo único para el botón "Abrir archivo"
+    // F5b: Guardar archivo ï¿½nico para el botï¿½n "Abrir archivo"
     public void SetDestFile(string? file) { _destFile = file; }
 
     // F1: Actualiza sparkline + ETA desde TransferStatus (hilo seguro).
@@ -199,15 +211,24 @@ internal sealed class ProgressWindow : Window
 
             if (!isError)
             {
-                // F5: mostrar botón de carpeta si hay destino
+                // F5: mostrar botï¿½n de carpeta si hay destino
                 if (!string.IsNullOrEmpty(_destFolder))
                     _btnOpenFolder.IsVisible = true;
                 if (!string.IsNullOrEmpty(_destFile) && System.IO.File.Exists(_destFile))
                     _btnOpenFile.IsVisible = true;
-                else
+
+                // Auto-cerrar solo cuando ningÃºn botÃ³n de acciÃ³n estÃ© visible:
+                // si "Abrir Carpeta" o "Abrir Archivo" estÃ¡n visibles el usuario necesita
+                // tiempo para verlos y hacer clic (cerrar a los 2s serÃ­a un bug UX).
+                if (!_btnOpenFolder.IsVisible && !_btnOpenFile.IsVisible)
                 {
                     var t = new DispatcherTimer { Interval = TimeSpan.FromSeconds(2) };
-                    t.Tick += (_, _) => { t.Stop(); try { Close(); } catch { } };
+                    t.Tick += (_, _) =>
+                    {
+                        t.Stop();
+                        try { Close(); }
+                        catch (Exception ex) { Log.Debug("progress", "auto-close-failed", new { error = ex.Message }); }
+                    };
                     t.Start();
                 }
             }

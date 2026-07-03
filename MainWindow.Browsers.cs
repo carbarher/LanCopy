@@ -32,6 +32,9 @@ namespace LanCopy;
 public partial class MainWindow
 {
     private bool _debounceInited = false;
+    // M9: referencias cacheadas a los ListBox — evita recorrer el árbol visual en cada GetSelectedItems
+    private ListBox? _localList;
+    private ListBox? _remoteList;
     private void StartBrowserAutoRefresh()
     {
         if (!_debounceInited) { InitDebounce(); _debounceInited = true; } // B4: inicializar handler una vez
@@ -71,9 +74,14 @@ public partial class MainWindow
                 _watcher.Deleted += OnLocalFileSystemEvent;
                 _watcher.Renamed += OnLocalFileSystemEvent;
                 _watcher.Changed += OnLocalFileSystemEvent;
+                // B8: suscribir Error para detectar desbordamiento de buffer interno o directorio inaccesible.
+                // Sin este handler, el FSW deja de emitir eventos silenciosamente cuando hay ráfagas masivas.
+                _watcher.Error += (_, eArgs) =>
+                    Log.Warn("browser", "watcher-buffer-overflow", new { path, error = eArgs.GetException().Message });
             }
-            catch
+            catch (Exception ex)
             {
+                Log.Debug("browser", "watcher-setup-failed", new { path, error = ex.Message });
                 _watcher?.Dispose();
                 _watcher = null;
             }
@@ -147,7 +155,8 @@ public partial class MainWindow
         if (list.SelectedItem is FileEntry { IsDirectory: true } item)
         {
             _localPath = item.FullPath;
-            await RefreshLocalAsync();
+            try { await RefreshLocalAsync(); }
+            catch (Exception ex) { Log.Warn("browser", "local-double-tap-unexpected", new { error = ex.Message }); }
         }
     }
 
@@ -178,7 +187,8 @@ public partial class MainWindow
         var combo = (ComboBox)sender!;
         if (combo.SelectedItem is not string path) return;
         _localPath = path;
-        await RefreshLocalAsync();
+        try { await RefreshLocalAsync(); }
+        catch (Exception ex) { Log.Warn("browser", "favorites-nav-unexpected", new { error = ex.Message }); }
     }
 
     private void RefreshFavoritesCombo(string? select = null)
@@ -195,17 +205,22 @@ public partial class MainWindow
     {
         var parent = Directory.GetParent(_localPath)?.FullName;
         _localPath = parent ?? "";
-        await RefreshLocalAsync();
+        try { await RefreshLocalAsync(); }
+        catch (Exception ex) { Log.Warn("browser", "local-go-up-unexpected", new { error = ex.Message }); }
     }
 
     private async void LocalGoHome(object? sender, RoutedEventArgs e)
     {
         _localPath = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
-        await RefreshLocalAsync();
+        try { await RefreshLocalAsync(); }
+        catch (Exception ex) { Log.Warn("browser", "local-go-home-unexpected", new { error = ex.Message }); }
     }
 
-    private async void RefreshLocal_Click(object? sender, RoutedEventArgs e) =>
-        await RefreshLocalAsync();
+    private async void RefreshLocal_Click(object? sender, RoutedEventArgs e)
+    {
+        try { await RefreshLocalAsync(); }
+        catch (Exception ex) { Log.Warn("browser", "refresh-local-unexpected", new { error = ex.Message }); }
+    }
 
     private async Task RefreshLocalAsync(bool autoRefresh = false)
     {
@@ -257,14 +272,50 @@ public partial class MainWindow
         var filtered = string.IsNullOrEmpty(filter)
             ? _localItemsAll
             : _localItemsAll.Where(f => f.Name.Contains(filter, StringComparison.OrdinalIgnoreCase)).ToList();
-        var sorted = SortEntries(filtered, _localSortField, _localSortAsc).ToList();
+        // M16: SortEntries ya devuelve List<FileEntry> (M12) — sin .ToList() extra
+        var sorted = SortEntries(filtered, _localSortField, _localSortAsc);
         Dispatcher.UIThread.Post(() => _localItems.ReplaceAll(sorted));
     }
 
     private void ApplyRemoteSort()
     {
-        var sorted = SortEntries(_remoteItemsAll, _remoteSortField, _remoteSortAsc).ToList();
+        // M16: SortEntries ya devuelve List<FileEntry> (M12) — sin .ToList() extra
+        var sorted = SortEntries(_remoteItemsAll, _remoteSortField, _remoteSortAsc);
         _remoteItems.ReplaceAll(sorted);
+    }
+
+    /// <summary>
+    /// M3: Versión con debounce de 150ms de RefreshRemoteAsync.
+    /// Si se llama varias veces en ráfaga (ej: crear carpeta → renombrar → upload),
+    /// solo la última llamada dispara el refresh real, ahorrando roundtrips TCP redundantes.
+    /// Usar solo en contextos no-críticos: post-menu, post-creación, post-rename.
+    /// Las transferencias usan RefreshRemoteAsync directamente (sin debounce).
+    /// </summary>
+    private async Task RefreshRemoteDebounced()
+    {
+        // Cancelar refresh pendiente anterior
+        _remoteRefreshDebounce?.Cancel();
+        _remoteRefreshDebounce?.Dispose();
+        var cts = new CancellationTokenSource();
+        _remoteRefreshDebounce = cts;
+        try
+        {
+            await Task.Delay(150, cts.Token);
+            if (!cts.IsCancellationRequested)
+                await RefreshRemoteAsync();
+        }
+        catch (OperationCanceledException) { /* cancelado — viene un refresh más reciente */ }
+        catch (Exception ex) { Log.Warn("browser", "remote-refresh-debounced-unexpected", new { error = ex.Message }); }
+        finally
+        {
+            // M19: si nadie nos reemplazó, dispose nuestro CTS para liberar el WaitHandle interno.
+            // Si nos reemplazaron (otra llamada llegó), el nuevo CTS se dispose cuando él termine.
+            if (ReferenceEquals(_remoteRefreshDebounce, cts))
+            {
+                _remoteRefreshDebounce = null;
+                cts.Dispose();
+            }
+        }
     }
 
     private static List<FileEntry> GetLocalEntries(string path)
@@ -285,18 +336,21 @@ public partial class MainWindow
         try
         {
             var di = new DirectoryInfo(path);
-            foreach (var d in di.GetDirectories().OrderBy(x => x.Name))
+            // M1: EnumerateDirectories/Files en lugar de GetDirectories/GetFiles — streaming sin array previo.
+            // M1: OrderBy eliminado aquí — SortEntries en ApplyLocalFilter/ApplyRemoteSort ya hace el sort
+            //     definitivo. El sort doble era O(n log n) × 2 + 3 arrays intermedios innecesarios.
+            foreach (var d in di.EnumerateDirectories())
             {
                 if (d.Name.StartsWith(".")) continue;
                 list.Add(new FileEntry { Name = d.Name, FullPath = d.FullName, IsDirectory = true });
             }
-            foreach (var f in di.GetFiles().OrderBy(x => x.Name))
+            foreach (var f in di.EnumerateFiles())
             {
                 if (f.Name.StartsWith(".")) continue;
                 list.Add(new FileEntry { Name = f.Name, FullPath = f.FullName, Size = f.Length, LastWriteUtcTicks = f.LastWriteTimeUtc.Ticks });
             }
         }
-        catch { /* directorio inaccesible - devolver lista parcial */ }
+        catch (Exception ex) { Log.Debug("browser", "local-entries-read-failed", new { path, error = ex.Message }); }
 
         return list;
     }
@@ -310,7 +364,8 @@ public partial class MainWindow
         if (list.SelectedItem is FileEntry { IsDirectory: true } item)
         {
             _remotePath = item.FullPath;
-            await RefreshRemoteAsync();
+            try { await RefreshRemoteAsync(); }
+            catch (Exception ex) { Log.Warn("browser", "remote-double-tap-unexpected", new { error = ex.Message }); }
         }
     }
 
@@ -322,20 +377,23 @@ public partial class MainWindow
         if (_client == null) return;
         var parent = Path.GetDirectoryName(_remotePath.TrimEnd('\\', '/'));
         _remotePath = parent ?? "";
-        await RefreshRemoteAsync();
+        try { await RefreshRemoteAsync(); }
+        catch (Exception ex) { Log.Warn("browser", "remote-go-up-unexpected", new { error = ex.Message }); }
     }
 
     private async void RemoteGoHome(object? sender, RoutedEventArgs e)
     {
         if (_client == null) return;
         _remotePath = "";
-        await RefreshRemoteAsync();
+        try { await RefreshRemoteAsync(); }
+        catch (Exception ex) { Log.Warn("browser", "remote-go-home-unexpected", new { error = ex.Message }); }
     }
 
     private async void RefreshRemote_Click(object? sender, RoutedEventArgs e)
     {
         if (_client == null) { SetStatus(L["st.notConnected"]); return; }
-        await RefreshRemoteAsync();
+        try { await RefreshRemoteAsync(); }
+        catch (Exception ex) { Log.Warn("browser", "refresh-remote-unexpected", new { error = ex.Message }); }
     }
 
     private async Task RefreshRemoteAsync(bool isRetry = false, bool autoRefresh = false)
@@ -352,7 +410,11 @@ public partial class MainWindow
 
         try
         {
-            var entries = await snap.ListAsync(_remotePath);
+            // C9-FIX: timeout de 10s para que el refresh falle rápido si el peer no responde.
+            // Sin CT, ListAsync dependía del KeepAlive TCP (~30s); varios refreshes bloqueados
+            // podrían acumularse si el timer de auto-refresh disparaba durante la espera.
+            using var refreshCts = new System.Threading.CancellationTokenSource(TimeSpan.FromSeconds(10));
+            var entries = await snap.ListAsync(_remotePath, refreshCts.Token);
             var signature = ComputeEntriesSignature(entries);
             if (autoRefresh && signature == Interlocked.Read(ref _remoteEntriesSignature)) return;
             Interlocked.Exchange(ref _remoteEntriesSignature, signature);
@@ -452,17 +514,20 @@ public partial class MainWindow
     private void CancelTransfer_Click(object? sender, RoutedEventArgs e)
     {
         // U2: usar Volatile.Read — los campos son escritos desde background threads con Interlocked
-        if (Volatile.Read(ref _isUploading) == 1) _uploadCts.Cancel();
-        if (Volatile.Read(ref _isDownloading) == 1) _downloadCts.Cancel();
+        // BUG-FIX-B2: guard ObjectDisposedException por si el CTS fue disposed durante cierre de ventana
+        try { if (Volatile.Read(ref _isUploading) == 1) _uploadCts?.Cancel(); }
+        catch (ObjectDisposedException) { }
+        try { if (Volatile.Read(ref _isDownloading) == 1) _downloadCts?.Cancel(); }
+        catch (ObjectDisposedException) { }
     }
 
     private void PauseTransfer_Click(object? sender, RoutedEventArgs e)
     {
         if (Interlocked.CompareExchange(ref _isPaused, 1, 0) == 0)
         {
-            // B1: verificar CurrentCount antes de Wait(0) para garantizar el drain
-            // (Wait(0) retorna false silenciosamente si el semáforo ya está en 0)
-            while (_pauseSemaphore.CurrentCount > 0) _pauseSemaphore.Wait(0);
+            // L1-FIX: _pauseSemaphore arranca con CurrentCount=1, y _isPaused ya esta en 1
+            // por el CAS anterior, asi que un unico Wait(0) es suficiente y no puede spin-loopear.
+            _pauseSemaphore.Wait(0);
             Dispatcher.UIThread.Post(() =>
             {
                 var bp = this.FindControl<Button>("btnPause");
@@ -490,10 +555,13 @@ public partial class MainWindow
         }
     }
 
-    private List<FileEntry> GetSelectedItems(string listName) =>
-        this.FindControl<ListBox>(listName)!
-            .SelectedItems?.OfType<FileEntry>()
-            .Where(f => f.Name != "..")
-            .ToList() ?? [];
+    private List<FileEntry> GetSelectedItems(string listName)
+    {
+        // M9: usar referencias cacheadas en lugar de FindControl (recorre árbol visual en cada llamada)
+        if (_localList == null) _localList = this.FindControl<ListBox>("localList");
+        if (_remoteList == null) _remoteList = this.FindControl<ListBox>("remoteList");
+        var lb = listName == "localList" ? _localList : _remoteList;
+        return lb?.SelectedItems?.OfType<FileEntry>().Where(f => f.Name != "..").ToList() ?? [];
+    }
 
 }

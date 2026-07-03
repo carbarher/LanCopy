@@ -335,5 +335,21 @@
     "st.sendtoDone":  "Windows \"보내기\" 메뉴에 추가했습니다",
     "st.sendtoFailed2":  "바로 가기를 만들 수 없습니다: {0}",
     "st.minimizedToTray":  "트레이로 최소화됨 — 계속 수신 중",
-    "st.sendtoReady":  "{0}개 파일 준비됨 — 연결 후 보내기를 누르세요"
+    "st.sendtoReady":  "{0}개 파일 준비됨 — 연결 후 보내기를 누르세요",
+  "notify.sent": "Sent",
+  "notify.received": "Received",
+  "notify.transferDone": "Transfer {0}",
+  "notify.transferBody1": "{0} in {1}",
+  "notify.transferBodyN": "{0} files — {1} in {2}",
+  "audit.today": "Today",
+  "audit.twoDays": "2 Days",
+  "audit.week": "Week",
+  "audit.allOps": "All",
+  "audit.colTime": "Time",
+  "audit.colOp": "Operation",
+  "audit.colFile": "File",
+  "audit.colSize": "Size",
+  "audit.colDur": "Duration",
+  "audit.exported": "Exported to {0}",
+  "audit.exportFailed": "Export failed: {0}"
 }

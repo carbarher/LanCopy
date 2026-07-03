@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.Diagnostics;
@@ -89,6 +89,9 @@ public partial class MainWindow : Window
 
     // Filtro local: debounce para no re-ordenar la lista entera en cada tecla.
     private Avalonia.Threading.DispatcherTimer? _localFilterDebounce;
+    // M3: debounce 150ms para RefreshRemoteAsync — evita ráfagas TCP cuando operaciones en cadena disparan
+    //     múltiples refrescos en < 150ms (ej: crear carpeta + renombrar + upload)
+    private CancellationTokenSource? _remoteRefreshDebounce;
 
     // Feature 9: TLS + compresión toggles
     private bool _tlsEnabled = true; // SEGURIDAD: TLS activado por defecto (cifrado silencioso)
@@ -99,8 +102,12 @@ public partial class MainWindow : Window
     private bool _safeModeNoRemoteDelete; // SEGURIDAD: bloquea solo el borrado remoto
     private bool _requireApproval; // SEGURIDAD: pedir consentimiento antes de aceptar ficheros
     private bool _compressEnabled;
+    private bool _autoClipboard;
+    private bool _autoOpenLinks;
+    private DispatcherTimer? _autoClipboardTimer;
+    private string? _lastClipboardText;
     private int _bandwidthLimitMbps;
-    private string _theme = "Dark"; // tema UI: Dark|Light
+    private string _theme = "Auto"; // tema UI: Dark|Light|Auto
 
 
     private static readonly string SettingsPath = Path.Combine(
@@ -147,8 +154,13 @@ public partial class MainWindow : Window
     private int _stallRecoverInProgress;
     private DateTimeOffset _lastStallRecoverAt;
     private int _isWindowClosing;
+    private int _forceClose; // 1 = cierre real desde tray Exit, 0 = minimizar a tray
+ 
+    public MainWindow() : this(null)
+    {
+    }
 
-    public MainWindow()
+    public MainWindow(string[]? startupArgs)
     {
         InitializeComponent();
 
@@ -212,6 +224,13 @@ public partial class MainWindow : Window
             _discovery.Start();
 
             SetupTray(); // idea-tray
+            StartAutoClipboardTimer(); // temporizador portapapeles
+            Closing += (s, e) => { _autoClipboardTimer?.Stop(); };
+
+            if (startupArgs != null && startupArgs.Length > 0)
+            {
+                _ = ProcessStartupArgsAsync(startupArgs);
+            }
         }
         catch (Exception ex)
         {
@@ -230,14 +249,29 @@ public partial class MainWindow : Window
         ApplyUiMode(); // UX: aplica modo simple/avanzado al arrancar
         Closing += (_, ev) =>
         {
+            // Minimizar a tray en vez de cerrar (si el tray esta activo y no es cierre forzado)
+            if (_tray != null && Volatile.Read(ref _forceClose) == 0)
+            {
+                ev.Cancel = true;
+                Hide();
+                return;
+            }
             Interlocked.Exchange(ref _isWindowClosing, 1);
             StopConnectionWatchdog();
             StopBrowserAutoRefresh();
-            try { SaveSettings(this.FindControl<TextBox>("txtRemoteIp")?.Text ?? "", this.FindControl<TextBox>("txtRemotePort")?.Text ?? "8742"); } catch { }
+            try { SaveSettings(this.FindControl<TextBox>("txtRemoteIp")?.Text ?? "", this.FindControl<TextBox>("txtRemotePort")?.Text ?? "8742"); }
+            catch (Exception ex) { Log.Warn("ui", "save-settings-on-close-failed", new { error = ex.Message }); }
+            // B28: cancelar operaciones activas ANTES de disponer recursos.
+            // Si _client.Dispose() llegara antes de _uploadCts.Cancel(), la transferencia
+            // en curso recibe ObjectDisposedException en vez de OperationCanceledException.
+            _uploadCts.Cancel(); _downloadCts.Cancel();
+            _saveDebounce?.Stop(); _saveDebounce = null; // O9: disponer timer
             _server.Stop(); _discovery?.Stop(); _client?.Dispose(); _clientDown?.Dispose();
-        // B3: CTS deben ser disposed despues de Cancel() para liberar el WaitHandle interno
-        _uploadCts.Cancel(); _uploadCts.Dispose(); _downloadCts.Cancel(); _downloadCts.Dispose();
-            try { if (_tray != null) _tray.IsVisible = false; } catch { }
+            _uploadCts.Dispose(); _downloadCts.Dispose();
+            try { if (_tray != null) _tray.IsVisible = false; }
+            catch (Exception ex) { Log.Debug("ui", "hide-tray-on-close-failed", new { error = ex.Message }); }
+            // M2-FIX: Vaciar el buffer de logs antes de salir para no perder entradas del shutdown.
+            Log.Shutdown(2000);
         };
         Opened += OnWindowOpened;
         StartConnectionWatchdog();
@@ -246,17 +280,34 @@ public partial class MainWindow : Window
 
     private async void OnWindowOpened(object? sender, EventArgs e)
     {
+        try
+        {
         // Deferir inicialización secundaria para que la ventana pinte primero.
         await Dispatcher.UIThread.InvokeAsync(() => { }, DispatcherPriority.Background);
 
         await LoadSettingsAsync();
 
+        // Título con versión: gestionar en código porque {l:Tr} es un Observable binding
+        // que sobreescribiría cualquier asignación directa a Title. Suscribirse a LanguageChanged
+        // para actualizar también cuando el usuario cambia el idioma.
+        var _ver = System.Reflection.Assembly.GetExecutingAssembly().GetName().Version;
+        if (_ver != null) Log.Info("app", "started", new { version = $"{_ver.Major}.{_ver.Minor}.{_ver.Build}" });
+        var _verSuffix = _ver != null ? $"  v{_ver.Major}.{_ver.Minor}.{_ver.Build}" : "";
+        void UpdateTitle() => Dispatcher.UIThread.Post(() =>
+            Title = Localization.Loc.Instance["app.title"] + _verSuffix);
+        
+        // Esperar un instante para que el backend de Avalonia asiente la ventana y no pise el título
+        _ = Task.Delay(250).ContinueWith(_ => UpdateTitle(), TaskScheduler.FromCurrentSynchronizationContext());
+        Localization.Loc.Instance.LanguageChanged += UpdateTitle;
+
         // UX: primer uso -> mostrar asistente de bienvenida para usuarios sin red.
         if (!_welcomeShown)
         {
             _welcomeShown = true;
-            try { await new WelcomeDialog().ShowDialog(this); } catch { }
-            try { SaveSettings(this.FindControl<TextBox>("txtRemoteIp")?.Text ?? "", this.FindControl<TextBox>("txtRemotePort")?.Text ?? "8742"); } catch { }
+            try { await new WelcomeDialog().ShowDialog(this); }
+            catch (Exception ex) { Log.Warn("ui", "show-welcome-dialog-on-open-failed", new { error = ex.Message }); }
+            try { SaveSettings(this.FindControl<TextBox>("txtRemoteIp")?.Text ?? "", this.FindControl<TextBox>("txtRemotePort")?.Text ?? "8742"); }
+            catch (Exception ex) { Log.Warn("ui", "save-settings-after-welcome-on-open-failed", new { error = ex.Message }); }
         }
 
         // Auto-conectar al arrancar si hay IP/puerto guardados
@@ -275,8 +326,23 @@ public partial class MainWindow : Window
             slider.PropertyChanged += (_, e) =>
             {
                 if (e.Property.Name != "Value") return;
-                _maxParallel = Math.Clamp((int)(double)e.NewValue!, 1, 8);
-                if (lblPar != null) lblPar.Text = _maxParallel.ToString();
+                if (e.NewValue is not double v) return;
+                var n = Math.Clamp((int)v, 1, 8);
+                _maxParallel = n;
+                if (lblPar != null) lblPar.Text = n.ToString();
+                // M3-FIX: solo intercambiar _transferSemaphore cuando NO hay transferencia activa.
+                // Sin este guard, el slider puede disponer el semaforo mientras ParallelTransferFileAsync
+                // lo retiene, causando ObjectDisposedException. Igual que Parallel_Changed en Features.cs.
+                lock (_semLock)
+                {
+                    if (_isTransferring == 0)
+                    {
+                        var old = _transferSemaphore;
+                        _transferSemaphore = new SemaphoreSlim(n, n);
+                        old.Dispose();
+                    }
+                    // Si hay transferencia activa, _maxParallel ya fue actualizado para la proxima.
+                }
             };
         }
 
@@ -284,6 +350,8 @@ public partial class MainWindow : Window
         RefreshFavoritesCombo();
         _ = ProcessLaunchArgsAsync();
         _ = CheckPendingQueueAsync();
+        }
+        catch (Exception ex) { Log.Warn("ui", "window-opened-unhandled", new { error = ex.Message }); }
     }
 
     // idea-sendto: si la app se abre con rutas de archivo (desde "Enviar a"), navegar a su
@@ -291,7 +359,12 @@ public partial class MainWindow : Window
     private async Task ProcessLaunchArgsAsync()
     {
         string[] argv;
-        try { argv = Environment.GetCommandLineArgs(); } catch { argv = Array.Empty<string>(); }
+        try { argv = Environment.GetCommandLineArgs(); }
+        catch (Exception ex)
+        {
+            Log.Warn("ui", "read-command-line-args-failed", new { error = ex.Message });
+            argv = Array.Empty<string>();
+        }
         var files = argv.Skip(1).Where(a => !string.IsNullOrWhiteSpace(a) && File.Exists(a)).ToList();
         if (files.Count == 0) { await RefreshLocalAsync(); return; }
 
@@ -308,7 +381,7 @@ public partial class MainWindow : Window
                     list.SelectedItems?.Add(it);
             }
         }
-        catch { }
+        catch (Exception ex) { Log.Warn("ui", "preselect-launch-files-failed", new { count = files.Count, error = ex.Message }); }
         SetStatus(L.Format("st.sendtoReady", files.Count));
     }
 

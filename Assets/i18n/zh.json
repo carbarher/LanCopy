@@ -335,5 +335,21 @@
     "st.sendtoDone":  "已添加到 Windows“发送到”菜单",
     "st.sendtoFailed2":  "无法创建快捷方式：{0}",
     "st.minimizedToTray":  "已最小化到托盘——仍在接收",
-    "st.sendtoReady":  "{0} 个文件就绪——连接后按“发送”"
+    "st.sendtoReady":  "{0} 个文件就绪——连接后按“发送”",
+  "notify.sent": "Sent",
+  "notify.received": "Received",
+  "notify.transferDone": "Transfer {0}",
+  "notify.transferBody1": "{0} in {1}",
+  "notify.transferBodyN": "{0} files — {1} in {2}",
+  "audit.today": "Today",
+  "audit.twoDays": "2 Days",
+  "audit.week": "Week",
+  "audit.allOps": "All",
+  "audit.colTime": "Time",
+  "audit.colOp": "Operation",
+  "audit.colFile": "File",
+  "audit.colSize": "Size",
+  "audit.colDur": "Duration",
+  "audit.exported": "Exported to {0}",
+  "audit.exportFailed": "Export failed: {0}"
 }

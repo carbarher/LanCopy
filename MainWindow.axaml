@@ -1,9 +1,9 @@
-﻿<Window xmlns="https://github.com/avaloniaui"
+<Window xmlns="https://github.com/avaloniaui"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:models="clr-namespace:LanCopy.Models"
         xmlns:l="using:LanCopy.Localization"
         x:Class="LanCopy.MainWindow"
-        Title="{l:Tr app.title}"
+        Title="LanCopy"
         Icon="/Assets/app.png"
         Width="820" Height="660" MinWidth="500" MinHeight="460"
         Background="{DynamicResource ChromeBg}"
@@ -124,7 +124,9 @@
                     <CheckBox x:Name="chkCompress" Content="{l:Tr chk.compress}" Foreground="{DynamicResource TextFg}" FontSize="12"
                               IsCheckedChanged="ChkCompress_Changed"
                               ToolTip.Tip="{l:Tr tip.compress}"/>
-</StackPanel>
+                    <CheckBox x:Name="chkAutoClipboard" Content="{l:Tr chk.autoClipboard}" Foreground="{DynamicResource TextFg}" FontSize="12" IsCheckedChanged="ChkAutoClipboard_Changed" ToolTip.Tip="{l:Tr tip.autoClipboard}"/>
+                    <CheckBox x:Name="chkAutoOpenLinks" Content="{l:Tr chk.autoOpenLinks}" Foreground="{DynamicResource TextFg}" FontSize="12" IsCheckedChanged="ChkAutoOpenLinks_Changed" ToolTip.Tip="{l:Tr tip.autoOpenLinks}"/>
+                </StackPanel>
                 <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Spacing="6" Margin="0,2,0,2">
                     <TextBlock x:Name="txtSparkline" Foreground="#00FF88" FontFamily="Consolas,Courier New,monospace"
                                FontSize="13" VerticalAlignment="Center" ToolTip.Tip="{l:Tr tip.sparkline}"/>
@@ -182,7 +184,7 @@
                     <TextBlock Text="{l:Tr panel.thispc}" Foreground="{DynamicResource InputFg}" FontWeight="Bold" FontSize="13" ToolTip.Tip="{l:Tr tip.thispc}"/>
                 </Border>
                 <Border Grid.Row="1" Background="{DynamicResource PanelBg}" Padding="6,4" BorderBrush="{DynamicResource DividerBg}" BorderThickness="0,0,0,1">
-                    <Grid ColumnDefinitions="28,*,28">
+                    <Grid ColumnDefinitions="28,*,28,28">
                         <Button Grid.Column="0" Content="↑" Click="LocalGoUp"
                                 Background="{DynamicResource InputBg}" Foreground="{DynamicResource InputFg}" Padding="0" Width="24" Height="24"
                                 ToolTip.Tip="{l:Tr tip.localup}"/>
@@ -190,7 +192,10 @@
                                    Text="—" Foreground="{DynamicResource TextFg}" FontSize="12"
                                    VerticalAlignment="Center" Margin="6,0" TextTrimming="CharacterEllipsis"
                                    ToolTip.Tip="{Binding #txtLocalPath.Text}"/>
-                        <Button Grid.Column="2" Content="🏠" Click="LocalGoHome"
+                        <Button Grid.Column="2" Content="⭐" Click="LocalFavorites_Click"
+                                Background="{DynamicResource InputBg}" Foreground="Gold" Padding="0" Width="24" Height="24"
+                                ToolTip.Tip="Favoritos locales"/>
+                        <Button Grid.Column="3" Content="🏠" Click="LocalGoHome"
                                 Background="{DynamicResource InputBg}" Foreground="{DynamicResource InputFg}" Padding="0" Width="24" Height="24"
                                 ToolTip.Tip="{l:Tr tip.localhome}"/>
                     </Grid>
@@ -220,7 +225,7 @@
                          SelectionMode="Multiple"
                          Background="Transparent" BorderThickness="0"
                          ScrollViewer.VerticalScrollBarVisibility="Auto"
-                         ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                         ScrollViewer.HorizontalScrollBarVisibility="Auto"
                          DoubleTapped="LocalList_DoubleTapped"
                          SelectionChanged="LocalList_SelectionChanged"
                          DragDrop.AllowDrop="True" ToolTip.Tip="{l:Tr tip.locallist}">
@@ -243,12 +248,14 @@
                     </ListBox.ContextMenu>
                     <ListBox.ItemTemplate>
                         <DataTemplate x:DataType="models:FileEntry">
-                            <Grid ColumnDefinitions="22,*,75">
+                            <Grid ColumnDefinitions="22,*,100,65" MinWidth="380">
                                 <TextBlock Grid.Column="0" Text="{Binding Icon}" FontSize="13" VerticalAlignment="Center"/>
                                 <TextBlock Grid.Column="1" Text="{Binding Name}" Foreground="{DynamicResource TextFg}"
                                            FontSize="12" VerticalAlignment="Center" Margin="4,0"
                                            TextTrimming="CharacterEllipsis"/>
-                                <TextBlock Grid.Column="2" Text="{Binding SizeText}" Foreground="{DynamicResource MutedFg}"
+                                <TextBlock Grid.Column="2" Text="{Binding DateText}" Foreground="{DynamicResource MutedFg}"
+                                           FontSize="11" HorizontalAlignment="Right" VerticalAlignment="Center" Margin="4,0"/>
+                                <TextBlock Grid.Column="3" Text="{Binding SizeText}" Foreground="{DynamicResource MutedFg}"
                                            FontSize="12" HorizontalAlignment="Right" VerticalAlignment="Center"/>
                             </Grid>
                         </DataTemplate>
@@ -304,17 +311,17 @@
                     <Button x:Name="btnWatch" Content="{l:Tr btn.watch}" Click="WatchFolder_Click"
                             Background="#795548" Foreground="White" Width="90" Padding="8,5"
                             HorizontalContentAlignment="Center" FontSize="12"
-                            ToolTip.Tip="{l:Tr tip.watch}"/>
+                              ToolTip.Tip="{l:Tr tip.watch}"/>
                 </StackPanel>
             </Border>
 
             <!-- ── Panel derecho: Remoto ─────────────────────────────────────── -->
-            <Grid Grid.Column="2" RowDefinitions="Auto,Auto,Auto,*" Background="{DynamicResource ChromeBg}">
+            <Grid Grid.Column="2" RowDefinitions="Auto,Auto,Auto,Auto,*" Background="{DynamicResource ChromeBg}">
                 <Border Grid.Row="0" Background="{DynamicResource ToolbarBg}" Padding="10,7">
                     <TextBlock Text="{l:Tr panel.remotepc}" Foreground="{DynamicResource InputFg}" FontWeight="Bold" FontSize="13" ToolTip.Tip="{l:Tr tip.remotepc}"/>
                 </Border>
                 <Border Grid.Row="1" Background="{DynamicResource PanelBg}" Padding="6,4" BorderBrush="{DynamicResource DividerBg}" BorderThickness="0,0,0,1">
-                    <Grid ColumnDefinitions="28,*,28,28">
+                    <Grid ColumnDefinitions="28,*,28,28,28,28">
                         <Button Grid.Column="0" Content="↑" Click="RemoteGoUp"
                                 Background="{DynamicResource InputBg}" Foreground="{DynamicResource InputFg}" Padding="0" Width="24" Height="24"
                                 ToolTip.Tip="{l:Tr tip.remoteup}"/>
@@ -326,7 +333,13 @@
                                 Click="RemoteCtx_CreateFolder" IsEnabled="False"
                                 Background="{DynamicResource InputBg}" Foreground="{DynamicResource InputFg}" Padding="0" Width="24" Height="24"
                                 ToolTip.Tip="{l:Tr tip.ctxnewfolderremote}"/>
-                        <Button Grid.Column="3" Content="🏠" Click="RemoteGoHome"
+                        <Button Grid.Column="3" Content="⭐" Click="RemoteFavorites_Click"
+                                Background="{DynamicResource InputBg}" Foreground="Gold" Padding="0" Width="24" Height="24"
+                                ToolTip.Tip="Favoritos remotos"/>
+                        <Button Grid.Column="4" Content="⚡" Click="RemotePower_Click"
+                                Background="{DynamicResource InputBg}" Foreground="Tomato" Padding="0" Width="24" Height="24"
+                                ToolTip.Tip="Opciones de energía del PC remoto"/>
+                        <Button Grid.Column="5" Content="🏠" Click="RemoteGoHome"
                                 Background="{DynamicResource InputBg}" Foreground="{DynamicResource InputFg}" Padding="0" Width="24" Height="24"
                                 ToolTip.Tip="{l:Tr tip.remotehome}"/>
                     </Grid>
@@ -345,11 +358,17 @@
                                 ToolTip.Tip="{l:Tr tip.sortdate}"/>
                     </StackPanel>
                 </Border>
-                <ListBox Grid.Row="3" x:Name="remoteList"
+                <!-- Caja de búsqueda remota -->
+                <Border Grid.Row="3" Background="{DynamicResource PanelBg}" Padding="6,3" BorderBrush="{DynamicResource DividerBg}" BorderThickness="0,0,0,1">
+                    <TextBox x:Name="txtRemoteSearch" PlaceholderText="Buscar archivo remoto..." 
+                             Background="{DynamicResource InputBg}" Foreground="{DynamicResource InputFg}" Padding="5,3" BorderBrush="{DynamicResource BorderFg}"
+                             TextChanged="TxtRemoteSearch_TextChanged" ToolTip.Tip="Escribe para buscar archivos recursivamente en el PC remoto"/>
+                </Border>
+                <ListBox Grid.Row="4" x:Name="remoteList"
                          SelectionMode="Multiple"
                          Background="Transparent" BorderThickness="0"
                          ScrollViewer.VerticalScrollBarVisibility="Auto"
-                         ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                         ScrollViewer.HorizontalScrollBarVisibility="Auto"
                          DoubleTapped="RemoteList_DoubleTapped"
                          SelectionChanged="RemoteList_SelectionChanged"
                          DragDrop.AllowDrop="True" ToolTip.Tip="{l:Tr tip.remotelist}">
@@ -374,12 +393,14 @@
                     </ListBox.ContextMenu>
                     <ListBox.ItemTemplate>
                         <DataTemplate x:DataType="models:FileEntry">
-                            <Grid ColumnDefinitions="22,*,75">
+                            <Grid ColumnDefinitions="22,*,100,65" MinWidth="380">
                                 <TextBlock Grid.Column="0" Text="{Binding Icon}" FontSize="13" VerticalAlignment="Center"/>
                                 <TextBlock Grid.Column="1" Text="{Binding Name}" Foreground="{DynamicResource TextFg}"
                                            FontSize="12" VerticalAlignment="Center" Margin="4,0"
                                            TextTrimming="CharacterEllipsis"/>
-                                <TextBlock Grid.Column="2" Text="{Binding SizeText}" Foreground="{DynamicResource MutedFg}"
+                                <TextBlock Grid.Column="2" Text="{Binding DateText}" Foreground="{DynamicResource MutedFg}"
+                                           FontSize="11" HorizontalAlignment="Right" VerticalAlignment="Center" Margin="4,0"/>
+                                <TextBlock Grid.Column="3" Text="{Binding SizeText}" Foreground="{DynamicResource MutedFg}"
                                            FontSize="12" HorizontalAlignment="Right" VerticalAlignment="Center"/>
                             </Grid>
                         </DataTemplate>
@@ -395,7 +416,15 @@
                 <Grid Grid.Row="0" ColumnDefinitions="*,Auto,Auto" Margin="0,0,0,4">
                     <ProgressBar Grid.Column="0" x:Name="transferProgress"
                                  Minimum="0" Maximum="100" Value="0"
-                                 Height="6" Foreground="#28A745" ToolTip.Tip="{l:Tr tip.progress}"/>
+                                 Height="8" CornerRadius="4" ToolTip.Tip="{l:Tr tip.progress}">
+                        <ProgressBar.Foreground>
+                            <LinearGradientBrush StartPoint="0%,50%" EndPoint="100%,50%">
+                                <GradientStop Color="#28A745" Offset="0"/>
+                                <GradientStop Color="#41C96A" Offset="0.4"/>
+                                <GradientStop Color="#4FC3F7" Offset="1"/>
+                            </LinearGradientBrush>
+                        </ProgressBar.Foreground>
+                    </ProgressBar>
                     <TextBlock Grid.Column="1" x:Name="txtProgressPercent"
                                Text="0%" Foreground="{DynamicResource TextFg}" FontSize="12"
                                FontWeight="SemiBold" VerticalAlignment="Center" Margin="10,0,0,0"
@@ -406,7 +435,7 @@
                 </Grid>
                 <!-- Texto de estado -->
                 <TextBlock Grid.Row="1" x:Name="txtStatus"
-                           Text="{l:Tr status.ready}"
+                           Text="{l:Tr status.ready}" TextTrimming="CharacterEllipsis"
                            Foreground="{DynamicResource TextFg}" FontSize="12" ToolTip.Tip="{l:Tr tip.status}"/>
             </Grid>
         </Border>

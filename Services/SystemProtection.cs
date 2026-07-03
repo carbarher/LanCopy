@@ -66,19 +66,22 @@ internal static class SystemProtection
     public static bool IsProtected(string? path)
     {
         if (string.IsNullOrWhiteSpace(path)) return true;
+        string normalized;
+        try { normalized = Path.GetFullPath(path); }
+        catch { return true; }
 
         // Raíces de unidad siempre protegidas (C:\, D:\, etc.)
-        if (Path.GetPathRoot(path)?.Equals(path, StringComparison.OrdinalIgnoreCase) == true) return true;
+        if (Path.GetPathRoot(normalized)?.Equals(normalized, StringComparison.OrdinalIgnoreCase) == true) return true;
 
         // Rutas de sistema conocidas (protege la raíz y todo su contenido)
         foreach (var root in _systemRoots)
-            if (IsUnderOrEqual(path, root))
+            if (IsUnderOrEqual(normalized, root))
                 return true;
 
         // Atributo de sistema en el archivo/carpeta
         try
         {
-            var attr = File.GetAttributes(path);
+            var attr = File.GetAttributes(normalized);
             if (attr.HasFlag(FileAttributes.System)) return true;
         }
         catch { /* path no accesible → tratar como protegido */ return true; }
@@ -92,11 +95,15 @@ internal static class SystemProtection
     /// </summary>
     public static bool IsProtectedForRemote(string? path)
     {
-        if (IsProtected(path)) return true;
         if (string.IsNullOrWhiteSpace(path)) return true;
+        string normalized;
+        try { normalized = Path.GetFullPath(path); }
+        catch { return true; }
+
+        if (IsProtected(normalized)) return true;
 
         foreach (var root in _personalRoots)
-            if (IsUnderOrEqual(path, root))
+            if (IsUnderOrEqual(normalized, root))
                 return true;
 
         return false;

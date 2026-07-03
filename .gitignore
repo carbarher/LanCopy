@@ -1,7 +1,7 @@
 bin/
 obj/
 publish/
+publish_v*/
 installer/Output/
 *.user
 *.log
-publish/

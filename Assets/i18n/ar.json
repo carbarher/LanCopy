@@ -335,5 +335,21 @@
     "st.sendtoDone":  "تمت الإضافة إلى قائمة «إرسال إلى» في Windows",
     "st.sendtoFailed2":  "تعذّر إنشاء الاختصار: {0}",
     "st.minimizedToTray":  "تم التصغير إلى شريط النظام — لا يزال يستقبل",
-    "st.sendtoReady":  "{0} ملف جاهز — اتصل واضغط إرسال"
+    "st.sendtoReady":  "{0} ملف جاهز — اتصل واضغط إرسال",
+  "notify.sent": "Sent",
+  "notify.received": "Received",
+  "notify.transferDone": "Transfer {0}",
+  "notify.transferBody1": "{0} in {1}",
+  "notify.transferBodyN": "{0} files — {1} in {2}",
+  "audit.today": "Today",
+  "audit.twoDays": "2 Days",
+  "audit.week": "Week",
+  "audit.allOps": "All",
+  "audit.colTime": "Time",
+  "audit.colOp": "Operation",
+  "audit.colFile": "File",
+  "audit.colSize": "Size",
+  "audit.colDur": "Duration",
+  "audit.exported": "Exported to {0}",
+  "audit.exportFailed": "Export failed: {0}"
 }

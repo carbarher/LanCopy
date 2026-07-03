@@ -2,6 +2,28 @@
 
 All notable changes to LanCopy are documented in this file.
 
+## [1.0.17] - 2026-07-02
+
+### Fixed
+- Hardened multiple `async void` UI handlers with top-level `try/catch` to prevent unobserved crashes (connection, context menus, features, browsers, queue actions, profile/sync actions).
+- Fixed update checker HTTP body handling to read until EOF (previously could fail on partial TCP reads).
+- Fixed progress window auto-close behavior so action buttons ("Open folder"/"Open file") remain usable after successful downloads.
+- Fixed CLI transfer cancellation behavior: `Ctrl+C` now requests cooperative cancellation instead of abrupt termination.
+- Fixed CLI transfer runtime edge cases around cancellation/dispose races and persistence errors.
+
+### Security & Reliability
+- Removed/converted silent catches to structured logging across services and UI paths.
+- Improved remote/local operation robustness with explicit error surfacing and safer null handling in UI event flows.
+- Added reparse-point filtering in CLI sync to avoid traversing symlinks/junctions by default.
+
+### Performance
+- Reduced hot-path allocations in transfer and hashing flows (pooling and zero-allocation aggregation improvements).
+- Optimized repeated progress/status aggregation and hash computation code paths.
+
+### Testing
+- Expanded regression coverage for CLI/runtime behaviors and parsing helpers.
+- Test suite now passes at **132/132**.
+
 ## [1.0.0] - 2026-06-17
 
 ### Features

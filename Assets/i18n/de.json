@@ -335,5 +335,21 @@
     "st.sendtoDone":  "Zum Windows-Menü „Senden an“ hinzugefügt",
     "st.sendtoFailed2":  "Verknüpfung konnte nicht erstellt werden: {0}",
     "st.minimizedToTray":  "In den Infobereich minimiert — empfängt weiterhin",
-    "st.sendtoReady":  "{0} Datei(en) bereit — verbinden und Senden drücken"
+    "st.sendtoReady":  "{0} Datei(en) bereit — verbinden und Senden drücken",
+  "notify.sent": "Gesendet",
+  "notify.received": "Empfangen",
+  "notify.transferDone": "\u00dcbertragung {0}",
+  "notify.transferBody1": "{0} in {1}",
+  "notify.transferBodyN": "{0} Dateien \u2014 {1} in {2}",
+  "audit.today": "Heute",
+  "audit.twoDays": "2 Tage",
+  "audit.week": "Woche",
+  "audit.allOps": "Alle",
+  "audit.colTime": "Zeit",
+  "audit.colOp": "Operation",
+  "audit.colFile": "Datei",
+  "audit.colSize": "Gr\u00f6\u00dfe",
+  "audit.colDur": "Dauer",
+  "audit.exported": "Exportiert nach {0}",
+  "audit.exportFailed": "Export fehlgeschlagen: {0}"
 }

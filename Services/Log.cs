@@ -1,4 +1,4 @@
-﻿using System.Collections.Concurrent;
+using System.Collections.Concurrent;
 using System.Text;
 using System.Text.Json;
 
@@ -24,16 +24,25 @@ public static class Log
     // B2: contador de entradas descartadas por overflow de cola (expuesto para diagnóstico en health endpoint)
     private static int _droppedLogs;
     public static int DroppedLogs => Volatile.Read(ref _droppedLogs);
+    // M13: strings pre-calculadas de nivel — evita .ToString().ToLowerInvariant() (2 allocs) en cada log entry
+    private static readonly string[] LevelNames = ["debug", "info", "warn", "error"];
     private static readonly Lazy<bool> _init = new(Init);
 
     private static Thread? _writerThread; // B6: guardamos referencia para Join en Shutdown
 
+    private static void ReportInternalFailure(string stage, Exception ex, object? data = null)
+    {
+        global::System.Diagnostics.Debug.WriteLine($"LanCopy.Log internal error at {stage}: {ex.Message}; data={JsonSerializer.Serialize(data)}");
+    }
+
     private static bool Init()
     {
-        try { Directory.CreateDirectory(LogDir); } catch { }
+        try { Directory.CreateDirectory(LogDir); }
+        catch (Exception ex) { ReportInternalFailure("init-create-logdir", ex, new { LogDir }); }
         _writerThread = new Thread(WriterLoop) { IsBackground = true, Name = "LanCopy-Log" };
         _writerThread.Start();
-        try { PruneOld(); } catch { }
+        try { PruneOld(); }
+        catch (Exception ex) { ReportInternalFailure("init-prune-old", ex, new { LogDir, RetentionDays }); }
         return true;
     }
 
@@ -65,9 +74,17 @@ public static class Log
                     lastFlush = now;
                 }
             }
-            catch { try { sw?.Dispose(); } catch { } sw = null; currentFile = null; }
+            catch (Exception ex)
+            {
+                ReportInternalFailure("writer-loop", ex, new { currentFile });
+                try { sw?.Dispose(); }
+                catch (Exception disposeEx) { ReportInternalFailure("writer-loop-dispose", disposeEx, new { currentFile }); }
+                sw = null;
+                currentFile = null;
+            }
         }
-        try { sw?.Flush(); sw?.Dispose(); } catch { }
+        try { sw?.Flush(); sw?.Dispose(); }
+        catch (Exception ex) { ReportInternalFailure("writer-loop-finalize", ex, new { currentFile }); }
     }
 
     private static void PruneOld()
@@ -75,7 +92,8 @@ public static class Log
         var cutoff = DateTime.UtcNow.AddDays(-RetentionDays);
         foreach (var f in Directory.EnumerateFiles(LogDir, "lancopy-*.log"))
         {
-            try { if (File.GetLastWriteTimeUtc(f) < cutoff) File.Delete(f); } catch { }
+            try { if (File.GetLastWriteTimeUtc(f) < cutoff) File.Delete(f); }
+            catch (Exception ex) { ReportInternalFailure("prune-old-file", ex, new { file = f }); }
         }
     }
 
@@ -88,7 +106,8 @@ public static class Log
             var rec = new
             {
                 ts = DateTime.UtcNow.ToString("O"),
-                level = level.ToString().ToLowerInvariant(),
+                // M13: LevelNames[] en lugar de level.ToString().ToLowerInvariant() (2 strings por entry)
+                level = LevelNames[(int)level],
                 category,
                 message,
                 data
@@ -99,7 +118,10 @@ public static class Log
                 if (!_queue.TryAdd(JsonSerializer.Serialize(rec) + Environment.NewLine, 0))
                     System.Threading.Interlocked.Increment(ref _droppedLogs);
         }
-        catch { }
+        catch (Exception ex)
+        {
+            ReportInternalFailure("write", ex, new { level, category, message });
+        }
     }
 
     public static void Debug(string category, string message, object? data = null) => Write(Level.Debug, category, message, data);
@@ -116,8 +138,10 @@ public static class Log
     /// </summary>
     public static void Shutdown(int maxWaitMs = 2000)
     {
-        try { if (!_queue.IsAddingCompleted) _queue.CompleteAdding(); } catch { }
+        try { if (!_queue.IsAddingCompleted) _queue.CompleteAdding(); }
+        catch (Exception ex) { ReportInternalFailure("shutdown-complete-adding", ex); }
         // B6: esperar realmente a que el hilo drene la cola (antes maxWaitMs se ignoraba)
-        try { _writerThread?.Join(maxWaitMs); } catch { }
+        try { _writerThread?.Join(maxWaitMs); }
+        catch (Exception ex) { ReportInternalFailure("shutdown-join", ex, new { maxWaitMs }); }
     }
 }

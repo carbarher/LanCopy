@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using Avalonia.Controls;
@@ -27,16 +27,25 @@ public partial class MainWindow
         _transferUiTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(500) };
         _transferUiTimer.Tick += (_, _) =>
         {
-            _transferPulseOn = !_transferPulseOn;
-            var snapshot = CreateTransferUiSnapshot();
-            if (snapshot is TransferUiSnapshot current)
+            try
             {
-                ApplyTransferUiSnapshot(current);
-                TryAutoRecoverFromStall(current);
+                _transferPulseOn = !_transferPulseOn;
+                var snapshot = CreateTransferUiSnapshot();
+                if (snapshot is TransferUiSnapshot current)
+                {
+                    ApplyTransferUiSnapshot(current);
+                    TryAutoRecoverFromStall(current);
+                }
+                if (snapshot is null || snapshot.Value.IsCompleted || snapshot.Value.IsTerminal)
+                    _transferUiTimer?.Stop();
             }
-            if (snapshot is null || snapshot.Value.IsCompleted || snapshot.Value.IsTerminal)
+            catch (Exception ex)
+            {
+                Log.Debug("transfer", "transfer-ui-timer-tick-failed", new { error = ex.Message });
                 _transferUiTimer?.Stop();
+            }
         };
+
 
         Dispatcher.UIThread.Post(() =>
         {
@@ -138,6 +147,7 @@ public partial class MainWindow
             if (_txtProgressPercent != null) _txtProgressPercent.Text = "0%";
             if (_txtSpeed != null) _txtSpeed.Text = "";
             UpdateSparkline(0);
+            if (_tray != null) _tray.ToolTipText = "LanCopy";
         });
     }
 
@@ -149,6 +159,10 @@ public partial class MainWindow
         }
 
         StopTransferUiTimer();
+        Dispatcher.UIThread.Post(() =>
+        {
+            if (_tray != null) _tray.ToolTipText = "LanCopy";
+        });
     }
 
     private TransferUiState EnsureTransferUiState(bool receiving, long totalBytes, DateTimeOffset now)
@@ -201,13 +215,18 @@ public partial class MainWindow
             var pct = state.TotalBytes > 0
                 ? Math.Clamp(state.DoneBytes * 100.0 / state.TotalBytes, 0, 100)
                 : 0;
-            // B9: usar ventana real de los samples (2s) como denominador, no el elapsed total
+            // B9-FIX: Evitar spike de velocidad al inicio cuando solo hay 1 sample y la
+            // ventana es < 1s (causaba mostrar cientos de MB/s). Suprimir hasta 1s de ventana.
             var recentBytes = state.SpeedSamples.Sum(x => x.Bytes);
-            var sampleWindow = state.SpeedSamples.Count > 0
-                // P4: SpeedSamples es una Queue FIFO — el m\u00e1s antiguo es siempre el primero; Peek() es O(1) vs Min() O(n)
-                ? Math.Max(0.5, (now - state.SpeedSamples.Peek().Timestamp).TotalSeconds)
+            var rawWindow = state.SpeedSamples.Count > 0
+                // P4: SpeedSamples es una Queue FIFO — el más antiguo es siempre el primero; Peek() es O(1) vs Min() O(n)
+                ? (now - state.SpeedSamples.Peek().Timestamp).TotalSeconds
                 : 2.0;
-            var speed = recentBytes > 0 ? recentBytes / sampleWindow : 0;
+            var sampleWindow = Math.Max(0.5, rawWindow);
+            // Si la ventana real es < 1s y sólo hay 1 muestra, la velocidad es ruido: mostrar 0
+            var speed = (recentBytes > 0 && (state.SpeedSamples.Count > 1 || rawWindow >= 1.0))
+                ? recentBytes / sampleWindow
+                : 0;
             var stalledSeconds = Math.Max(0, (int)Math.Floor((now - state.LastByteAt).TotalSeconds));
             var isStalled = !state.IsCompleted && !state.IsTerminal && state.DoneBytes < state.TotalBytes && stalledSeconds >= 10;
             var directionText = state.Receiving ? L["st.receiving"] : L["st.sending"];
@@ -292,6 +311,14 @@ public partial class MainWindow
         // P3: solo actualizar sparkline si hay velocidad real (o cero al detenerse)
         UpdateSparkline(snapshot.SpeedBytesPerSecond);
         _progressWin?.SetProgress(snapshot.ProgressPercent, snapshot.DetailText);
+
+        // Tray tooltip: show progress during transfer, reset on completion
+        if (_tray != null)
+        {
+            _tray.ToolTipText = snapshot.IsCompleted || snapshot.IsTerminal
+                ? "LanCopy"
+                : $"LanCopy \u2014 {snapshot.PercentText}";
+        }
     }
 
     private void TryAutoRecoverFromStall(TransferUiSnapshot snapshot)
@@ -310,8 +337,12 @@ public partial class MainWindow
                 SetStatus(L["st.autoReconnecting"]);
                 // U5: cancelar transferencias activas ANTES de disponer el cliente
                 // Sin esto, el transfer loop sigue usando el cliente dispuesto y lanza excepciones confusas
-                try { _uploadCts?.Cancel(); } catch { }
-                try { _downloadCts?.Cancel(); } catch { }
+                try { _uploadCts?.Cancel(); }
+                catch (ObjectDisposedException ex) { Log.Debug("transfer", "upload-cts-disposed-during-stall-recovery", new { error = ex.Message }); }
+                catch (Exception ex) { Log.Warn("transfer", "upload-cts-cancel-failed-during-stall-recovery", new { error = ex.Message }); }
+                try { _downloadCts?.Cancel(); }
+                catch (ObjectDisposedException ex) { Log.Debug("transfer", "download-cts-disposed-during-stall-recovery", new { error = ex.Message }); }
+                catch (Exception ex) { Log.Warn("transfer", "download-cts-cancel-failed-during-stall-recovery", new { error = ex.Message }); }
                 await _clientLock.WaitAsync();
                 try { _client?.Dispose(); _client = null; }
                 finally { _clientLock.Release(); }

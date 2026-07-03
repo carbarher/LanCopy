@@ -8,7 +8,7 @@
 #>
 param(
     [string]$Rid = '',
-    [string]$Version = '1.0.0',
+    [string]$Version = '1.0.17',
     [string]$OutDir = 'publish'
 )
 

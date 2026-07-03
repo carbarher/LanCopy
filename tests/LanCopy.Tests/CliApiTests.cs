@@ -62,6 +62,52 @@ public class CliApiTests
         Assert.Contains("X-LanCopy-Token", json, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public async Task Main_InvalidPortOption_ReturnsUsageError()
+    {
+        var code = await LanCopy.Cli.Program.Main(["api", "--port", "70000"]);
+        Assert.Equal(2, code);
+    }
+
+    // ── ParseEndpoint tests ───────────────────────────────────────────────────
+
+    [Theory]
+    [InlineData("192.168.1.50", 8742, "192.168.1.50", 8742)]
+    [InlineData("192.168.1.50:9000", 8742, "192.168.1.50", 9000)]
+    [InlineData("myhost", 8742, "myhost", 8742)]
+    public void ParseEndpoint_ValidInputs_Parsed(string raw, int defaultPort, string expectedHost, int expectedPort)
+    {
+        var ep = LanCopy.Cli.Program.ParseEndpoint(raw, defaultPort);
+        Assert.Equal(expectedHost, ep.Host);
+        Assert.Equal(expectedPort, ep.Port);
+    }
+
+    [Theory]
+    [InlineData("192.168.1.50:0")]
+    [InlineData("192.168.1.50:65536")]
+    [InlineData("")]
+    [InlineData("   ")]
+    public void ParseEndpoint_InvalidInputs_Throws(string raw)
+    {
+        Assert.ThrowsAny<ArgumentException>(() => LanCopy.Cli.Program.ParseEndpoint(raw, 8742));
+    }
+
+    // ── NormalizeRemotePath tests ─────────────────────────────────────────────
+
+    [Fact]
+    public void NormalizeRemotePath_ExplicitPath_ReturnsExplicit()
+    {
+        var result = LanCopy.Cli.Program.NormalizeRemotePath("custom/path.zip", @"C:\local\file.zip");
+        Assert.Equal("custom/path.zip", result);
+    }
+
+    [Fact]
+    public void NormalizeRemotePath_NullPath_UsesFileName()
+    {
+        var result = LanCopy.Cli.Program.NormalizeRemotePath(null, @"C:\local\file.zip");
+        Assert.Equal("file.zip", result);
+    }
+
     private static void Restore(string path, string? backup)
     {
         if (backup is null)

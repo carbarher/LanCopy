@@ -335,5 +335,21 @@
     "st.sendtoDone":  "Ajouté au menu « Envoyer vers » de Windows",
     "st.sendtoFailed2":  "Impossible de créer le raccourci : {0}",
     "st.minimizedToTray":  "Réduit dans la zone de notification — réception active",
-    "st.sendtoReady":  "{0} fichier(s) prêt(s) — connectez-vous et appuyez sur Envoyer"
+    "st.sendtoReady":  "{0} fichier(s) prêt(s) — connectez-vous et appuyez sur Envoyer",
+  "notify.sent": "Envoy\u00e9",
+  "notify.received": "Re\u00e7u",
+  "notify.transferDone": "Transfert {0}",
+  "notify.transferBody1": "{0} en {1}",
+  "notify.transferBodyN": "{0} fichiers \u2014 {1} en {2}",
+  "audit.today": "Aujourd'hui",
+  "audit.twoDays": "2 Jours",
+  "audit.week": "Semaine",
+  "audit.allOps": "Tous",
+  "audit.colTime": "Heure",
+  "audit.colOp": "Op\u00e9ration",
+  "audit.colFile": "Fichier",
+  "audit.colSize": "Taille",
+  "audit.colDur": "Dur\u00e9e",
+  "audit.exported": "Export\u00e9 vers {0}",
+  "audit.exportFailed": "\u00c9chec de l'export : {0}"
 }

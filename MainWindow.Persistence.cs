@@ -144,6 +144,24 @@ public partial class MainWindow
                     if (chk != null) chk.IsChecked = _compressEnabled;
                 });
             }
+            if (doc.TryGetProperty("autoClipboard", out var autoClip))
+            {
+                _autoClipboard = autoClip.GetBoolean();
+                await Dispatcher.UIThread.InvokeAsync(() =>
+                {
+                    var chk = this.FindControl<CheckBox>("chkAutoClipboard");
+                    if (chk != null) chk.IsChecked = _autoClipboard;
+                });
+            }
+            if (doc.TryGetProperty("autoOpenLinks", out var autoOpen))
+            {
+                _autoOpenLinks = autoOpen.GetBoolean();
+                await Dispatcher.UIThread.InvokeAsync(() =>
+                {
+                    var chk = this.FindControl<CheckBox>("chkAutoOpenLinks");
+                    if (chk != null) chk.IsChecked = _autoOpenLinks;
+                });
+            }
             if (doc.TryGetProperty("bandwidthLimitMbps", out var bwEl))
             {
                 var bwValue = bwEl.ValueKind switch
@@ -237,42 +255,43 @@ public partial class MainWindow
 
     private void SaveSettings(string ip, string port)
     {
-        try
+        // BUG-FIX-B1: SettingsLock.Wait() bloqueaba el hilo de UI si PersistLanguage (Loc.cs)
+        // retenia el lock. Solucion: capturar todos los datos UI aqui (en el hilo de UI, no
+        // necesita lock), serializar a JSON string (rapido, sin I/O), y escribir en background.
+        // Paso 1: Capturar datos de UI (solo valido en el hilo de UI)
+        var pin       = this.FindControl<TextBox>("txtPin")?.Text?.Trim() ?? "";
+        var lastPeer  = this.FindControl<ComboBox>("cmbPeers")?.SelectedItem as string ?? "";
+        var selProfile= this.FindControl<ComboBox>("cmbProfiles")?.SelectedItem as string ?? "";
+        var localPort = this.FindControl<TextBox>("txtLocalPort")?.Text?.Trim() ?? "8742";
+        var snapshot = new
         {
-            var pin = this.FindControl<TextBox>("txtPin")?.Text?.Trim() ?? "";
-            Directory.CreateDirectory(Path.GetDirectoryName(SettingsPath)!);
-            var __json = JsonSerializer.Serialize(new
+            remoteIp  = ip, remotePort = port, localPath = _localPath,
+            lastPeer, selectedProfile = selProfile, localPort, pin,
+            tlsEnabled = _tlsEnabled, restrictShareRoot = _restrictShareRoot,
+            readOnly = _readOnly, safeModeNoRemoteDelete = _safeModeNoRemoteDelete,
+            requireApproval = _requireApproval, compressEnabled = _compressEnabled,
+            autoClipboard = _autoClipboard, autoOpenLinks = _autoOpenLinks,
+            bandwidthLimitMbps = _bandwidthLimitMbps, advancedMode = _advancedMode,
+            welcomeShown = _welcomeShown, language = L.Current, theme = _theme,
+            winW = this.Width, winH = this.Height,
+            winX = this.Position.X, winY = this.Position.Y,
+            winMax = this.WindowState == WindowState.Maximized,
+            profiles = _profiles
+        };
+        // Paso 2: Serializar en el hilo de UI (rapido, sin I/O de disco)
+        var json = JsonSerializer.Serialize(snapshot);
+        // Paso 3: Escribir en background para no bloquear el hilo de UI
+        _ = Task.Run(async () =>
+        {
+            await Localization.Loc.SettingsLock.WaitAsync().ConfigureAwait(false);
+            try
             {
-                remoteIp = ip,
-                remotePort = port,
-                localPath = _localPath,
-                lastPeer = this.FindControl<ComboBox>("cmbPeers")?.SelectedItem as string ?? "",
-                selectedProfile = this.FindControl<ComboBox>("cmbProfiles")?.SelectedItem as string ?? "",
-                localPort = this.FindControl<TextBox>("txtLocalPort")?.Text?.Trim() ?? "8742",
-                pin,
-                tlsEnabled = _tlsEnabled,
-                restrictShareRoot = _restrictShareRoot,
-                readOnly = _readOnly,
-                safeModeNoRemoteDelete = _safeModeNoRemoteDelete,
-                requireApproval = _requireApproval,
-                compressEnabled = _compressEnabled,
-                bandwidthLimitMbps = _bandwidthLimitMbps,
-
-                advancedMode = _advancedMode,
-                welcomeShown = _welcomeShown,
-                language = L.Current,
-                theme = _theme,
-                winW = this.Width,
-                winH = this.Height,
-                winX = this.Position.X,
-                winY = this.Position.Y,
-                winMax = this.WindowState == WindowState.Maximized,
-                profiles = _profiles
-            });
-            // Escritura atomica centralizada (temp + replace).
-            JsonStore.WriteRawAtomic(SettingsPath, __json);
-        }
-        catch (Exception ex) { Log.Error("persistence", "save-settings", new { error = ex.Message }); }
+                Directory.CreateDirectory(Path.GetDirectoryName(SettingsPath)!);
+                JsonStore.WriteRawAtomic(SettingsPath, json);
+            }
+            catch (Exception ex) { Log.Error("persistence", "save-settings", new { error = ex.Message }); }
+            finally { Localization.Loc.SettingsLock.Release(); }
+        });
     }
 
 }

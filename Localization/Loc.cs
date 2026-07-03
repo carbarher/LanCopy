@@ -5,6 +5,7 @@ using System.Globalization;
 using System.IO;
 using System.Text.Json;
 using Avalonia.Platform;
+using LanCopy.Services;
 
 namespace LanCopy.Localization;
 
@@ -78,7 +79,11 @@ public sealed class Loc : INotifyPropertyChanged
     {
         var fmt = this[key];
         try { return string.Format(fmt, args); }
-        catch { return fmt; }
+        catch (FormatException ex)
+        {
+            Log.Warn("loc", "format-failed", new { key, error = ex.Message });
+            return fmt;
+        }
     }
 
     public void SetLanguage(string code, bool persist = true, bool notify = true)
@@ -98,7 +103,8 @@ public sealed class Loc : INotifyPropertyChanged
             LanguageChanged?.Invoke();
         }
 
-        try { CultureInfo.CurrentUICulture = CultureInfo.GetCultureInfo(code); } catch { }
+        try { CultureInfo.CurrentUICulture = CultureInfo.GetCultureInfo(code); }
+        catch (CultureNotFoundException ex) { Log.Warn("loc", "set-uiculture-failed", new { code, error = ex.Message }); }
     }
 
     private readonly object _cacheLock = new(); // Q7: proteger _cache de escrituras concurrentes
@@ -116,13 +122,12 @@ public sealed class Loc : INotifyPropertyChanged
             {
                 var uri = new Uri($"avares://LanCopy/Assets/i18n/{code}.json");
                 using var stream = AssetLoader.Open(uri);
-                using var reader = new StreamReader(stream);
-                var json = reader.ReadToEnd();
-                var parsed = JsonSerializer.Deserialize<Dictionary<string, string>>(json);
+                // O17: Deserializar directamente del Stream para evitar StreamReader y string intermedias
+                var parsed = JsonSerializer.Deserialize<Dictionary<string, string>>(stream);
                 if (parsed != null)
                     foreach (var kv in parsed) dict[kv.Key] = kv.Value;
             }
-            catch { }
+            catch (Exception ex) { Log.Warn("loc", "load-language-failed", new { code, error = ex.Message }); }
             _cache[code] = dict;
             return dict;
         }
@@ -138,7 +143,7 @@ public sealed class Loc : INotifyPropertyChanged
             var os = CultureInfo.InstalledUICulture.TwoLetterISOLanguageName;
             if (SupportedCodes.Contains(os)) return os;
         }
-        catch { }
+        catch (Exception ex) { Log.Debug("loc", "resolve-os-language-failed", new { error = ex.Message }); }
         return "en";
     }
 
@@ -151,13 +156,15 @@ public sealed class Loc : INotifyPropertyChanged
         try
         {
             if (!File.Exists(SettingsPath)) return null;
-            var doc = JsonSerializer.Deserialize<JsonElement>(File.ReadAllText(SettingsPath));
+            // O17: Leer desde FileStream directamente para evitar File.ReadAllText string allocation
+            using var fs = File.OpenRead(SettingsPath);
+            var doc = JsonSerializer.Deserialize<JsonElement>(fs);
             if (doc.ValueKind == JsonValueKind.Object &&
                 doc.TryGetProperty("language", out var lang) &&
                 lang.ValueKind == JsonValueKind.String)
                 return lang.GetString();
         }
-        catch { }
+        catch (Exception ex) { Log.Warn("loc", "read-saved-language-failed", new { error = ex.Message }); }
         return null;
     }
 
@@ -165,25 +172,29 @@ public sealed class Loc : INotifyPropertyChanged
     {
         // P3: ejecutar en ThreadPool para que el UI thread (CmbLang_SelectionChanged) no bloquee
         // esperando SettingsLock si SaveSettings lo está reteniendo desde un contexto background.
-        _ = System.Threading.Tasks.Task.Run(() =>
+        // L4-FIX: usar async Task.Run + WaitAsync en lugar de sync .Wait() para no bloquear
+        // permanentemente un hilo del ThreadPool mientras espera el lock.
+        _ = System.Threading.Tasks.Task.Run(async () =>
         {
-            SettingsLock.Wait();
+            await SettingsLock.WaitAsync().ConfigureAwait(false);
             try
             {
                 Directory.CreateDirectory(Path.GetDirectoryName(SettingsPath)!);
                 Dictionary<string, JsonElement> map = new();
                 if (File.Exists(SettingsPath))
                 {
-                    var existing = JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(File.ReadAllText(SettingsPath));
+                    // O17: Leer desde FileStream
+                    using var fs = File.OpenRead(SettingsPath);
+                    var existing = JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(fs);
                     if (existing != null) map = existing;
                 }
-                using var doc = JsonDocument.Parse(JsonSerializer.Serialize(code));
-                map["language"] = doc.RootElement.Clone();
+                // O17: Usar SerializeToElement para evitar parseo de strings intermedias
+                map["language"] = JsonSerializer.SerializeToElement(code);
                 // escritura atómica para evitar corrupción si el proceso muere a mitad
                 LanCopy.Services.JsonStore.WriteRawAtomic(SettingsPath,
                     JsonSerializer.Serialize(map, new JsonSerializerOptions { WriteIndented = false }));
             }
-            catch { }
+            catch (Exception ex) { Log.Warn("loc", "persist-language-failed", new { code, error = ex.Message }); }
             finally { SettingsLock.Release(); }
         });
     }

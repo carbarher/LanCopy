@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Concurrent;
 using System.Net;
 using System.Net.NetworkInformation;
@@ -27,6 +27,10 @@ public sealed class PeerDiscovery : IDisposable
     private readonly string _instanceId = Guid.NewGuid().ToString("N");
     private volatile HashSet<string> _localIpv4Cache;
     private bool _networkHandlerSubscribed;
+    // P4: SanitizePeerName(Environment.MachineName) cacheado — MachineName es inmutable en runtime
+    private readonly string _sanitizedMachineName;
+    // O1: Payload de broadcast UDP pre-serializado para evitar JSON serialize/alloc cada 5s
+    private readonly byte[] _broadcastPayload;
 
     public event Action? PeersChanged;
 
@@ -39,6 +43,13 @@ public sealed class PeerDiscovery : IDisposable
         _localIp = localIp;
         _tcpPort = tcpPort;
         _localIpv4Cache = GetLocalIpv4Addresses(localIp);
+        _sanitizedMachineName = SanitizePeerName(Environment.MachineName); // P4: cache
+        _broadcastPayload = JsonSerializer.SerializeToUtf8Bytes(new
+        {
+            name = _sanitizedMachineName,
+            port = _tcpPort,
+            instanceId = _instanceId
+        }); // O1: pre-serializar
         _networkChangeHandler = (_, _) =>
         {
             _localIpv4Cache = GetLocalIpv4Addresses(_localIp);
@@ -80,8 +91,10 @@ public sealed class PeerDiscovery : IDisposable
     private static string SanitizePeerName(string input)
     {
         if (string.IsNullOrEmpty(input)) return "?";
-        if (input.Length > MaxPeerNameLen * 4) input = input.Substring(0, MaxPeerNameLen * 4);
-        var sb = new StringBuilder(Math.Min(input.Length, MaxPeerNameLen));
+        // O12: Usar stackalloc Span<char> en lugar de StringBuilder para evitar allocations en el heap
+        var maxLen = Math.Min(input.Length, MaxPeerNameLen);
+        Span<char> buf = stackalloc char[maxLen];
+        int len = 0;
         foreach (var ch in input)
         {
             var c = (int)ch;
@@ -93,10 +106,10 @@ public sealed class PeerDiscovery : IDisposable
             if (c == 0x2069) continue;
             if (c == 0x200F || c == 0x200E) continue;
             if (c == 0xFEFF) continue;
-            sb.Append(ch);
-            if (sb.Length >= MaxPeerNameLen) break;
+            buf[len++] = ch;
+            if (len >= maxLen) break;
         }
-        return sb.Length == 0 ? "?" : sb.ToString();
+        return len == 0 ? "?" : new string(buf[..len]);
     }
 
     internal static bool IsSameInstanceId(string? incomingInstanceId, string instanceId)
@@ -131,7 +144,10 @@ public sealed class PeerDiscovery : IDisposable
                 }
             }
         }
-        catch { }
+        catch (Exception ex)
+        {
+            Log.Debug("discovery", "local-ipv4-enumeration-failed", new { error = ex.Message });
+        }
 
         return ips;
     }
@@ -146,74 +162,95 @@ public sealed class PeerDiscovery : IDisposable
         {
             try
             {
-                // Recalcular payload en cada ciclo para evitar datos stale tras cambios de red.
-                var payload = JsonSerializer.SerializeToUtf8Bytes(new
-                {
-                    name = SanitizePeerName(Environment.MachineName),
-                    port = _tcpPort,
-                    instanceId = _instanceId
-                });
                 // StealthMode: no emitir broadcasts, solo escuchar (invisible para otros peers)
                 if (!StealthMode)
-                    await udp.SendAsync(payload, ep, ct);
+                    await udp.SendAsync(_broadcastPayload, ep, ct); // O1: usar payload pre-serializado
                 await Task.Delay(5000, ct);
             }
             catch (OperationCanceledException) { break; }
-            catch { await Task.Delay(5000, ct); }
+            catch (Exception ex)
+            {
+                Log.Debug("discovery", "broadcast-loop-error", new { error = ex.Message });
+                await Task.Delay(5000, ct);
+            }
         }
     }
 
     private async Task ListenLoopAsync(CancellationToken ct)
     {
-        using var udp = new UdpClient(new IPEndPoint(IPAddress.Any, UdpPort));
-        ct.Register(() => udp.Dispose());
-        while (!ct.IsCancellationRequested)
+        UdpClient udp;
+        try
         {
-            try
+            udp = new UdpClient();
+            udp.Client.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.ReuseAddress, true);
+            udp.Client.Bind(new IPEndPoint(IPAddress.Any, UdpPort));
+        }
+        catch (Exception ex)
+        {
+            Log.Warn("discovery", "udp-listen-socket-bind-failed", new { error = ex.Message });
+            return;
+        }
+
+        using (udp)
+        {
+            using (ct.Register(() => { try { udp.Dispose(); } catch { } }))
             {
-                var result = await udp.ReceiveAsync(ct);
-                if (result.Buffer.Length > MaxUdpPayload) continue;
-
-                var doc = JsonSerializer.Deserialize<JsonElement>(result.Buffer);
-                var rawName = doc.TryGetProperty("name", out var n) ? n.GetString() ?? "?" : "?";
-                var name = SanitizePeerName(rawName);
-                var ip = result.RemoteEndPoint.Address.ToString();
-                var port = doc.TryGetProperty("port", out var p) ? p.GetInt32() : 8742;
-                var incomingInstanceId = doc.TryGetProperty("instanceId", out var iid) ? iid.GetString() : null;
-                if (port < 1 || port > 65535) port = 8742;
-
-                if (IsSameInstanceId(incomingInstanceId, _instanceId)) continue;
-
-                if (string.IsNullOrEmpty(ip) || IsLocalIpv4Address(ip, _localIpv4Cache)) continue;
-
-                var info = new PeerInfo(name, ip, port, Environment.TickCount64);
-                if (_peers.TryGetValue(ip, out var existing) &&
-                    existing.Name == info.Name && existing.Port == info.Port)
+                while (!ct.IsCancellationRequested)
                 {
-                    _peers[ip] = info;
-                }
-                else
-                {
-                    _peers[ip] = info;
-                    PeersChanged?.Invoke();
+                    try
+                    {
+                        var result = await udp.ReceiveAsync(ct);
+                        if (result.Buffer.Length > MaxUdpPayload) continue;
+
+                        var doc = JsonSerializer.Deserialize<JsonElement>(result.Buffer);
+                        var rawName = doc.TryGetProperty("name", out var n) ? n.GetString() ?? "?" : "?";
+                        var name = SanitizePeerName(rawName);
+                        var ip = result.RemoteEndPoint.Address.ToString();
+                        var port = doc.TryGetProperty("port", out var p) ? p.GetInt32() : 8742;
+                        var incomingInstanceId = doc.TryGetProperty("instanceId", out var iid) ? iid.GetString() : null;
+                        if (port < 1 || port > 65535) port = 8742;
+
+                        if (IsSameInstanceId(incomingInstanceId, _instanceId)) continue;
+
+                        if (string.IsNullOrEmpty(ip) || IsLocalIpv4Address(ip, _localIpv4Cache)) continue;
+
+                        var info = new PeerInfo(name, ip, port, Environment.TickCount64);
+                        if (_peers.TryGetValue(ip, out var existing) &&
+                            existing.Name == info.Name && existing.Port == info.Port)
+                        {
+                            _peers[ip] = info;
+                        }
+                        else
+                        {
+                            _peers[ip] = info;
+                            PeersChanged?.Invoke();
+                        }
+                    }
+                    catch (OperationCanceledException) { break; }
+                    catch (ObjectDisposedException) { break; }
+                    catch (Exception ex)
+                    {
+                        Log.Debug("discovery", "listen-loop-error", new { error = ex.Message });
+                    }
                 }
             }
-            catch (OperationCanceledException) { break; }
-            catch (ObjectDisposedException) { break; }
-            catch { }
         }
-    }
+}
 
     private async Task ExpireLoopAsync(CancellationToken ct)
     {
         while (!ct.IsCancellationRequested)
         {
-            try { await Task.Delay(10_000, ct); } catch { break; }
+            try { await Task.Delay(10_000, ct); }
+            catch (OperationCanceledException) { break; }
             var now = Environment.TickCount64;
+            bool anyRemoved = false;
             foreach (var kv in _peers)
                 if (now - kv.Value.LastSeen > PeerStaleMs)
                     if (_peers.TryRemove(kv.Key, out _))
-                        PeersChanged?.Invoke();
+                        anyRemoved = true;
+            // Un solo evento al final del ciclo en lugar de N eventos (uno por peer expirado)
+            if (anyRemoved) PeersChanged?.Invoke();
         }
     }
 

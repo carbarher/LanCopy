@@ -34,7 +34,7 @@ public static class FavoriteFoldersService
                     .Take(MaxFavorites)
                     .ToList();
             }
-            catch { _cache = []; }
+            catch (Exception ex) { Log.Warn("favorites", "load-failed", new { error = ex.Message }); _cache = []; }
             _loaded = true;
             return [.. _cache];
         }

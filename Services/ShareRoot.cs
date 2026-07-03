@@ -35,7 +35,8 @@ public static class ShareRoot
 
     public static void EnsureRootExists()
     {
-        try { Directory.CreateDirectory(Root); } catch { }
+        try { Directory.CreateDirectory(Root); }
+        catch (Exception ex) { Log.Warn("share-root", "ensure-root-exists-failed", new { root = Root, error = ex.Message }); }
     }
 
     /// <summary>
@@ -115,7 +116,11 @@ public static class ShareRoot
                 current = parent.TrimEnd(Path.DirectorySeparatorChar);
             }
         }
-        catch { return true; }
+        catch (Exception ex)
+        {
+            Log.Warn("share-root", "reparse-check-failed", new { root, candidate, error = ex.Message });
+            return true;
+        }
         return false;
     }
 
@@ -133,7 +138,7 @@ public static class ShareRoot
                 if (target != null) return Path.GetFullPath(target.FullName);
             }
         }
-        catch { }
+        catch (Exception ex) { Log.Debug("share-root", "resolve-canonical-failed", new { path, error = ex.Message }); }
         return Path.GetFullPath(path);
     }
 

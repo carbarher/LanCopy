@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Text;
@@ -72,7 +72,7 @@ public static class AuditService
             await File.AppendAllTextAsync(file,
                 JsonSerializer.Serialize(rec) + Environment.NewLine, Encoding.UTF8);
         }
-        catch { }
+        catch (Exception ex) { Log.Warn("audit", "write-failed", new { error = ex.Message }); }
         finally { _writeLock.Release(); }
         // B2: PruneOld fuera del lock — el barrido de ficheros no debe bloquear audit writes durante
         // la poda diaria. La carrera en _lastPrunedDay es inofensiva (peor caso: dos pruning el mismo día).
@@ -88,6 +88,7 @@ public static class AuditService
     {
         try
         {
+            if (!Directory.Exists(AuditDir)) return;
             var cutoff = DateTime.UtcNow.AddDays(-90);
             foreach (var f in Directory.EnumerateFiles(AuditDir, "audit-*.jsonl"))
             {
@@ -97,7 +98,7 @@ public static class AuditService
                     File.Delete(f);
             }
         }
-        catch { }
+        catch (Exception ex) { Log.Warn("audit", "prune-failed", new { error = ex.Message }); }
     }
 
     /// <summary>Lee registros de un día (yyyyMMdd). Si null, hoy.</summary>
@@ -113,19 +114,28 @@ public static class AuditService
         string raw;
         await _writeLock.WaitAsync().ConfigureAwait(false);
         try { raw = await File.ReadAllTextAsync(file).ConfigureAwait(false); }
-        catch { return []; }
+        catch (Exception ex)
+        {
+            Log.Warn("audit", "read-day-failed", new { date = dateStr, error = ex.Message });
+            return [];
+        }
         finally { _writeLock.Release(); }
 
         var list = new List<AuditRecord>();
-        foreach (var line in raw.Split('\n', StringSplitOptions.RemoveEmptyEntries))
+        // O19: Usar StringReader en lugar de raw.Split('\n') para evitar la asignación de un gran array de strings en el heap
+        using (var reader = new StringReader(raw))
         {
-            if (string.IsNullOrWhiteSpace(line)) continue;
-            try
+            string? line;
+            while ((line = reader.ReadLine()) != null)
             {
-                var r = JsonSerializer.Deserialize<AuditRecord>(line.TrimEnd('\r'));
-                if (r != null) list.Add(r);
+                if (string.IsNullOrWhiteSpace(line)) continue;
+                try
+                {
+                    var r = JsonSerializer.Deserialize<AuditRecord>(line);
+                    if (r != null) list.Add(r);
+                }
+                catch (JsonException ex) { Log.Debug("audit", "skip-invalid-line", new { date = dateStr, error = ex.Message }); }
             }
-            catch { }
         }
         return list;
     }

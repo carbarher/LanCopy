@@ -29,7 +29,9 @@ public static class StartupSettings
             if (!File.Exists(settingsPath))
                 return Defaults();
 
-            var doc = JsonSerializer.Deserialize<JsonElement>(File.ReadAllText(settingsPath));
+            // O18: Leer de FileStream directamente para evitar File.ReadAllText string allocation
+            using var fs = File.OpenRead(settingsPath);
+            var doc = JsonSerializer.Deserialize<JsonElement>(fs);
             return new ServerConfig(
                 LocalPort: ReadLocalPort(doc),
                 RequiredPin: ReadPin(doc),
@@ -40,8 +42,9 @@ public static class StartupSettings
                 SafeModeNoRemoteDelete: ReadBool(doc, "safeModeNoRemoteDelete", defaultValue: true),
                 WelcomeShown: ReadBool(doc, "welcomeShown", defaultValue: false));
         }
-        catch
+        catch (Exception ex)
         {
+            Log.Warn("startup-settings", "load-failed-using-defaults", new { settingsPath, error = ex.Message });
             return Defaults();
         }
     }

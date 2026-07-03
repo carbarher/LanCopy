@@ -55,11 +55,14 @@ public partial class MainWindow
         if (_client == null) { SetStatus(L["st.connectFirst"]); return; }
         var items = GetSelectedItems("localList");
         if (items.Count == 0) return;
-        await TransferAsync(items, isUpload: true);
+        try { await TransferAsync(items, isUpload: true); }
+        catch (Exception ex) { Log.Warn("ctx-menu", "local-send-unexpected", new { error = ex.Message }); }
     }
 
     private async void LocalCtx_Rename(object? sender, RoutedEventArgs e)
     {
+        try
+        {
         var items = GetSelectedItems("localList");
         if (items.Count != 1) return;
         var item = items[0];
@@ -108,6 +111,11 @@ public partial class MainWindow
             SafeFileOps.Audit("rename", sourcePath, "error", ex.Message);
             SetStatus(L.Format("st.renameError", L[ex.Message]));
         }
+        }
+        catch (Exception ex)
+        {
+            Log.Warn("ctx-menu", "local-rename-unexpected", new { error = ex.Message });
+        }
     }
 
     private async void LocalCtx_Delete(object? sender, RoutedEventArgs e)
@@ -115,6 +123,8 @@ public partial class MainWindow
         var items = GetSelectedItems("localList");
         if (items.Count == 0) return;
 
+        try
+        {
         var allowed = new List<(FileEntry item, string path)>();
         var blocked = new List<string>();
 
@@ -156,6 +166,8 @@ public partial class MainWindow
         int __delTotal = allowed.Count, __delIdx = 0;
         int ok = 0, cooldown = 0, err = 0;
         var lines = new List<string>();
+        try
+        {
         foreach (var (item, path) in allowed)
         {
             __delIdx++;
@@ -175,6 +187,7 @@ public partial class MainWindow
                 ok++;
                 lines.Add($"🗑️ {item.Name} -> {moved}");
                 SafeFileOps.Audit("delete", path, "ok", $"trash:{moved}");
+                AuditService.Record("127.0.0.1", "delete", path, 0, true, 0, $"trash:{moved}");
             }
             else
             {
@@ -192,6 +205,21 @@ public partial class MainWindow
         await ShowInfoDialog(L["del.summaryLocalTitle"], L.Format("del.summaryCounts", ok, blocked.Count + cooldown, err) + Environment.NewLine + Environment.NewLine + string.Join(Environment.NewLine, lines));
         var __delResult = L.Format("st.deleteLocalResult", ok, blocked.Count + cooldown, err);
         if (err > 0 || blocked.Count + cooldown > 0) SetStatusAlert(__delResult); else SetStatus(__delResult);
+        }
+        finally
+        {
+            if (_progressWin != null)
+            {
+                _progressWin.Finish(L["prog.cancelled"], isError: true);
+                _progressWin = null;
+            }
+        }
+        }
+        catch (Exception ex)
+        {
+            Log.Warn("ctx-menu", "local-delete-unexpected", new { error = ex.Message });
+            SetStatus(L[ex.Message]);
+        }
     }
 
     private async void LocalCtx_Verify(object? sender, RoutedEventArgs e)
@@ -200,22 +228,49 @@ public partial class MainWindow
         var items = GetSelectedItems("localList").Where(x => !x.IsDirectory).ToList();
         if (items.Count == 0) return;
 
+        try
+        {
         SetStatus(L["st.verifying"]);
         var results = new System.Collections.Concurrent.ConcurrentBag<string>();
-        var ct = CancellationToken.None;
+        // C12-FIX: timeout de 120s para todas las tareas — CancellationToken.None causaba
+        // Task.WhenAll bloqueado indefinidamente si el server estaba lento o la conexión caía.
+        using var verifyCts = new System.Threading.CancellationTokenSource(TimeSpan.FromSeconds(120));
+        var ct = verifyCts.Token;
         var toleranceTicks = TimeSpan.FromSeconds(2).Ticks;
 
-        // Paralelo: max 4 simultáneos (evita saturar cliente)
-        var tasks = items.Select(item => VerifyLocalItemAsync(item, toleranceTicks, results, ct)).ToList();
+        // BUG-FIX: capturar IP/puerto en el UI thread antes de lanzar tasks
+        // para poder crear clientes temporales independientes por task (verdadero paralelismo).
+        // Antes se usaba _clientLock (SemaphoreSlim(1,1)) dentro de cada task, convirtiendo
+        // la verificación paralela en completamente secuencial (N archivos = N × latencia).
+        // BUG-FIX-2: leer Host/Port bajo _clientLock — _client puede nullarse entre el guard L227
+        // y el acceso aquí (async void, sin lock previo). Snapshot atómico evita NullReferenceException.
+        string verifyIp; int verifyPort;
+        await _clientLock.WaitAsync();
+        try
+        {
+            if (_client == null) { SetStatus(L["st.connectFirst"]); return; }
+            verifyIp = _client.Host; verifyPort = _client.Port;
+        }
+        finally { _clientLock.Release(); }
+
+        // Paralelo real: cada task crea su propio cliente temporal (LanClient es stateless)
+        var tasks = items.Select(item => VerifyLocalItemAsync(item, toleranceTicks, results, verifyIp, verifyPort, ct)).ToList();
         await Task.WhenAll(tasks);
 
         var sortedResults = results.OrderBy(r => r).ToList();
         var text = string.Join(Environment.NewLine, sortedResults);
         await ShowInfoDialog(L["verify.titleLR"], text.TrimEnd());
+        }
+        catch (Exception ex)
+        {
+            Log.Warn("ctx-menu", "local-verify-unexpected", new { error = ex.Message });
+            SetStatus(L[ex.Message]);
+        }
     }
 
     private async Task VerifyLocalItemAsync(FileEntry item, long toleranceTicks,
-        System.Collections.Concurrent.ConcurrentBag<string> results, CancellationToken ct)
+        System.Collections.Concurrent.ConcurrentBag<string> results,
+        string remoteIp, int remotePort, CancellationToken ct)
     {
         try
         {
@@ -225,10 +280,9 @@ public partial class MainWindow
 
             var fi = new FileInfo(item.FullPath);
 
-            await _clientLock.WaitAsync(ct);
-            LanClient.RemoteStat? stat;
-            try { stat = await _client!.GetStatAsync(remotePath, ct); }
-            finally { _clientLock.Release(); }
+            // BUG-FIX: cliente temporal por task — verdadero paralelismo sin lock
+            using var cli = MakeClient(remoteIp, remotePort);
+            var stat = await cli.GetStatAsync(remotePath, ct);
 
             if (stat is null || !stat.Exists)
             {
@@ -252,16 +306,11 @@ public partial class MainWindow
             await using var fs = File.OpenRead(item.FullPath);
             var localSha256 = Convert.ToHexString(await SHA256.HashDataAsync(fs, ct)).ToLowerInvariant();
 
-            await _clientLock.WaitAsync(ct);
             string? remoteHash;
             bool usingSha256;
-            try
-            {
-                remoteHash = await _client!.GetSha256Async(remotePath, ct);
-                usingSha256 = !string.IsNullOrWhiteSpace(remoteHash);
-                if (!usingSha256) remoteHash = await _client.GetSha1Async(remotePath, ct);
-            }
-            finally { _clientLock.Release(); }
+            remoteHash = await cli.GetSha256Async(remotePath, ct);
+            usingSha256 = !string.IsNullOrWhiteSpace(remoteHash);
+            if (!usingSha256) remoteHash = await cli.GetSha1Async(remotePath, ct);
 
             if (remoteHash == null) results.Add($"❓ {item.Name} — {L["verify.noRemoteHash"]}");
             else if (usingSha256 && string.Equals(localSha256, remoteHash, StringComparison.OrdinalIgnoreCase))
@@ -286,10 +335,18 @@ public partial class MainWindow
     {
         var items = GetSelectedItems("localList");
         if (items.Count == 0) return;
-        var text = string.Join(Environment.NewLine, items.Select(x => x.FullPath));
-        var clipboard = TopLevel.GetTopLevel(this)?.Clipboard;
-        if (clipboard != null) await clipboard.SetTextAsync(text);
-        SetStatus(L["st.pathsCopied"]);
+        try
+        {
+            var text = string.Join(Environment.NewLine, items.Select(x => x.FullPath));
+            var clipboard = TopLevel.GetTopLevel(this)?.Clipboard;
+            if (clipboard != null) await clipboard.SetTextAsync(text);
+            SetStatus(L["st.pathsCopied"]);
+        }
+        catch (Exception ex)
+        {
+            Log.Warn("ctx-menu", "copy-path-failed", new { error = ex.Message });
+            SetStatus(L[ex.Message]);
+        }
     }
 
     // ══ Context menus — Remote ════════════════════════════════════════════════════
@@ -328,11 +385,14 @@ public partial class MainWindow
         if (_client == null) { SetStatus(L["st.connectFirst"]); return; }
         var items = GetSelectedItems("remoteList");
         if (items.Count == 0) return;
-        await TransferAsync(items, isUpload: false);
+        try { await TransferAsync(items, isUpload: false); }
+        catch (Exception ex) { Log.Warn("ctx-menu", "remote-receive-unexpected", new { error = ex.Message }); }
     }
 
     private async void RemoteCtx_Rename(object? sender, RoutedEventArgs e)
     {
+        try
+        {
         if (_client == null) { SetStatus(L["st.connectFirst"]); return; }
         var items = GetSelectedItems("remoteList");
         if (items.Count != 1) return;
@@ -349,21 +409,38 @@ public partial class MainWindow
         try
         {
             await _clientLock.WaitAsync();
-            try { await _client!.RenameAsync(item.FullPath, newName); }
+            // C11-FIX: re-verificar _client bajo lock — el await del diálogo (L400) deja
+            // una ventana de tiempo en la que el usuario puede desconectarse y poner _client = null.
+            // Sin este check, _client! lanzaba NullReferenceException con mensaje genérico.
+            if (_client == null)
+            {
+                _clientLock.Release();
+                SetStatus(L["st.connectFirst"]);
+                return;
+            }
+            using var renameCts = new System.Threading.CancellationTokenSource(TimeSpan.FromSeconds(10));
+            try { await _client.RenameAsync(item.FullPath, newName, renameCts.Token); }
             finally { _clientLock.Release(); }
 
             SafeFileOps.Audit("remote-rename", item.FullPath, "ok", $"to:{newName}");
-            await RefreshRemoteAsync();
+            await RefreshRemoteDebounced(); // M3: debounce 150ms — post-rename no requiere feedback inmediato
         }
         catch (Exception ex)
         {
             SafeFileOps.Audit("remote-rename", item.FullPath, "error", ex.Message);
             SetStatus(L.Format("st.renameError", L[ex.Message]));
         }
+        }
+        catch (Exception ex)
+        {
+            Log.Warn("ctx-menu", "remote-rename-unexpected", new { error = ex.Message });
+        }
     }
 
     private async void RemoteCtx_CreateFolder(object? sender, RoutedEventArgs e)
     {
+        try
+        {
         if (_client == null) { SetStatus(L["st.connectFirst"]); return; }
 
         var dlg = new InputDialog(L["dlg.newfolder.titleRemote"], L["dlg.newfolder.prompt"], "");
@@ -382,15 +459,29 @@ public partial class MainWindow
         try
         {
             await _clientLock.WaitAsync();
-            try { await _client.CreateDirectoryAsync(remotePath); }
+            // C11-FIX: re-verificar _client bajo lock — el await del diálogo (L445) deja
+            // una ventana de tiempo en la que el usuario puede desconectarse y poner _client = null.
+            if (_client == null)
+            {
+                _clientLock.Release();
+                SetStatus(L["st.connectFirst"]);
+                return;
+            }
+            using var mkdirCts = new System.Threading.CancellationTokenSource(TimeSpan.FromSeconds(10));
+            try { await _client.CreateDirectoryAsync(remotePath, mkdirCts.Token); }
             finally { _clientLock.Release(); }
 
             SetStatus(L.Format("st.folderCreatedRemote", folderName));
-            await RefreshRemoteAsync();
+            await RefreshRemoteDebounced(); // M3: debounce 150ms — post-mkdir no requiere feedback inmediato
         }
         catch (Exception ex)
         {
             SetStatus(L.Format("st.createFolderError", L[ex.Message]));
+        }
+        }
+        catch (Exception ex)
+        {
+            Log.Warn("ctx-menu", "remote-create-folder-unexpected", new { error = ex.Message });
         }
     }
 
@@ -400,6 +491,8 @@ public partial class MainWindow
         var items = GetSelectedItems("remoteList");
         if (items.Count == 0) return;
 
+        try
+        {
         if (!await MessageBox(L.Format("del.confirmRemote", items.Count), L["del.confirmRemoteTitle"])) return;
 
         if (items.Count >= 20 || items.Any(x => x.IsDirectory))
@@ -420,7 +513,8 @@ public partial class MainWindow
         int __delTotal = items.Count, __delIdx = 0;
         int ok = 0, err = 0;
         var lines = new List<string>();
-
+        try
+        {
         foreach (var item in items)
         {
             __delIdx++;
@@ -429,7 +523,18 @@ public partial class MainWindow
             try
             {
                 await _clientLock.WaitAsync();
-                try { await _client!.DeleteAsync(item.FullPath); }
+                // C11-FIX: re-verificar _client bajo lock — los await de MessageBox (L493) y
+                // confirmDlg (L499) dejan ventana de tiempo para que el usuario se desconecte.
+                if (_client == null)
+                {
+                    _clientLock.Release();
+                    err++;
+                    lines.Add($"❌ {item.Name} — {L["st.connectFirst"]}");
+                    SafeFileOps.Audit("remote-delete", item.FullPath, "blocked", "disconnected-mid-delete");
+                    continue;
+                }
+                using var deleteCts = new System.Threading.CancellationTokenSource(TimeSpan.FromSeconds(10));
+                try { await _client.DeleteAsync(item.FullPath, deleteCts.Token); }
                 finally { _clientLock.Release(); }
 
                 ok++;
@@ -450,6 +555,23 @@ public partial class MainWindow
         await ShowInfoDialog(L["del.summaryRemoteTitle"], L.Format("del.summaryCountsRemote", ok, err) + Environment.NewLine + Environment.NewLine + string.Join(Environment.NewLine, lines));
         var __delRResult = L.Format("st.deleteRemoteResult", ok, err);
         if (err > 0) SetStatusAlert(__delRResult); else SetStatus(__delRResult);
+        }
+        finally
+        {
+            // BUG-FIX: garantizar que el ProgressWindow se cierra aunque ocurra una excepción
+            // inesperada después de Show(), evitando ventanas zombi que bloquean la UI.
+            if (_progressWin != null)
+            {
+                _progressWin.Finish(L["prog.cancelled"], isError: true);
+                _progressWin = null;
+            }
+        }
+        }
+        catch (Exception ex)
+        {
+            Log.Warn("ctx-menu", "remote-delete-unexpected", new { error = ex.Message });
+            SetStatus(L[ex.Message]);
+        }
     }
 
     private async void RemoteCtx_Verify(object? sender, RoutedEventArgs e)
@@ -458,31 +580,53 @@ public partial class MainWindow
         var items = GetSelectedItems("remoteList").Where(x => !x.IsDirectory).ToList();
         if (items.Count == 0) return;
 
+        try
+        {
         SetStatus(L["st.verifying"]);
         var results = new System.Collections.Concurrent.ConcurrentBag<string>();
-        var ct = CancellationToken.None;
+        // C12-FIX: timeout de 120s — sin CT, verify de archivos grandes podía bloquear indefinidamente.
+        using var verifyCts2 = new System.Threading.CancellationTokenSource(TimeSpan.FromSeconds(120));
+        var ct = verifyCts2.Token;
         var toleranceTicks = TimeSpan.FromSeconds(2).Ticks;
 
-        // Paralelo: max 4 simultáneos
-        var tasks = items.Select(item => VerifyRemoteItemAsync(item, toleranceTicks, results, ct)).ToList();
+        // BUG-FIX: capturar IP/puerto en el UI thread antes de lanzar tasks paralelas.
+        // BUG-FIX-2: leer Host/Port bajo _clientLock — _client puede nullarse entre el guard L538
+        // y el acceso aquí (async void, sin lock previo). Snapshot atómico evita NullReferenceException.
+        string verifyIp; int verifyPort;
+        await _clientLock.WaitAsync();
+        try
+        {
+            if (_client == null) { SetStatus(L["st.connectFirst"]); return; }
+            verifyIp = _client.Host; verifyPort = _client.Port;
+        }
+        finally { _clientLock.Release(); }
+
+        // Paralelo real: cada task crea su propio cliente temporal
+        var tasks = items.Select(item => VerifyRemoteItemAsync(item, toleranceTicks, results, verifyIp, verifyPort, ct)).ToList();
         await Task.WhenAll(tasks);
 
         var sortedResults = results.OrderBy(r => r).ToList();
         var text = string.Join(Environment.NewLine, sortedResults);
         await ShowInfoDialog(L["verify.titleRL"], text.TrimEnd());
+        }
+        catch (Exception ex)
+        {
+            Log.Warn("ctx-menu", "remote-verify-unexpected", new { error = ex.Message });
+            SetStatus(L[ex.Message]);
+        }
     }
 
     private async Task VerifyRemoteItemAsync(FileEntry item, long toleranceTicks,
-        System.Collections.Concurrent.ConcurrentBag<string> results, CancellationToken ct)
+        System.Collections.Concurrent.ConcurrentBag<string> results,
+        string remoteIp, int remotePort, CancellationToken ct)
     {
         try
         {
             var localPath = Path.Combine(_localPath, item.Name);
 
-            await _clientLock.WaitAsync(ct);
-            LanClient.RemoteStat? stat;
-            try { stat = await _client!.GetStatAsync(item.FullPath, ct); }
-            finally { _clientLock.Release(); }
+            // BUG-FIX: cliente temporal por task — verdadero paralelismo sin lock
+            using var cli = MakeClient(remoteIp, remotePort);
+            var stat = await cli.GetStatAsync(item.FullPath, ct);
 
             if (stat is null || !stat.Exists) { results.Add($"❓ {item.Name} — {L["verify.notAvailRemote"]}"); return; }
             if (stat.IsDirectory) { results.Add($"⚠️ {item.Name} — {L["verify.remoteIsDir"]}"); return; }
@@ -500,16 +644,11 @@ public partial class MainWindow
             await using var fs = File.OpenRead(localPath);
             var localSha256 = Convert.ToHexString(await SHA256.HashDataAsync(fs, ct)).ToLowerInvariant();
 
-            await _clientLock.WaitAsync(ct);
             string? remoteHash;
             bool usingSha256;
-            try
-            {
-                remoteHash = await _client!.GetSha256Async(item.FullPath, ct);
-                usingSha256 = !string.IsNullOrWhiteSpace(remoteHash);
-                if (!usingSha256) remoteHash = await _client.GetSha1Async(item.FullPath, ct);
-            }
-            finally { _clientLock.Release(); }
+            remoteHash = await cli.GetSha256Async(item.FullPath, ct);
+            usingSha256 = !string.IsNullOrWhiteSpace(remoteHash);
+            if (!usingSha256) remoteHash = await cli.GetSha1Async(item.FullPath, ct);
 
             if (remoteHash == null) results.Add($"❓ {item.Name} — {L["verify.noRemoteHash"]}");
             else if (usingSha256 && string.Equals(localSha256, remoteHash, StringComparison.OrdinalIgnoreCase))
@@ -534,10 +673,18 @@ public partial class MainWindow
     {
         var items = GetSelectedItems("remoteList");
         if (items.Count == 0) return;
-        var text = string.Join(Environment.NewLine, items.Select(x => x.FullPath));
-        var clipboard = TopLevel.GetTopLevel(this)?.Clipboard;
-        if (clipboard != null) await clipboard.SetTextAsync(text);
-        SetStatus(L["st.pathsCopied"]);
+        try
+        {
+            var text = string.Join(Environment.NewLine, items.Select(x => x.FullPath));
+            var clipboard = TopLevel.GetTopLevel(this)?.Clipboard;
+            if (clipboard != null) await clipboard.SetTextAsync(text);
+            SetStatus(L["st.pathsCopied"]);
+        }
+        catch (Exception ex)
+        {
+            Log.Warn("ctx-menu", "copy-path-failed", new { error = ex.Message });
+            SetStatus(L[ex.Message]);
+        }
     }
 
     // ══ Helpers UI ════════════════════════════════════════════════════════════════

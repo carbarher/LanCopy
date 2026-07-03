@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.Diagnostics;
@@ -47,13 +47,21 @@ public partial class MainWindow
     {
         _advancedMode = !_advancedMode;
         ApplyUiMode();
-        try { SaveSettings(this.FindControl<TextBox>("txtRemoteIp")?.Text ?? "", this.FindControl<TextBox>("txtRemotePort")?.Text ?? "8742"); } catch { }
+        try
+        {
+            SaveSettings(this.FindControl<TextBox>("txtRemoteIp")?.Text ?? "", this.FindControl<TextBox>("txtRemotePort")?.Text ?? "8742");
+        }
+        catch (Exception ex)
+        {
+            Log.Warn("ui", "save-settings-after-advanced-toggle-failed", new { error = ex.Message });
+        }
     }
 
     // Abre el asistente de bienvenida (tambien accesible con el boton de ayuda).
     private async void ShowWelcome_Click(object? sender, RoutedEventArgs e)
     {
-        try { await new WelcomeDialog().ShowDialog(this); } catch { }
+        try { await new WelcomeDialog().ShowDialog(this); }
+        catch (Exception ex) { Log.Warn("ui", "show-welcome-dialog-failed", new { error = ex.Message }); }
     }
 
     // Q3: helper extraído; Q1/B7: usar HealthInfo? en vez de dynamic? para type safety
@@ -62,15 +70,23 @@ public partial class MainWindow
         try
         {
             using var cli = MakeClient(remoteIp, remotePort);
-            return await cli.GetHealthAsync();
+            // C9-FIX: timeout de 5s — sin CT, GetHealthAsync dependía del KeepAlive TCP (~30s)
+            using var healthCts = new System.Threading.CancellationTokenSource(TimeSpan.FromSeconds(5));
+            return await cli.GetHealthAsync(healthCts.Token);
         }
-        catch { return null; }
+        catch (Exception ex)
+        {
+            Log.Debug("diag", "remote-health-probe-failed", new { remoteIp, remotePort, error = ex.Message });
+            return null;
+        }
     }
 
         // Diagnostico "no veo el otro PC": comprueba red y equipos detectados y lo
     // explica en lenguaje llano, sin tecnicismos.
     private async void Diagnose_Click(object? sender, RoutedEventArgs e)
     {
+        try
+        {
         var sb = new System.Text.StringBuilder();
         var ip = _server.LocalIp ?? "";
         var peers = _discovery?.GetPeers() ?? [];
@@ -117,7 +133,10 @@ public partial class MainWindow
             }
         }
 
-        try { await new InfoDialog(L["diag.title"], sb.ToString()).ShowDialog(this); } catch { }
+        try { await new InfoDialog(L["diag.title"], sb.ToString()).ShowDialog(this); }
+        catch (Exception ex) { Log.Warn("diag", "show-diagnose-dialog-failed", new { error = ex.Message }); }
+        }
+        catch (Exception ex) { Log.Warn("diag", "diagnose-unexpected", new { error = ex.Message }); }
     }
 
     private async void ExportDiagnostics_Click(object? sender, RoutedEventArgs e)
@@ -150,7 +169,10 @@ public partial class MainWindow
                     try
                     {
                         using var cli = MakeClient(remoteIp, remotePort);
-                        var health = await cli.GetHealthAsync();
+                        // C9-FIX: timeout de 5s — sin CT, GetHealthAsync dependía del KeepAlive TCP (~30s),
+                        // bloqueando la generación del informe de diagnóstico en el UI thread.
+                        using var diagHealthCts = new System.Threading.CancellationTokenSource(TimeSpan.FromSeconds(5));
+                        var health = await cli.GetHealthAsync(diagHealthCts.Token);
                         if (health != null)
                         {
                             summary.AppendLine($"Remote health for {remoteIp}:{remotePort}");
@@ -170,8 +192,18 @@ public partial class MainWindow
                 {
                     try
                     {
-                        if (File.Exists(srcPath))
+                        if (!File.Exists(srcPath)) return;
+                        try
+                        {
                             File.Copy(srcPath, Path.Combine(tempDir, targetName), overwrite: true);
+                        }
+                        catch (IOException)
+                        {
+                            var dest = Path.Combine(tempDir, targetName);
+                            using var fsIn = new FileStream(srcPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+                            using var fsOut = new FileStream(dest, FileMode.Create, FileAccess.Write, FileShare.ReadWrite);
+                            fsIn.CopyTo(fsOut);
+                        }
                     }
                     catch (Exception ex) { Log.Warn("diag", "copy-file-failed", new { srcPath, error = ex.Message }); }
                 }
@@ -208,7 +240,11 @@ public partial class MainWindow
                             System.Text.RegularExpressions.RegexOptions.IgnoreCase);
                         File.WriteAllText(Path.Combine(tempDir, destName), redacted);
                     }
-                    catch { CopyIfExists(src, destName); } // fallback: copiar sin redactar
+                    catch (Exception ex)
+                    {
+                        Log.Warn("diag", "queue-redact-failed-fallback-copy", new { src, error = ex.Message });
+                        CopyIfExists(src, destName);
+                    } // fallback: copiar sin redactar
                 }
                 CopyRedactingPaths(QueuePath, "queue.json");
                 CopyIfExists(Log.CurrentLogFile, Path.GetFileName(Log.CurrentLogFile));
@@ -233,7 +269,8 @@ public partial class MainWindow
                             }
             finally
             {
-                try { Directory.Delete(tempDir, recursive: true); } catch { }
+                try { Directory.Delete(tempDir, recursive: true); }
+                catch (Exception ex) { Log.Debug("diag", "cleanup-temp-dir-failed", new { tempDir, error = ex.Message }); }
             }
         }
         catch (Exception ex)
@@ -313,7 +350,9 @@ public partial class MainWindow
         try
         {
             using var cli = MakeClient(ip, port);
-            await cli.SendTextAsync(text);
+            // C9-FIX: timeout de 5s — sin CT, SendTextAsync dependía del KeepAlive TCP (~30s)
+            using var sendTextCts = new System.Threading.CancellationTokenSource(TimeSpan.FromSeconds(5));
+            await cli.SendTextAsync(text, sendTextCts.Token);
             if (box != null) box.Text = "";
             SetStatus(L["st.textSent"]);
         }
@@ -323,6 +362,7 @@ public partial class MainWindow
     // idea-clipboard: texto recibido -> copiar al portapapeles y notificar.
     private void OnTextReceived(string ip, string text)
     {
+        _lastClipboardText = text; // evitar bucle de reenvío
         Dispatcher.UIThread.Post(async () =>
         {
             try
@@ -330,10 +370,21 @@ public partial class MainWindow
                 var top = TopLevel.GetTopLevel(this);
                 if (top?.Clipboard != null) await top.Clipboard.SetTextAsync(text);
             }
-            catch { }
+            catch (Exception ex) { Log.Debug("clipboard", "set-received-text-failed", new { ip, error = ex.Message }); }
             var preview = text.Length > 60 ? text[..60] + "\u2026" : text;
             SetStatus(L.Format("st.textReceived", ip, preview));
-                    });
+
+            // Si es un enlace HTTP/S y auto-open está activo, lo abrimos
+            if (_autoOpenLinks && (text.StartsWith("http://", StringComparison.OrdinalIgnoreCase) || text.StartsWith("https://", StringComparison.OrdinalIgnoreCase)))
+            {
+                try
+                {
+                    var ps = new ProcessStartInfo { FileName = text, UseShellExecute = true };
+                    Process.Start(ps)?.Dispose();
+                }
+                catch (Exception ex) { Log.Warn("clipboard", "auto-open-link-failed", new { url = text, error = ex.Message }); }
+            }
+        });
     }
 
     // F7: Broadcast PARALELO a todos los peers descubiertos
@@ -346,6 +397,8 @@ public partial class MainWindow
         SetStatus(L.Format("st.broadcastStarting", peers.Count));
         int okPeers = 0, failPeers = 0;
         var lk = new object();
+        try
+        {
         await Parallel.ForEachAsync(peers,
             new ParallelOptions { MaxDegreeOfParallelism = Math.Min(peers.Count, 4) },
             async (peer, ct) =>
@@ -361,7 +414,10 @@ public partial class MainWindow
                 catch (Exception ex) { lock (lk) { failPeers++; } Log.Warn("broadcast", "peer-failed", new { ip = peer.Ip, error = ex.Message }); }
             });
         SetStatus(L.Format("st.broadcastDone", okPeers, failPeers));
-            }
+        }
+        catch (OperationCanceledException) { SetStatus(L.Format("st.broadcastDone", okPeers, failPeers)); }
+        catch (Exception ex) { Log.Warn("broadcast", "broadcast-click-unexpected", new { error = ex.Message }); }
+    }
 
     // F7: Enviar a peers seleccionados por el usuario
     private async void SendToSelectedPeers_Click(object? sender, RoutedEventArgs e)
@@ -371,6 +427,8 @@ public partial class MainWindow
         var allPeers = _discovery?.GetPeers() ?? [];
         if (allPeers.Count == 0) { SetStatus(L["st.noPeers"]); return; }
 
+        try
+        {
         var checkBoxes = allPeers.Select(p => new CheckBox
         {
             Content = $"{p.Name}  ({p.Ip}:{p.Port})",
@@ -421,10 +479,20 @@ public partial class MainWindow
                         await cli.UploadAsync(it.FullPath, Path.GetFileName(it.FullPath), null, ct);
                     lock (lk2) { ok2++; }
                 }
-                catch { lock (lk2) { fail2++; } }
+                catch (Exception ex)
+                {
+                    lock (lk2) { fail2++; }
+                    Log.Warn("broadcast", "selected-peer-failed", new { ip = peer.Ip, peer.Port, error = ex.Message });
+                }
             });
         SetStatus(L.Format("st.broadcastDone", ok2, fail2));
-            }
+        }
+        catch (Exception ex)
+        {
+            Log.Warn("broadcast", "send-to-selected-peers-unexpected", new { error = ex.Message });
+            SetStatus(L[ex.Message]);
+        }
+    }
 
     // idea-qr: mostrar un QR con el enlace de emparejamiento (ip+puerto+pin).
     private async void ShowQr_Click(object? sender, RoutedEventArgs e)
@@ -442,7 +510,11 @@ public partial class MainWindow
                 using var ms = new MemoryStream(png);
                 bmp = new Bitmap(ms);
             }
-            catch { bmp = null; }
+            catch (Exception ex)
+            {
+                Log.Debug("qr", "generate-qr-image-failed", new { error = ex.Message });
+                bmp = null;
+            }
 
             var panel = new StackPanel { Margin = new Thickness(16), Spacing = 10, HorizontalAlignment = HorizontalAlignment.Center };
             if (bmp != null) panel.Children.Add(new Image { Source = bmp, Width = 280, Height = 280 });
@@ -507,13 +579,17 @@ public partial class MainWindow
             var show = new NativeMenuItem(L["tray.show"]);
             show.Click += (_, _) => ShowFromTray();
             var exit = new NativeMenuItem(L["tray.exit"]);
-            exit.Click += (_, _) => Close();
+            exit.Click += (_, _) => { Interlocked.Exchange(ref _forceClose, 1); Close(); };
             menu.Items.Add(show);
             menu.Items.Add(exit);
             _tray = new TrayIcon { Icon = icon, ToolTipText = "LanCopy", Menu = menu, IsVisible = true };
             _tray.Clicked += (_, _) => ShowFromTray();
         }
-        catch { _tray = null; }
+        catch (Exception ex)
+        {
+            Log.Warn("tray", "setup-tray-failed", new { error = ex.Message });
+            _tray = null;
+        }
     }
 
     private void ShowFromTray()
@@ -523,8 +599,86 @@ public partial class MainWindow
         Activate();
     }
 
+    /// <summary>
+    /// Muestra notificación cuando una transferencia completa con la ventana oculta/minimizada.
+    /// </summary>
+    private void NotifyTransferComplete(bool isUpload, int fileCount, long bytes, TimeSpan elapsed)
+    {
+        // Solo notificar si la ventana no es visible (minimizada a tray)
+        if (IsVisible && WindowState != WindowState.Minimized) return;
 
-    // â”€â”€ Paralelismo configurable â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+        try
+        {
+            var direction = isUpload ? L["notify.sent"] : L["notify.received"];
+            var sizeStr = FileEntry.FormatSize(bytes);
+            var timeStr = elapsed.TotalSeconds < 1 ? "<1s" : $"{elapsed.TotalSeconds:F0}s";
+            var title = L.Format("notify.transferDone", direction);
+            var body = fileCount == 1
+                ? L.Format("notify.transferBody1", sizeStr, timeStr)
+                : L.Format("notify.transferBodyN", fileCount, sizeStr, timeStr);
+
+            Dispatcher.UIThread.Post(() =>
+            {
+                _notifManager?.Show(new Avalonia.Controls.Notifications.Notification(
+                    title, body,
+                    Avalonia.Controls.Notifications.NotificationType.Success,
+                    TimeSpan.FromSeconds(8)));
+            });
+
+            // En Windows, intentar mostrar toast nativo del sistema para que aparezca
+            // aunque la ventana esté oculta (el NotificationManager de Avalonia necesita ventana visible)
+            if (OperatingSystem.IsWindows())
+            {
+                try
+                {
+                    var escaped = body.Replace("\"", "`\"");
+                    var ps = new System.Diagnostics.ProcessStartInfo
+                    {
+                        FileName = "powershell",
+                        Arguments = $"-NoProfile -Command \"[Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType = WindowsRuntime] > $null; $xml = [Windows.UI.Notifications.ToastNotificationManager]::GetTemplateContent(1); $texts = $xml.GetElementsByTagName('text'); $texts[0].AppendChild($xml.CreateTextNode('{title.Replace("'", "''")}')) > $null; $texts[1].AppendChild($xml.CreateTextNode('{escaped.Replace("'", "''")}')) > $null; [Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier('LanCopy').Show([Windows.UI.Notifications.ToastNotification]::new($xml))\"",
+                        CreateNoWindow = true,
+                        UseShellExecute = false
+                    };
+                    System.Diagnostics.Process.Start(ps)?.Dispose();
+                }
+                catch (Exception ex)
+                {
+                    Log.Debug("notify", "native-toast-failed", new { error = ex.Message });
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            Log.Debug("notify", "transfer-notification-failed", new { error = ex.Message });
+        }
+    }
+
+
+    /// <summary>Sonido del sistema al completar transferencia.</summary>
+    private static void PlayTransferSound()
+    {
+        try
+        {
+            if (OperatingSystem.IsWindows())
+            {
+                // Reproduce el sonido de notificación de Windows sin dependencias extra
+                var ps = new System.Diagnostics.ProcessStartInfo
+                {
+                    FileName = "powershell",
+                    Arguments = "-NoProfile -Command \"[System.Media.SystemSounds]::Asterisk.Play()\"",
+                    CreateNoWindow = true,
+                    UseShellExecute = false
+                };
+                System.Diagnostics.Process.Start(ps)?.Dispose();
+            }
+        }
+        catch (Exception ex)
+        {
+            Log.Debug("ui", "play-sound-failed", new { error = ex.Message });
+        }
+    }
+
+    // ── Paralelismo configurable ────────────────────────────────────────â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     private void Parallel_Changed(object? sender, RangeBaseValueChangedEventArgs e)
     {
         var n = Math.Max(1, Math.Min(8, (int)Math.Round(e.NewValue)));
@@ -563,62 +717,261 @@ public partial class MainWindow
     {
         try
         {
-            var today = await AuditService.ReadDay();
-            var yesterday = await AuditService.ReadDay(DateTime.UtcNow.AddDays(-1).ToString("yyyyMMdd"));
-            var records = today.Concat(yesterday).OrderByDescending(r => r.Timestamp).Take(200).ToList();
-
-            var sb = new System.Text.StringBuilder();
-            sb.AppendLine(L.Format("audit.header", records.Count));
-            sb.AppendLine();
-
-            if (records.Count == 0)
+            // Cargar ultimos 7 dias de auditoría
+            var allRecords = new List<AuditService.AuditRecord>();
+            for (int i = 0; i < 7; i++)
             {
-                sb.AppendLine(L["audit.empty"]);
+                var day = DateTime.UtcNow.AddDays(-i).ToString("yyyyMMdd");
+                var records = await AuditService.ReadDay(day);
+                allRecords.AddRange(records);
             }
-            else
+            allRecords = allRecords.OrderByDescending(r => r.Timestamp).ToList();
+
+            // Estado del filtro
+            var filteredRecords = allRecords.ToList();
+            string currentOpFilter = "all";
+            int currentDayFilter = 7; // 1=today, 2=2days, 7=week
+
+            var bg = (IBrush?)Application.Current?.Resources["WindowBg"] ?? new SolidColorBrush(Color.Parse("#1E1E1E"));
+            var headerBg = new SolidColorBrush(Color.Parse("#2A2A2E"));
+            var borderBrush = new SolidColorBrush(Color.Parse("#3A3A3E"));
+            var textFg = new SolidColorBrush(Color.Parse("#CCCCCC"));
+            var mutedFg = new SolidColorBrush(Color.Parse("#888888"));
+            var accentFg = new SolidColorBrush(Color.Parse("#4FC3F7"));
+            var successFg = new SolidColorBrush(Color.Parse("#66BB6A"));
+            var errorFg = new SolidColorBrush(Color.Parse("#EF5350"));
+
+            // Panel de contenido (se reconstruye al filtrar)
+            var contentStack = new StackPanel { Spacing = 1 };
+
+            void RebuildContent()
             {
+                var src = allRecords.AsEnumerable();
+                if (currentDayFilter < 7)
+                {
+                    var cutoff = DateTime.UtcNow.AddDays(-currentDayFilter);
+                    src = src.Where(r => DateTime.TryParse(r.Timestamp, null, System.Globalization.DateTimeStyles.RoundtripKind, out var dt) && dt >= cutoff);
+                }
+                if (currentOpFilter != "all")
+                    src = src.Where(r => r.Operation.Equals(currentOpFilter, StringComparison.OrdinalIgnoreCase));
+                filteredRecords = src.ToList();
+
+                contentStack.Children.Clear();
                 var dateFmt = L["audit.dateFormat"];
-                foreach (var r in records)
+                // O10: brushes pre-calculados fuera del loop — antes se creaban hasta 1000+ SolidColorBrush
+                // (500 filas × 2-3 brushes) por rebuild al usar filtros. Color.Parse es string parsing = costoso.
+                var rowBgEven  = new SolidColorBrush(Color.Parse("#252528"));
+                var rowBgOdd   = new SolidColorBrush(Color.Parse("#1E1E22"));
+                var syncFg     = new SolidColorBrush(Color.Parse("#FFA726"));
+                int rowIndex = 0;
+                foreach (var r in filteredRecords.Take(500))
                 {
                     var ts = DateTime.TryParse(r.Timestamp, null, System.Globalization.DateTimeStyles.RoundtripKind, out var dtParsed)
                         ? dtParsed.ToLocalTime().ToString(dateFmt) : r.Timestamp;
-                    var icon = r.Success ? "\u2705" : "\u274C";
-                    var op = r.Operation.ToUpper();
-                    var size = r.Bytes > 0 ? $" ({FileEntry.FormatSize(r.Bytes)})" : "";
-                    var dur = r.DurationMs > 0 ? $" {r.DurationMs}ms" : "";
-                    var err = r.Error != null ? $" \u26A0 {r.Error}" : "";
-                    sb.AppendLine($"{icon} {ts}  [{op}]  {r.Ip}  {r.FileName}{size}{dur}{err}");
+                    // O10: 0 allocs por fila (brushes reutilizados)
+                    var rowBg = rowIndex % 2 == 0 ? rowBgEven : rowBgOdd;
+
+                    var row = new Grid
+                    {
+                        ColumnDefinitions = ColumnDefinitions.Parse("24,140,70,60,*,80,60,80"),
+                        Background = rowBg,
+                        Margin = new Thickness(0, 0, 0, 1)
+                    };
+
+                    // Icono status
+                    row.Children.Add(new TextBlock { Text = r.Success ? "\u2705" : "\u274C", FontSize = 11, VerticalAlignment = VerticalAlignment.Center, HorizontalAlignment = HorizontalAlignment.Center, [Grid.ColumnProperty] = 0 });
+                    // Timestamp
+                    row.Children.Add(new TextBlock { Text = ts, FontSize = 11, Foreground = mutedFg, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(4, 3), [Grid.ColumnProperty] = 1 });
+                    // Operation
+                    // O10: syncFg reutilizado (pre-calculado fuera del loop)
+                    var opColor = r.Operation switch { "send" => accentFg, "receive" => successFg, "sync" => syncFg, _ => textFg };
+                    row.Children.Add(new TextBlock { Text = r.Operation.ToUpper(), FontSize = 11, FontWeight = FontWeight.SemiBold, Foreground = opColor, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(4, 3), [Grid.ColumnProperty] = 2 });
+                    // IP
+                    row.Children.Add(new TextBlock { Text = r.Ip, FontSize = 10, Foreground = mutedFg, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(4, 3), TextTrimming = TextTrimming.CharacterEllipsis, [Grid.ColumnProperty] = 3 });
+                    // Filename
+                    var fnBlock = new TextBlock { Text = r.FileName, FontSize = 11, Foreground = textFg, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(4, 3), TextTrimming = TextTrimming.CharacterEllipsis, [Grid.ColumnProperty] = 4 };
+                    ToolTip.SetTip(fnBlock, r.FileName);
+                    row.Children.Add(fnBlock);
+                    // Size
+                    row.Children.Add(new TextBlock { Text = r.Bytes > 0 ? FileEntry.FormatSize(r.Bytes) : "-", FontSize = 11, Foreground = textFg, VerticalAlignment = VerticalAlignment.Center, HorizontalAlignment = HorizontalAlignment.Right, Margin = new Thickness(4, 3), [Grid.ColumnProperty] = 5 });
+                    // Duration
+                    var durText = r.DurationMs > 0 ? (r.DurationMs > 1000 ? $"{r.DurationMs / 1000.0:F1}s" : $"{r.DurationMs}ms") : "-";
+                    row.Children.Add(new TextBlock { Text = durText, FontSize = 11, Foreground = mutedFg, VerticalAlignment = VerticalAlignment.Center, HorizontalAlignment = HorizontalAlignment.Right, Margin = new Thickness(4, 3), [Grid.ColumnProperty] = 6 });
+
+                    // Error tooltip
+                    if (r.Error != null && !r.Success) ToolTip.SetTip(row, $"\u26A0 {r.Error}");
+
+                    // Botón Restaurar para DELETE local exitosos con info de papelera
+                    if (r.Success && string.Equals(r.Operation, "delete", StringComparison.OrdinalIgnoreCase) && !string.IsNullOrEmpty(r.Error) && r.Error.StartsWith("trash:"))
+                    {
+                        var trashPath = r.Error.Substring(6); // longitud de "trash:"
+                        if (File.Exists(trashPath) || Directory.Exists(trashPath))
+                        {
+                            var btnRestore = new Button
+                            {
+                                Content = "🔄",
+                                Padding = new Thickness(6, 2),
+                                FontSize = 10,
+                                Margin = new Thickness(4, 0),
+                                [Grid.ColumnProperty] = 7
+                            };
+                            ToolTip.SetTip(btnRestore, "Restaurar archivo de la papelera");
+                            btnRestore.Click += async (_, _) =>
+                            {
+                                try
+                                {
+                                    if (File.Exists(r.FileName) || Directory.Exists(r.FileName))
+                                    {
+                                        if (!await MessageBox($"El archivo o carpeta '{Path.GetFileName(r.FileName)}' ya existe en el destino. ¿Deseas sobrescribirlo?", "Destino existente"))
+                                        {
+                                            return;
+                                        }
+                                        if (Directory.Exists(r.FileName)) Directory.Delete(r.FileName, true);
+                                        else File.Delete(r.FileName);
+                                    }
+
+                                    if (Directory.Exists(trashPath))
+                                    {
+                                        var targetDir = Path.GetDirectoryName(r.FileName);
+                                        if (!string.IsNullOrEmpty(targetDir)) Directory.CreateDirectory(targetDir);
+                                        Directory.Move(trashPath, r.FileName);
+                                    }
+                                    else if (File.Exists(trashPath))
+                                    {
+                                        var targetDir = Path.GetDirectoryName(r.FileName);
+                                        if (!string.IsNullOrEmpty(targetDir)) Directory.CreateDirectory(targetDir);
+                                        File.Move(trashPath, r.FileName, overwrite: true); // TOCTOU-fix: atomic overwrite
+                                    }
+                                    btnRestore.IsEnabled = false;
+                                    btnRestore.Content = "OK";
+                                    SetStatus($"Archivo restaurado: {Path.GetFileName(r.FileName)}");
+                                    _ = RefreshLocalAsync();
+                                }
+                                catch (Exception ex)
+                                {
+                                    await MessageBox($"Error al restaurar: {ex.Message}", "Restauración fallida");
+                                }
+                            };
+                            row.Children.Add(btnRestore);
+                        }
+                    }
+
+                    contentStack.Children.Add(row);
+                    rowIndex++;
                 }
+
+                if (filteredRecords.Count == 0)
+                    contentStack.Children.Add(new TextBlock { Text = L["audit.empty"], Foreground = mutedFg, FontSize = 13, Margin = new Thickness(16, 32), HorizontalAlignment = HorizontalAlignment.Center });
             }
+
+            // Botones de filtro por dia
+            var btnToday = new Button { Content = L["audit.today"], Padding = new Thickness(12, 4), FontSize = 11, Margin = new Thickness(0, 0, 4, 0) };
+            var btn2Days = new Button { Content = L["audit.twoDays"], Padding = new Thickness(12, 4), FontSize = 11, Margin = new Thickness(0, 0, 4, 0) };
+            var btnWeek = new Button { Content = L["audit.week"], Padding = new Thickness(12, 4), FontSize = 11, Margin = new Thickness(0, 0, 4, 0) };
+
+            btnToday.Click += (_, _) => { currentDayFilter = 1; RebuildContent(); };
+            btn2Days.Click += (_, _) => { currentDayFilter = 2; RebuildContent(); };
+            btnWeek.Click += (_, _) => { currentDayFilter = 7; RebuildContent(); };
+
+            // Filtro por operacion
+            var cmbOp = new ComboBox
+            {
+                ItemsSource = new[] { L["audit.allOps"], "SEND", "RECEIVE", "TEXT", "SYNC" },
+                SelectedIndex = 0,
+                FontSize = 11,
+                MinWidth = 100,
+                Margin = new Thickness(8, 0, 0, 0)
+            };
+            cmbOp.SelectionChanged += (_, _) =>
+            {
+                var opNames = new[] { "all", "send", "receive", "text", "sync" };
+                currentOpFilter = cmbOp.SelectedIndex >= 0 && cmbOp.SelectedIndex < opNames.Length ? opNames[cmbOp.SelectedIndex] : "all";
+                RebuildContent();
+            };
+
+            // Boton exportar CSV
+            var btnExport = new Button { Content = "\uD83D\uDCBE CSV", Padding = new Thickness(12, 4), FontSize = 11, Margin = new Thickness(8, 0, 0, 0) };
+            btnExport.Click += async (_, _) =>
+            {
+                try
+                {
+                    var csv = new System.Text.StringBuilder();
+                    csv.AppendLine("Timestamp,Operation,IP,FileName,Bytes,DurationMs,Success,Error");
+                    foreach (var r in filteredRecords)
+                    {
+                        var ts = r.Timestamp ?? "";
+                        var op = r.Operation ?? "";
+                        var ip = r.Ip ?? "";
+                        var file = (r.FileName ?? "").Replace("\"", "\"\"");
+                        var err = (r.Error ?? "").Replace("\"", "\"\"");
+                        csv.AppendLine($"\"{ts}\",\"{op}\",\"{ip}\",\"{file}\",{r.Bytes},{r.DurationMs},{r.Success},\"{err}\"");
+                    }
+                    var path = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Desktop), $"LanCopy_audit_{DateTime.Now:yyyyMMdd_HHmm}.csv");
+                    await File.WriteAllTextAsync(path, csv.ToString());
+                    SetStatus(L.Format("audit.exported", path));
+                }
+                catch (Exception ex) { SetStatus(L.Format("audit.exportFailed", ex.Message)); }
+            };
+
+            // Contador de registros
+            var lblCount = new TextBlock { Text = L.Format("audit.header", allRecords.Count), Foreground = mutedFg, FontSize = 11, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(8, 0) };
+
+            // Toolbar
+            var toolbar = new StackPanel
+            {
+                Orientation = Orientation.Horizontal,
+                Margin = new Thickness(8, 8),
+                Children = { btnToday, btn2Days, btnWeek, cmbOp, btnExport, lblCount }
+            };
+
+            // Header de columnas
+            var header = new Grid
+            {
+                ColumnDefinitions = ColumnDefinitions.Parse("24,140,70,60,*,80,60"),
+                Background = headerBg,
+                Margin = new Thickness(0, 0, 0, 2)
+            };
+            var colNames = new[] { "", L["audit.colTime"], L["audit.colOp"], "IP", L["audit.colFile"], L["audit.colSize"], L["audit.colDur"] };
+            for (int c = 0; c < colNames.Length; c++)
+            {
+                header.Children.Add(new TextBlock
+                {
+                    Text = colNames[c], FontSize = 11, FontWeight = FontWeight.Bold,
+                    Foreground = accentFg, VerticalAlignment = VerticalAlignment.Center,
+                    Margin = new Thickness(4, 6), [Grid.ColumnProperty] = c,
+                    HorizontalAlignment = c >= 5 ? HorizontalAlignment.Right : HorizontalAlignment.Left
+                });
+            }
+
+            RebuildContent();
 
             var scrollContent = new ScrollViewer
             {
-                HorizontalScrollBarVisibility = Avalonia.Controls.Primitives.ScrollBarVisibility.Auto,
-                VerticalScrollBarVisibility   = Avalonia.Controls.Primitives.ScrollBarVisibility.Auto,
-                Content = new TextBlock
-                {
-                    Text = sb.ToString(),
-                    FontFamily = new Avalonia.Media.FontFamily("Consolas,Courier New,monospace"),
-                    FontSize = 12,
-                    Margin = new Avalonia.Thickness(16),
-                    Foreground = new Avalonia.Media.SolidColorBrush(Avalonia.Media.Color.Parse("#CCCCCC")),
-                    TextWrapping = Avalonia.Media.TextWrapping.NoWrap
-                }
+                HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
+                VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+                Content = contentStack
             };
+
+            var mainPanel = new DockPanel();
+            DockPanel.SetDock(toolbar, Dock.Top);
+            DockPanel.SetDock(header, Dock.Top);
+            mainPanel.Children.Add(toolbar);
+            mainPanel.Children.Add(header);
+            mainPanel.Children.Add(scrollContent);
 
             var dlg = new Window
             {
                 Title = L["audit.title"],
-                Width = 720, Height = 480,
-                Content = scrollContent,
+                Width = 820, Height = 520,
+                Content = mainPanel,
                 WindowStartupLocation = WindowStartupLocation.CenterOwner,
-                Background = (Avalonia.Media.IBrush?)Application.Current?.Resources["WindowBg"] ?? new Avalonia.Media.SolidColorBrush(Avalonia.Media.Color.Parse("#1E1E1E"))
+                Background = bg
             };
             await dlg.ShowDialog(this);
         }
         catch (Exception ex)
         {
-            SetStatus(L.Format("audit.errOpen", ex.Message)); // U1: era hardcodeado en español
+            SetStatus(L.Format("audit.errOpen", ex.Message));
         }
     }
 
@@ -665,7 +1018,10 @@ public partial class MainWindow
                 bool sameMtime = stat != null && Math.Abs(stat.LastWriteUtcTicks - localInfo.LastWriteTimeUtc.Ticks) < TimeSpan.TicksPerSecond;
                 if (sameSize && sameMtime) { skipped++; continue; }
             }
-            catch { /* si GetStat falla, asumir diferente ? incluir */ }
+            catch (Exception ex)
+            {
+                Log.Debug("sync", "stat-probe-failed-assume-changed", new { file = item.FullPath, error = ex.Message });
+            }
             toSend.Add(item);
         }
 
@@ -700,7 +1056,7 @@ public partial class MainWindow
             if (top?.Clipboard != null) await top.Clipboard.SetTextAsync(text);
             SetStatus(L["st.copied"]);
         }
-        catch { }
+        catch (Exception ex) { Log.Debug("clipboard", "copy-received-text-from-list-failed", new { error = ex.Message }); }
     }
 
     // F4: Enviar contenido del portapapeles al peer conectado
@@ -759,11 +1115,17 @@ public partial class MainWindow
         SetStatus(L.Format("st.broadcastStarting", peers.Count));
         int okPeers = 0, failPeers = 0;
         var lk = new object();
-        // U1: enlazar el CTS del broadcast al _uploadCts (botón Cancel del usuario) + timeout global de 2min por peer
+        // U1: enlazar el CTS del broadcast al _uploadCts (botón Cancel) + timeout 2min por peer
+        // BUG-FIX-B1: _uploadCts puede estar disposed si no hay upload activo - usar Token con guard
         using var broadcastTimeout = new System.Threading.CancellationTokenSource(TimeSpan.FromMinutes(2));
+        System.Threading.CancellationToken uploadToken;
+        try { uploadToken = _uploadCts.Token; }
+        catch (ObjectDisposedException) { uploadToken = System.Threading.CancellationToken.None; }
         using var cts = System.Threading.CancellationTokenSource.CreateLinkedTokenSource(
-            _uploadCts.Token, broadcastTimeout.Token);
+            uploadToken, broadcastTimeout.Token);
 
+        try
+        {
         await System.Threading.Tasks.Parallel.ForEachAsync(peers,
             new System.Threading.Tasks.ParallelOptions { MaxDegreeOfParallelism = Math.Min(peers.Count, 4), CancellationToken = cts.Token },
             async (peer, ct) =>
@@ -776,13 +1138,281 @@ public partial class MainWindow
                     lock (lk) { okPeers++; }
                     SetStatus(L.Format("st.broadcastPeerOk", peer.Name));
                 }
-                catch
+                catch (Exception bEx)
                 {
                     lock (lk) { failPeers++; }
+                    Log.Warn("broadcast", "peer-fail", new { peer = peer.Name, error = bEx.Message });
                     SetStatus(L.Format("st.broadcastPeerFail", peer.Name));
                 }
             });
-
         SetStatus(L.Format("st.broadcastDone", okPeers, failPeers));
+        }
+        catch (OperationCanceledException) { SetStatus(L.Format("st.broadcastDone", okPeers, failPeers)); }
+        catch (Exception ex) { Log.Warn("broadcast", "broadcast-detailed-unexpected", new { error = ex.Message }); }
+    }
+
+    private void StartAutoClipboardTimer()
+    {
+        _autoClipboardTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(2) };
+        _autoClipboardTimer.Tick += async (_, _) =>
+        {
+            if (!_autoClipboard) return;
+            _autoClipboardTimer.Stop();
+            try
+            {
+                var top = TopLevel.GetTopLevel(this);
+                if (top?.Clipboard == null) return;
+                var text = await top.Clipboard.TryGetTextAsync();
+                if (string.IsNullOrEmpty(text) || text == _lastClipboardText) return;
+
+                _lastClipboardText = text;
+
+                var client = _client;
+                if (client != null && await IsConnectedAsync())
+                {
+                    try
+                    {
+                        // C9-FIX: timeout de 5s
+                        // O6: Direct await para evitar llamadas concurrentes en la misma conexión no thread-safe
+                        using var clipSendCts = new System.Threading.CancellationTokenSource(TimeSpan.FromSeconds(5));
+                        await client.SendTextAsync(text, clipSendCts.Token);
+                        Log.Debug("clipboard", "auto-synced", new { length = text.Length });
+                    }
+                    catch (Exception ex)
+                    {
+                        Log.Debug("clipboard", "auto-sync-failed", new { error = ex.Message });
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Log.Debug("clipboard", "poll-failed", new { error = ex.Message });
+            }
+            finally
+            {
+                if (_autoClipboard) _autoClipboardTimer.Start();
+            }
+        };
+        _autoClipboardTimer.Start();
+    }
+
+    private void LocalFavorites_Click(object? sender, RoutedEventArgs e)
+    {
+        var btn = sender as Button;
+        if (btn == null) return;
+
+        var menu = new ContextMenu();
+        var itemDocs = new MenuItem { Header = "📁 Mis Documentos" };
+        itemDocs.Click += (_, _) => { NavigateLocal(Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments)); };
+        var itemDownloads = new MenuItem { Header = "📥 Descargas" };
+        
+        // Carpeta Descargas por defecto
+        var downloadsPath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "Downloads");
+        itemDownloads.Click += (_, _) => { NavigateLocal(downloadsPath); };
+        
+        var itemDesktop = new MenuItem { Header = "🖥️ Escritorio" };
+        itemDesktop.Click += (_, _) => { NavigateLocal(Environment.GetFolderPath(Environment.SpecialFolder.Desktop)); };
+
+        menu.ItemsSource = new List<MenuItem> { itemDocs, itemDownloads, itemDesktop };
+        menu.Open(btn);
+    }
+
+    private void NavigateLocal(string path)
+    {
+        if (Directory.Exists(path))
+        {
+            _localPath = path;
+            _ = RefreshLocalAsync();
+            var ip = this.FindControl<TextBox>("txtRemoteIp")?.Text?.Trim() ?? "";
+            var port = this.FindControl<TextBox>("txtRemotePort")?.Text?.Trim() ?? "8742";
+            SaveSettings(ip, port);
+        }
+    }
+
+    private async Task NavigateRemoteAsync(string path)
+    {
+        if (_client == null) { SetStatus(L["st.notConnected"]); return; }
+        _remotePath = path;
+        try { await RefreshRemoteAsync(); }
+        catch (Exception ex) { Log.Warn("browser", "remote-favorites-nav-failed", new { error = ex.Message }); }
+    }
+
+    private void RemoteFavorites_Click(object? sender, RoutedEventArgs e)
+    {
+        var btn = sender as Button;
+        if (btn == null) return;
+
+        var menu = new ContextMenu();
+        var itemHome = new MenuItem { Header = "🏠 Raíz Compartida" };
+        itemHome.Click += (_, _) => { _ = NavigateRemoteAsync(""); };
+        
+        var itemDocs = new MenuItem { Header = "📁 Mis Documentos" };
+        itemDocs.Click += (_, _) => { _ = NavigateRemoteAsync("Documents"); };
+        
+        var itemDownloads = new MenuItem { Header = "📥 Descargas" };
+        itemDownloads.Click += (_, _) => { _ = NavigateRemoteAsync("Downloads"); };
+        
+        var itemDesktop = new MenuItem { Header = "🖥️ Escritorio" };
+        itemDesktop.Click += (_, _) => { _ = NavigateRemoteAsync("Desktop"); };
+
+        menu.ItemsSource = new List<MenuItem> { itemHome, itemDocs, itemDownloads, itemDesktop };
+        menu.Open(btn);
+    }
+
+    private void RemotePower_Click(object? sender, RoutedEventArgs e)
+    {
+        var btn = sender as Button;
+        if (btn == null) return;
+
+        var menu = new ContextMenu();
+        var itemReboot = new MenuItem { Header = "🔄 Reiniciar Computador Remoto" };
+        itemReboot.Click += async (_, _) => { await ConfirmAndExecutePowerAction("reboot", "Reiniciar el computador remoto?"); };
+        
+        var itemShutdown = new MenuItem { Header = "🛑 Apagar Computador Remoto" };
+        itemShutdown.Click += async (_, _) => { await ConfirmAndExecutePowerAction("shutdown", "Apagar el computador remoto?"); };
+
+        menu.ItemsSource = new List<MenuItem> { itemReboot, itemShutdown };
+        menu.Open(btn);
+    }
+
+    private async Task ConfirmAndExecutePowerAction(string action, string message)
+    {
+        if (_client == null) { SetStatus(L["st.notConnected"]); return; }
+        if (!await MessageBox(message, "Confirmar acción de energía")) return;
+
+        // BUG-FIX: snapshot bajo _clientLock — el MessageBox puede tardar segundos y _client
+        // puede haberse nullado por desconexión/watchdog en ese intervalo.
+        LanClient? snap;
+        await _clientLock.WaitAsync();
+        try { snap = _client; }
+        finally { _clientLock.Release(); }
+        if (snap == null) { SetStatus(L["st.notConnected"]); return; }
+
+        try
+        {
+            SetStatus($"Enviando orden de {action} al PC remoto...");
+            await snap.SendPowerAsync(action);
+            SetStatus($"Orden de {action} ejecutada en el PC remoto.");
+        }
+        catch (Exception ex)
+        {
+            SetStatus($"Error al enviar orden de energía: {ex.Message}");
+            Log.Warn("power", "remote-power-failed", new { action, error = ex.Message });
+        }
+    }
+
+
+    private DispatcherTimer? _searchDebounceTimer;
+
+    private void TxtRemoteSearch_TextChanged(object? sender, TextChangedEventArgs e)
+    {
+        var textBox = sender as TextBox;
+        if (textBox == null) return;
+
+        if (_client == null)
+        {
+            SetStatus(L["st.notConnected"]);
+            return;
+        }
+
+        // Cancelar y reusar el timer de debounce — no crear uno nuevo por keystroke
+        // (el patron anterior creaba un DispatcherTimer nuevo sin desuscribir el handler anterior, leak)
+        if (_searchDebounceTimer == null)
+        {
+            _searchDebounceTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(500) };
+            _searchDebounceTimer.Tick += async (_, _) =>
+            {
+                _searchDebounceTimer.Stop();
+                var tb = this.FindControl<TextBox>("txtRemoteSearch");
+                var query = tb?.Text?.Trim() ?? "";
+
+                // BUG-FIX: snapshot del client bajo _clientLock — no usar _client directamente.
+                // El Tick ocurre 500ms después del TextChanged: _client puede haberse nullado
+                // por otro hilo (watchdog/reconexión) en ese intervalo → NullReferenceException.
+                LanClient? snap;
+                await _clientLock.WaitAsync();
+                try { snap = _client; }
+                finally { _clientLock.Release(); }
+                if (snap == null) return;
+
+                if (string.IsNullOrEmpty(query))
+                {
+                    try { await RefreshRemoteAsync(); }
+                    catch { }
+                    return;
+                }
+                try
+                {
+                    SetStatus($"Buscando '{query}' en PC remoto...");
+                    var results = await snap.SearchRemoteAsync(_remotePath, query);
+                    _remoteItemsAll = results;
+                    ApplyRemoteSort();
+                    SetStatus($"Búsqueda remota completada: {results.Count} resultados.");
+                }
+                catch (Exception ex)
+                {
+                    SetStatus($"Búsqueda remota fallida: {ex.Message}");
+                }
+            };
+        }
+        _searchDebounceTimer.Stop();
+        _searchDebounceTimer.Start();
+    }
+
+
+    private async Task ProcessStartupArgsAsync(string[] args)
+    {
+        await Task.Delay(1500);
+
+        try
+        {
+            var files = new List<FileEntry>();
+            foreach (var path in args)
+            {
+                if (string.IsNullOrWhiteSpace(path)) continue;
+                try
+                {
+                    if (File.Exists(path))
+                    {
+                        var fi = new FileInfo(path);
+                        files.Add(new FileEntry { Name = fi.Name, FullPath = fi.FullName, Size = fi.Length });
+                    }
+                    else if (Directory.Exists(path))
+                    {
+                        var di = new DirectoryInfo(path);
+                        files.Add(new FileEntry { Name = di.Name, FullPath = di.FullName, Size = 0, IsDirectory = true });
+                    }
+                }
+                catch { }
+            }
+
+            if (files.Count > 0)
+            {
+                if (await IsConnectedAsync())
+                {
+                    SetStatus($"Enviando {files.Count} archivo(s) recibidos por parámetros...");
+                    await TransferAsync(files, isUpload: true);
+                }
+                else
+                {
+                    var first = args[0];
+                    try
+                    {
+                        var dir = Path.GetDirectoryName(first);
+                        if (!string.IsNullOrEmpty(dir) && Directory.Exists(dir))
+                        {
+                            _localPath = dir;
+                            await RefreshLocalAsync();
+                        }
+                    }
+                    catch { }
+                    SetStatus("Archivos recibidos. Conéctate a un PC remoto para enviarlos.");
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            Log.Warn("startup", "process-startup-args-failed", new { error = ex.Message });
+        }
     }
 }

@@ -3,6 +3,7 @@ using Avalonia.Controls;
 using Avalonia.Layout;
 using Avalonia.Media;
 using LanCopy.Localization;
+using LanCopy.Services;
 
 namespace LanCopy;
 
@@ -51,7 +52,15 @@ internal sealed class ConsentDialog : Window
         Content = panel;
 
         // Por seguridad, cerrar sin elegir = rechazar.
-        Closing += (_, _) => { _tcs.TrySetResult(false); _autoRejectCts.Cancel(); _autoRejectCts.Dispose(); }; // B6: dispose CTS para liberar WaitHandle
+        Closing += (_, _) =>
+        {
+            _tcs.TrySetResult(false);
+            try { _autoRejectCts.Cancel(); }
+            catch (ObjectDisposedException ex) { Log.Debug("consent", "auto-reject-cts-cancel-disposed", new { error = ex.Message }); }
+            catch (Exception ex) { Log.Warn("consent", "auto-reject-cts-cancel-failed", new { error = ex.Message }); }
+            try { _autoRejectCts.Dispose(); }
+            catch (Exception ex) { Log.Warn("consent", "auto-reject-cts-dispose-failed", new { error = ex.Message }); }
+        }; // B6: dispose CTS para liberar WaitHandle
 
         // U3: auto-rechazar después de 60s si el usuario no está
         // U2: mostrar countdown al usuario para que sepa cuánto tiempo tiene
@@ -92,7 +101,7 @@ internal sealed class ConsentDialog : Window
             if (_tcs.TrySetResult(false))
                 Avalonia.Threading.Dispatcher.UIThread.Post(Close);
         }
-        catch { }
+        catch (Exception ex) { Log.Warn("consent", "auto-reject-loop-failed", new { error = ex.Message }); }
     }
 
     public Task<bool> GetResultAsync() => _tcs.Task;

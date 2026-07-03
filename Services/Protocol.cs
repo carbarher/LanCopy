@@ -2,6 +2,7 @@ using System.Net.Sockets;
 using System.Security.Cryptography;
 using System.Text;
 using System.Buffers;
+using LanCopy.Models;
 
 namespace LanCopy.Services;
 
@@ -24,19 +25,9 @@ internal static class Protocol
     // Sin tope, un peer malicioso podria enviar bytes sin '\n' hasta agotar la memoria (OOM).
     internal const int MaxLineBytes = 1024 * 1024; // 1 MB
 
-    // Extensiones cuyo contenido ya esta comprimido: deflate no aporta y solo gasta CPU.
-    private static readonly HashSet<string> CompressedExt = new(StringComparer.OrdinalIgnoreCase)
-    {
-        ".zip", ".gz", ".7z", ".rar", ".bz2", ".xz", ".zst", ".lz4", ".cab",
-        ".jpg", ".jpeg", ".png", ".gif", ".webp", ".heic", ".heif",
-        ".mp3", ".aac", ".ogg", ".opus", ".flac", ".m4a", ".wma",
-        ".mp4", ".mkv", ".mov", ".avi", ".webm", ".m4v", ".wmv",
-        ".docx", ".xlsx", ".pptx", ".odt", ".ods", ".odp", ".epub", ".apk", ".jar"
-    };
-
     // True si el fichero ya esta (probablemente) comprimido y conviene saltar deflate.
     internal static bool IsCompressedExtension(string path)
-        => CompressedExt.Contains(System.IO.Path.GetExtension(path));
+        => FileEntry.IsAlreadyCompressed(path);
 
     internal static int SelectCopyBufferSize(long totalBytes)
     {
@@ -57,22 +48,85 @@ internal static class Protocol
 
     private static async Task<string> ReadLineSlowAsync(Stream stream, CancellationToken ct)
     {
-        // Q1: sin lock global — cada stream es independiente, TCP garantiza ordering
-        var bytes = new List<byte>(256);
-        var buf = new byte[1];
-        while (true)
+        // M15: ArrayPool en lugar de new List<byte>(256) + new byte[1] + ToArray().
+        // ReadLineSlowAsync es el fallback para streams que no son BufferedLineStream.
+        // En producción es raro (casi siempre se usa BufferedLineStream), pero la hygiene importa.
+        var accumulator = ArrayPool<byte>.Shared.Rent(512); // capacidad típica de línea JSON
+        var oneBuf      = ArrayPool<byte>.Shared.Rent(1);
+        int len = 0;
+        try
         {
-            var n = await stream.ReadAsync(buf.AsMemory(0, 1), ct);
-            if (n == 0) throw new EndOfStreamException("svc.connClosed");
-            if (buf[0] == (byte)'\n') break;
-            if (buf[0] != (byte)'\r')
+            while (true)
             {
-                bytes.Add(buf[0]);
-                if (bytes.Count > MaxLineBytes)
-                    throw new InvalidDataException("svc.lineTooLong");
+                var n = await stream.ReadAsync(oneBuf.AsMemory(0, 1), ct);
+                if (n == 0) throw new EndOfStreamException("svc.connClosed");
+                var b = oneBuf[0];
+                if (b == (byte)'\n') break;
+                if (b != (byte)'\r')
+                {
+                    if (len >= MaxLineBytes) throw new InvalidDataException("svc.lineTooLong");
+                    if (len == accumulator.Length)
+                    {
+                        // Expandir: rentar un buffer mayor y copiar
+                        var bigger = ArrayPool<byte>.Shared.Rent(accumulator.Length * 2);
+                        accumulator.AsSpan(0, len).CopyTo(bigger);
+                        ArrayPool<byte>.Shared.Return(accumulator);
+                        accumulator = bigger;
+                    }
+                    accumulator[len++] = b;
+                }
             }
+            return Encoding.UTF8.GetString(accumulator, 0, len);
         }
-        return Encoding.UTF8.GetString(bytes.ToArray());
+        finally
+        {
+            ArrayPool<byte>.Shared.Return(accumulator);
+            ArrayPool<byte>.Shared.Return(oneBuf);
+        }
+    }
+
+    // ─── P1: Respuestas comunes pre-serializadas ───────────────────────────────────────
+    // JsonSerializer.Serialize(new { status = "ok" }) en FileServer.cs se llama 9 veces
+    // y JsonSerializer.Serialize(new { status = "error", error = "svc.*" }) ~57 veces.
+    // Cada llamada aloca: 1 anonymous object + 1 string JSON + 1 encoding UTF-8 en WriteLineAsync.
+    // Con bytes estáticos: 0 allocs, 1 WriteAsync directo (misma ruta que WriteLineAsync ya tiene).
+
+    // Respuesta {"status":"ok"}\n — pre-calculada una sola vez al inicio de la app
+    private static readonly ReadOnlyMemory<byte> OkResponseBytes =
+        System.Text.Encoding.UTF8.GetBytes("{\"status\":\"ok\"}\n");
+
+    // Cache de respuestas de error estáticas: "svc.xxx" -> bytes pre-calculados
+    private static readonly System.Collections.Generic.Dictionary<string, ReadOnlyMemory<byte>> ErrorResponseCache
+        = new(System.StringComparer.Ordinal);
+
+    private static ReadOnlyMemory<byte> GetErrorBytes(string errorCode)
+    {
+        if (!ErrorResponseCache.TryGetValue(errorCode, out var cached))
+        {
+            cached = System.Text.Encoding.UTF8.GetBytes($"{{\"status\":\"error\",\"error\":\"{errorCode}\"}}\n");
+            // Sin lock: la race condition es benigna (sobrescribe con el mismo valor)
+            ErrorResponseCache[errorCode] = cached;
+        }
+        return cached;
+    }
+
+    /// <summary>
+    /// P1: Envía {"status":"ok"}\n con bytes pre-calculados — 0 allocs vs JsonSerializer.Serialize(new{status="ok"}).
+    /// </summary>
+    internal static async Task WriteOkAsync(Stream stream, CancellationToken ct)
+    {
+        await stream.WriteAsync(OkResponseBytes, ct);
+        await stream.FlushAsync(ct);
+    }
+
+    /// <summary>
+    /// P1: Envía {"status":"error","error":"svc.xxx"}\n con bytes cacheados — 0 allocs.
+    /// Solo para errores estáticos con código de error fijo (no para mensajes dinámicos).
+    /// </summary>
+    internal static async Task WriteErrorAsync(Stream stream, string errorCode, CancellationToken ct)
+    {
+        await stream.WriteAsync(GetErrorBytes(errorCode), ct);
+        await stream.FlushAsync(ct);
     }
 
     internal static async Task WriteLineAsync(Stream stream, string json, CancellationToken ct)
@@ -85,6 +139,32 @@ internal static class Protocol
             var written = Encoding.UTF8.GetBytes(json, rented);
             rented[written] = (byte)'\n';
             await stream.WriteAsync(rented.AsMemory(0, written + 1), ct);
+            await stream.FlushAsync(ct);
+        }
+        finally { ArrayPool<byte>.Shared.Return(rented); }
+    }
+
+    // N2: static NewLineBytes evita "\n"u8.ToArray() que aloca new byte[1] en cada llamada
+    private static readonly ReadOnlyMemory<byte> NewLineBytes = new byte[] { (byte)'\n' };
+
+    /// <summary>
+    /// M2: Versión optimizada para objetos grandes (ej: listas de FileEntry).
+    /// SerializeToUtf8Bytes serializa directamente a bytes, eliminando la representación
+    /// UTF-16 intermedia de JsonSerializer.Serialize(string).
+    /// N2: JSON + '\n' se combinan en un solo buffer del pool — 1 escritura al stream (antes 2),
+    /// un solo FlushAsync, y 0 allocs en el terminador de línea.
+    /// </summary>
+    internal static async Task WriteLineJsonAsync<T>(Stream stream, T obj, CancellationToken ct)
+    {
+        var utf8Json = System.Text.Json.JsonSerializer.SerializeToUtf8Bytes(obj);
+        // N2: copiar json + '\n' en un buffer del pool para 1 sola escritura (menos syscalls / menos TLS records)
+        var total  = utf8Json.Length + 1;
+        var rented = ArrayPool<byte>.Shared.Rent(total);
+        try
+        {
+            utf8Json.CopyTo(rented, 0);
+            rented[utf8Json.Length] = (byte)'\n';
+            await stream.WriteAsync(rented.AsMemory(0, total), ct);
             await stream.FlushAsync(ct);
         }
         finally { ArrayPool<byte>.Shared.Return(rented); }

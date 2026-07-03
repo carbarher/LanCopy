@@ -335,5 +335,21 @@
     "st.sendtoDone":  "Toegevoegd aan het Windows-menu \"Verzenden naar\"",
     "st.sendtoFailed2":  "Kon de snelkoppeling niet maken: {0}",
     "st.minimizedToTray":  "Geminimaliseerd naar systeemvak — ontvangt nog steeds",
-    "st.sendtoReady":  "{0} bestand(en) gereed — verbind en druk op Verzenden"
+    "st.sendtoReady":  "{0} bestand(en) gereed — verbind en druk op Verzenden",
+  "notify.sent": "Sent",
+  "notify.received": "Received",
+  "notify.transferDone": "Transfer {0}",
+  "notify.transferBody1": "{0} in {1}",
+  "notify.transferBodyN": "{0} files — {1} in {2}",
+  "audit.today": "Today",
+  "audit.twoDays": "2 Days",
+  "audit.week": "Week",
+  "audit.allOps": "All",
+  "audit.colTime": "Time",
+  "audit.colOp": "Operation",
+  "audit.colFile": "File",
+  "audit.colSize": "Size",
+  "audit.colDur": "Duration",
+  "audit.exported": "Exported to {0}",
+  "audit.exportFailed": "Export failed: {0}"
 }
