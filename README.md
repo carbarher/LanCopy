@@ -14,12 +14,9 @@ C# / .NET 9 and Avalonia UI. Available in 20 languages.
 
 ---
 
-## Screenshots
+## Screenshot
 
-<!-- TODO: Add screenshots of the main interface, file transfer in progress, and connection setup -->
-| Main Interface | File Transfer | Connection |
-|:-:|:-:|:-:|
-| *Coming soon* | *Coming soon* | *Coming soon* |
+![LanCopy Interface](Assets/screenshot.png)
 
 ---
 
