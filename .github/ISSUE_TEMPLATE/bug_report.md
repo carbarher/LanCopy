@@ -1,30 +1,32 @@
 ---
 name: Bug report
-about: Something is not working as expected
-title: '[Bug] '
+about: Create a report to help us improve
+title: '[BUG] '
 labels: bug
 assignees: ''
+
 ---
 
-**LanCopy version:**
-<!-- e.g. 1.0.0 — found in the title bar or Help > About -->
+**Describe the bug**
+A clear and concise description of what the bug is.
 
-**Operating system:**
-<!-- e.g. Windows 11 23H2 x64, Ubuntu 24.04 ARM64, macOS 14 Sonoma -->
+**To Reproduce**
+Steps to reproduce the behavior:
+1. Go to '...'
+2. Click on '....'
+3. Scroll down to '....'
+4. See error
 
-**What happened?**
-<!-- Clear description of the problem -->
+**Expected behavior**
+A clear and concise description of what you expected to happen.
 
-**Steps to reproduce:**
-1.
-2.
-3.
+**Screenshots**
+If applicable, add screenshots to help explain your problem.
 
-**Expected behaviour:**
+**Environment (please complete the following information):**
+- OS: [e.g. Windows 11, macOS Sequoia, Ubuntu 24.04]
+- LanCopy Version: [e.g. 1.5.5]
+- Installation method: [e.g. Portable EXE, DEB, AppImage, DMG, installer]
 
-**Actual behaviour:**
-
-**Logs / screenshots:**
-<!-- Paste any error messages or attach screenshots -->
-
-**Additional context:**
+**Additional context**
+Add any other context about the problem here (e.g. transfer logs, network configuration).
