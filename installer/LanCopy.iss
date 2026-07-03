@@ -34,7 +34,7 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 
 [Tasks]
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked
-Name: "firewall"; Description: "Permitir LanCopy en el Firewall de Windows (puerto 8742)"; GroupDescription: "Red:"
+Name: "firewall"; Description: "Allow LanCopy in Windows Firewall (port 8742)"; GroupDescription: "Network:"
 
 [Files]
 ; El publish self-contained genera un unico LanCopy.exe

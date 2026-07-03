@@ -151,9 +151,9 @@
                     <Button x:Name="btnSendTo" Content="{l:Tr btn.sendto}" Click="SendToIntegration_Click"
                             Background="{DynamicResource InputBg}" Foreground="{DynamicResource InputFg}" Padding="6,3" FontSize="12"
                             ToolTip.Tip="{l:Tr tip.sendto}"/>
-                    <Button x:Name="btnAudit" Content="📋 Auditoría" Click="ShowAudit_Click"
+                    <Button x:Name="btnAudit" Content="📋 Audit" Click="ShowAudit_Click"
                             Background="{DynamicResource InputBg}" Foreground="#FFD700" Padding="6,3" FontSize="12"
-                            ToolTip.Tip="Ver registros de auditoría de transferencias"/>
+                            ToolTip.Tip="View transfer audit logs"/>
                     <Button x:Name="btnDiagExport" Content="{l:Tr btn.diagexport}" Click="ExportDiagnostics_Click"
                             Background="{DynamicResource InputBg}" Foreground="#00BCD4" Padding="6,3" FontSize="12"
                             ToolTip.Tip="{l:Tr tip.diagexport}"/>
@@ -164,10 +164,10 @@
                             ValueChanged="Bandwidth_Changed" ToolTip.Tip="{l:Tr tip.bw}"/>
                     <TextBlock x:Name="txtBwValue" Text="{l:Tr bw.unlimited}" Foreground="{DynamicResource MutedFg}" VerticalAlignment="Center" FontSize="12" MinWidth="60"/>
                     <Separator Width="1" Background="{DynamicResource DividerBg}" Margin="8,0" VerticalAlignment="Stretch"/>
-                    <TextBlock Text="⚡" VerticalAlignment="Center" FontSize="12" ToolTip.Tip="Transferencias paralelas"/>
+                    <TextBlock Text="⚡" VerticalAlignment="Center" FontSize="12" ToolTip.Tip="Parallel transfers"/>
                     <Slider x:Name="sldParallel" Width="80" Minimum="1" Maximum="8" Value="4" VerticalAlignment="Center"
                             IsSnapToTickEnabled="True" TickFrequency="1"
-                            ValueChanged="Parallel_Changed" ToolTip.Tip="Transferencias paralelas simultáneas (1-8)"/>
+                            ValueChanged="Parallel_Changed" ToolTip.Tip="Simultaneous parallel transfers (1-8)"/>
                     <TextBlock x:Name="txtParallelValue" Text="4" Foreground="{DynamicResource MutedFg}" VerticalAlignment="Center" FontSize="12" MinWidth="14"/>
                 </StackPanel>
             </WrapPanel>
@@ -194,7 +194,7 @@
                                    ToolTip.Tip="{Binding #txtLocalPath.Text}"/>
                         <Button Grid.Column="2" Content="⭐" Click="LocalFavorites_Click"
                                 Background="{DynamicResource InputBg}" Foreground="Gold" Padding="0" Width="24" Height="24"
-                                ToolTip.Tip="Favoritos locales"/>
+                                ToolTip.Tip="Local Favorites"/>
                         <Button Grid.Column="3" Content="🏠" Click="LocalGoHome"
                                 Background="{DynamicResource InputBg}" Foreground="{DynamicResource InputFg}" Padding="0" Width="24" Height="24"
                                 ToolTip.Tip="{l:Tr tip.localhome}"/>
@@ -335,10 +335,10 @@
                                 ToolTip.Tip="{l:Tr tip.ctxnewfolderremote}"/>
                         <Button Grid.Column="3" Content="⭐" Click="RemoteFavorites_Click"
                                 Background="{DynamicResource InputBg}" Foreground="Gold" Padding="0" Width="24" Height="24"
-                                ToolTip.Tip="Favoritos remotos"/>
+                                ToolTip.Tip="Remote Favorites"/>
                         <Button Grid.Column="4" Content="⚡" Click="RemotePower_Click"
                                 Background="{DynamicResource InputBg}" Foreground="Tomato" Padding="0" Width="24" Height="24"
-                                ToolTip.Tip="Opciones de energía del PC remoto"/>
+                                ToolTip.Tip="Power options of the remote PC"/>
                         <Button Grid.Column="5" Content="🏠" Click="RemoteGoHome"
                                 Background="{DynamicResource InputBg}" Foreground="{DynamicResource InputFg}" Padding="0" Width="24" Height="24"
                                 ToolTip.Tip="{l:Tr tip.remotehome}"/>
@@ -358,11 +358,11 @@
                                 ToolTip.Tip="{l:Tr tip.sortdate}"/>
                     </StackPanel>
                 </Border>
-                <!-- Caja de búsqueda remota -->
+                <!-- Remote search box -->
                 <Border Grid.Row="3" Background="{DynamicResource PanelBg}" Padding="6,3" BorderBrush="{DynamicResource DividerBg}" BorderThickness="0,0,0,1">
-                    <TextBox x:Name="txtRemoteSearch" PlaceholderText="Buscar archivo remoto..." 
+                    <TextBox x:Name="txtRemoteSearch" PlaceholderText="Search remote files..." 
                              Background="{DynamicResource InputBg}" Foreground="{DynamicResource InputFg}" Padding="5,3" BorderBrush="{DynamicResource BorderFg}"
-                             TextChanged="TxtRemoteSearch_TextChanged" ToolTip.Tip="Escribe para buscar archivos recursivamente en el PC remoto"/>
+                             TextChanged="TxtRemoteSearch_TextChanged" ToolTip.Tip="Type to search files recursively on the remote PC"/>
                 </Border>
                 <ListBox Grid.Row="4" x:Name="remoteList"
                          SelectionMode="Multiple"

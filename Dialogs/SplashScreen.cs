@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Threading.Tasks;
 using Avalonia;
 using Avalonia.Controls;
@@ -76,7 +76,7 @@ public class SplashScreen : Window
 
         var subtitle = new TextBlock
         {
-            Text                = "Transferencia LAN  \u00B7  Cifrada  \u00B7  Sin nube",
+            Text                = "Encrypted LAN Transfer  \u00B7  Peer-to-Peer  \u00B7  No Cloud",
             FontSize            = 11,
             Foreground          = new SolidColorBrush(Color.FromArgb(150, 180, 200, 255)),
             HorizontalAlignment = HorizontalAlignment.Center,

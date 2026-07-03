@@ -22,7 +22,7 @@
     <Company>carbar</Company>
     <Authors>carbar</Authors>
     <Product>LanCopy</Product>
-    <Description>Transferencia de archivos por LAN, cifrada y multiplataforma.</Description>
+    <Description>Encrypted, cross-platform LAN file transfer — fast, private, no cloud.</Description>
     <Copyright>Copyright (c) 2026 carbar</Copyright>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
     <RepositoryUrl>https://github.com/carbarher/LanCopy</RepositoryUrl>

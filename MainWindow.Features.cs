@@ -815,14 +815,14 @@ public partial class MainWindow
                                 Margin = new Thickness(4, 0),
                                 [Grid.ColumnProperty] = 7
                             };
-                            ToolTip.SetTip(btnRestore, "Restaurar archivo de la papelera");
+                            ToolTip.SetTip(btnRestore, "Restore file from trash");
                             btnRestore.Click += async (_, _) =>
                             {
                                 try
                                 {
                                     if (File.Exists(r.FileName) || Directory.Exists(r.FileName))
                                     {
-                                        if (!await MessageBox($"El archivo o carpeta '{Path.GetFileName(r.FileName)}' ya existe en el destino. ¿Deseas sobrescribirlo?", "Destino existente"))
+                                        if (!await MessageBox($"The file or folder '{Path.GetFileName(r.FileName)}' already exists at the destination. Do you want to overwrite it?", "Destination Exists"))
                                         {
                                             return;
                                         }
@@ -1265,11 +1265,11 @@ public partial class MainWindow
         if (btn == null) return;
 
         var menu = new ContextMenu();
-        var itemReboot = new MenuItem { Header = "🔄 Reiniciar Computador Remoto" };
-        itemReboot.Click += async (_, _) => { await ConfirmAndExecutePowerAction("reboot", "Reiniciar el computador remoto?"); };
+        var itemReboot = new MenuItem { Header = "🔄 Restart Remote Computer" };
+        itemReboot.Click += async (_, _) => { await ConfirmAndExecutePowerAction("reboot", "Restart the remote computer?"); };
         
-        var itemShutdown = new MenuItem { Header = "🛑 Apagar Computador Remoto" };
-        itemShutdown.Click += async (_, _) => { await ConfirmAndExecutePowerAction("shutdown", "Apagar el computador remoto?"); };
+        var itemShutdown = new MenuItem { Header = "🛑 Shut Down Remote Computer" };
+        itemShutdown.Click += async (_, _) => { await ConfirmAndExecutePowerAction("shutdown", "Shut down the remote computer?"); };
 
         menu.ItemsSource = new List<MenuItem> { itemReboot, itemShutdown };
         menu.Open(btn);
@@ -1278,7 +1278,7 @@ public partial class MainWindow
     private async Task ConfirmAndExecutePowerAction(string action, string message)
     {
         if (_client == null) { SetStatus(L["st.notConnected"]); return; }
-        if (!await MessageBox(message, "Confirmar acción de energía")) return;
+        if (!await MessageBox(message, "Confirm Power Action")) return;
 
         // BUG-FIX: snapshot bajo _clientLock — el MessageBox puede tardar segundos y _client
         // puede haberse nullado por desconexión/watchdog en ese intervalo.
@@ -1290,13 +1290,13 @@ public partial class MainWindow
 
         try
         {
-            SetStatus($"Enviando orden de {action} al PC remoto...");
+            SetStatus($"Sending {action} command to remote PC...");
             await snap.SendPowerAsync(action);
-            SetStatus($"Orden de {action} ejecutada en el PC remoto.");
+            SetStatus($"{action.ToUpper()} command executed on remote PC.");
         }
         catch (Exception ex)
         {
-            SetStatus($"Error al enviar orden de energía: {ex.Message}");
+            SetStatus($"Error sending power command: {ex.Message}");
             Log.Warn("power", "remote-power-failed", new { action, error = ex.Message });
         }
     }
@@ -1343,15 +1343,15 @@ public partial class MainWindow
                 }
                 try
                 {
-                    SetStatus($"Buscando '{query}' en PC remoto...");
+                    SetStatus($"Searching '{query}' on remote PC...");
                     var results = await snap.SearchRemoteAsync(_remotePath, query);
                     _remoteItemsAll = results;
                     ApplyRemoteSort();
-                    SetStatus($"Búsqueda remota completada: {results.Count} resultados.");
+                    SetStatus($"Remote search completed: {results.Count} results.");
                 }
                 catch (Exception ex)
                 {
-                    SetStatus($"Búsqueda remota fallida: {ex.Message}");
+                    SetStatus($"Remote search failed: {ex.Message}");
                 }
             };
         }
@@ -1390,7 +1390,7 @@ public partial class MainWindow
             {
                 if (await IsConnectedAsync())
                 {
-                    SetStatus($"Enviando {files.Count} archivo(s) recibidos por parámetros...");
+                    SetStatus($"Sending {files.Count} file(s) received from parameters...");
                     await TransferAsync(files, isUpload: true);
                 }
                 else
@@ -1406,7 +1406,7 @@ public partial class MainWindow
                         }
                     }
                     catch { }
-                    SetStatus("Archivos recibidos. Conéctate a un PC remoto para enviarlos.");
+                    SetStatus("Files received. Connect to a remote PC to send them.");
                 }
             }
         }
