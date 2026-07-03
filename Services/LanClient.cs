@@ -45,7 +45,7 @@ public sealed class LanClient : IDisposable, IAsyncDisposable
     
     public string? Pin { get; set; }      // Feature 10: PIN de autenticación
     public bool UseTls { get; set; }      // Feature 9: TLS
-    public event EventHandler<string>? TlsFallbackOccurred; // S2: avisa de degradaci�n TLS?plaintext
+    public event EventHandler<string>? TlsFallbackOccurred; // S2: avisa de degradación TLS?plaintext
     public bool UseCompress { get; set; } // Feature 2: compresión deflate
 
     private sealed record DownloadResumeMap(long BlockSize, long VerifiedBytes, long TotalSize, DateTime UpdatedUtc);
