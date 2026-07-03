@@ -28,8 +28,12 @@ jobs:
         run: dotnet build LanCopy.csproj -c Release --no-restore
 
   test:
-    name: Tests (windows-latest)
-    runs-on: windows-latest
+    name: Tests (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ windows-latest, ubuntu-latest, macos-latest ]
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
       - name: Setup .NET
