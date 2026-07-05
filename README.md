@@ -45,9 +45,11 @@ LanCopy keeps the everyday path simple: the computer starts protected, and high-
 - The local API binds to `127.0.0.1` and requires `X-LanCopy-Token`.
 - If a known device identity changes, LanCopy blocks the connection until the device is trusted again.
 
-## Screenshot
+## Screenshots
 
-![LanCopy Interface](Assets/screenshot.png)
+![LanCopy main window](Assets/screenshot.png)
+
+![LanCopy chat window](Assets/chat.png)
 
 ## Requirements
 

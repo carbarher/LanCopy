@@ -337,6 +337,8 @@ public partial class MainWindow : Window, IConnectionUiHost, ITransferUiHost
         // Esperar un instante para que el backend de Avalonia asiente la ventana y no pise el título
         _ = Task.Delay(250).ContinueWith(_ => UpdateTitle(), TaskScheduler.FromCurrentSynchronizationContext());
         Localization.Loc.Instance.LanguageChanged += UpdateTitle;
+        Localization.Loc.Instance.LanguageChanged += () => Dispatcher.UIThread.Post(RefreshDynamicTranslations);
+        RefreshDynamicTranslations();
 
         // UX: primer uso -> mostrar asistente de bienvenida para usuarios sin red.
         if (!_welcomeShown)

@@ -80,9 +80,9 @@
                     <Button x:Name="btnApplyLocalPort" Content="✓" Click="ApplyLocalPort_Click"
                             Background="{DynamicResource InputBg}" Foreground="#28A745" Padding="6,2" FontSize="12"
                             ToolTip.Tip="{l:Tr tip.applyport}"/>
-                    <Button x:Name="btnTrustedDevices" Content="🔐 Devices" Click="ShowTrustedDevices_Click"
+                    <Button x:Name="btnTrustedDevices" Content="{l:Tr btn.devices}" Click="ShowTrustedDevices_Click"
                             Background="{DynamicResource InputBg}" Foreground="{DynamicResource InputFg}" Padding="6,2" FontSize="12"
-                            ToolTip.Tip="Manage trusted identities, safe defaults, and risky permissions"/>
+                            ToolTip.Tip="{l:Tr tip.devices}"/>
                 </StackPanel>
                 <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Spacing="6" Margin="0,2,0,2">
                     <TextBlock Text="{l:Tr label.manual}" Foreground="{DynamicResource TextFg}" VerticalAlignment="Center" FontSize="12"/>
@@ -146,9 +146,9 @@
                     <Button x:Name="btnSendTo" Content="{l:Tr btn.sendto}" Click="SendToIntegration_Click"
                             Background="{DynamicResource InputBg}" Foreground="{DynamicResource InputFg}" Padding="6,3" FontSize="12"
                             ToolTip.Tip="{l:Tr tip.sendto}"/>
-                    <Button x:Name="btnAudit" Content="📋 Audit" Click="ShowAudit_Click"
+                    <Button x:Name="btnAudit" Content="{l:Tr btn.audit}" Click="ShowAudit_Click"
                             Background="{DynamicResource InputBg}" Foreground="#FFD700" Padding="6,3" FontSize="12"
-                            ToolTip.Tip="View transfer audit logs"/>
+                            ToolTip.Tip="{l:Tr tip.audit}"/>
                     <Button x:Name="btnDiagExport" Content="{l:Tr btn.diagexport}" Click="ExportDiagnostics_Click"
                             Background="{DynamicResource InputBg}" Foreground="#00BCD4" Padding="6,3" FontSize="12"
                             ToolTip.Tip="{l:Tr tip.diagexport}"/>
@@ -162,10 +162,10 @@
                             ValueChanged="Bandwidth_Changed" ToolTip.Tip="{l:Tr tip.bw}"/>
                     <TextBlock x:Name="txtBwValue" Text="{l:Tr bw.unlimited}" Foreground="{DynamicResource MutedFg}" VerticalAlignment="Center" FontSize="12" MinWidth="60"/>
                     <Separator Width="1" Background="{DynamicResource DividerBg}" Margin="8,0" VerticalAlignment="Stretch"/>
-                    <TextBlock Text="⚡" VerticalAlignment="Center" FontSize="12" ToolTip.Tip="Parallel transfers"/>
+                    <TextBlock Text="⚡" VerticalAlignment="Center" FontSize="12" ToolTip.Tip="{l:Tr label.parallel}"/>
                     <Slider x:Name="sldParallel" Width="80" Minimum="1" Maximum="8" Value="4" VerticalAlignment="Center"
                             IsSnapToTickEnabled="True" TickFrequency="1"
-                            ValueChanged="Parallel_Changed" ToolTip.Tip="Simultaneous parallel transfers (1-8)"/>
+                            ValueChanged="Parallel_Changed" ToolTip.Tip="{l:Tr tip.parallel}"/>
                     <TextBlock x:Name="txtParallelValue" Text="4" Foreground="{DynamicResource MutedFg}" VerticalAlignment="Center" FontSize="12" MinWidth="14"/>
                 </StackPanel>
             </WrapPanel>
@@ -192,7 +192,7 @@
                                    ToolTip.Tip="{Binding #txtLocalPath.Text}"/>
                         <Button Grid.Column="2" Content="⭐" Click="LocalFavorites_Click"
                                 Background="{DynamicResource InputBg}" Foreground="Gold" Padding="0" Width="24" Height="24"
-                                ToolTip.Tip="Local Favorites"/>
+                                ToolTip.Tip="{l:Tr tip.localFavorites}"/>
                         <Button Grid.Column="3" Content="🏠" Click="LocalGoHome"
                                 Background="{DynamicResource InputBg}" Foreground="{DynamicResource InputFg}" Padding="0" Width="24" Height="24"
                                 ToolTip.Tip="{l:Tr tip.localhome}"/>

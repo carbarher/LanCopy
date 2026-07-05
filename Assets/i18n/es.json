@@ -567,5 +567,12 @@
   "btn.chat": "Chat",
   "tip.chat": "Abrir el chat con el otro PC",
   "chat.subtitle": "Mensajes entre estos dos ordenadores",
-  "chat.placeholder": "Escribe un mensaje"
+  "chat.placeholder": "Escribe un mensaje",
+  "btn.devices": "🔐 Dispositivos",
+  "tip.devices": "Gestionar ordenadores de confianza y permisos.",
+  "btn.audit": "📋 Auditoría",
+  "tip.audit": "Ver el registro de transferencias.",
+  "tip.localFavorites": "Favoritos locales",
+  "label.parallel": "Transferencias paralelas",
+  "tip.parallel": "Transferencias simultáneas (1-8)."
 }

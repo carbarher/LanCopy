@@ -289,8 +289,21 @@ public partial class MainWindow
         var code = Loc.Available[idx].Code;
         if (code == L.Current) return;
         L.SetLanguage(code);
+        RefreshDynamicTranslations();
+    }
+
+    private void RefreshDynamicTranslations()
+    {
         this.FlowDirection = L.IsRtl ? FlowDirection.RightToLeft : FlowDirection.LeftToRight;
+        ApplyUiMode();
         UpdateConnectButton(isConnected: _connectButtonIsConnected, isBusy: _connectButtonIsBusy);
+        UpdateLocalPath();
+        UpdateRemotePath();
+        UpdateServerModeBadge();
+        UpdateBroadcastButton();
+
+        var bw = this.FindControl<TextBlock>("txtBwValue");
+        if (bw != null && _bandwidthLimitMbps <= 0) bw.Text = L["bw.unlimited"];
     }
     private void TxtPin_TextChanged(object? sender, TextChangedEventArgs e)
     {
