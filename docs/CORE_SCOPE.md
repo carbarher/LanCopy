@@ -3,7 +3,7 @@
 LanCopy Core is the safe default product surface:
 
 - LAN file transfer
-- TLS by default
+- encrypted local connection by default
 - shared-folder confinement
 - resumable upload/download
 - integrity verification
@@ -15,7 +15,7 @@ These stay in Advanced mode or require explicit opt-in:
 
 - remote power
 - remote delete
-- clipboard automation
+- chat between connected computers
 - full-disk browsing
 - direct protocol/admin APIs
 

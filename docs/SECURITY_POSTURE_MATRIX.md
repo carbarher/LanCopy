@@ -8,16 +8,16 @@
 | Safe Mode | On |
 | Remote delete | Off |
 | Remote power | Off |
-| Auto clipboard sync | Off |
+| Chat | Manual user action; incoming messages open the chat window |
 | Auto link open | Off |
 | Unknown peer access | Minimal status only |
 | Browse/download permissions | On |
-| Write/sync/clipboard/power permissions | Off |
+| Write/sync/power permissions | Off |
 
 ## Recommended profile
 
 - keep Safe Mode enabled
-- keep TLS enabled
+- keep protected connection settings enabled
 - only grant browse/download by default
 - use trusted-device presets for anything else
 
@@ -26,5 +26,5 @@
 - remote delete
 - remote power
 - full-disk browsing
-- advanced clipboard automation
+- advanced remote power actions
 - plaintext fallback

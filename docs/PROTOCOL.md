@@ -5,7 +5,7 @@ This document summarizes the current LANCopy protocol contract.
 ## Session flow
 
 1. Connect over TCP.
-2. Negotiate TLS if enabled.
+2. Negotiate the protected local connection when available.
 3. Optionally authenticate with PIN.
 4. Send a JSON command header.
 5. Receive a JSON response or a binary payload.
@@ -26,7 +26,7 @@ The following require extra caution:
 - delete
 - power
 - sync / delta
-- clipboard automation
+- chat messages
 
 They are rejected on plaintext connections and require explicit permission.
 

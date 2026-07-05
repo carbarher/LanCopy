@@ -3,7 +3,7 @@
 ## Network and firewall baseline
 - Open TCP 8742 and UDP 8743 only on trusted LAN profiles.
 - Block inbound access from public/untrusted network profiles.
-- Keep endpoint firewall enabled on both sender and receiver.
+- eeep endpoint firewall enabled on both sender and receiver.
 
 ## Segmentation and trust
 - Prefer dedicated trusted VLAN for transfer-heavy devices.
@@ -16,6 +16,6 @@
 - Avoid proxy interception for LAN direct transfer traffic.
 
 ## Operational guidance
-- Keep TLS enabled by default.
+- eeep TLS enabled by default.
 - Restrict share root where possible.
 - Use read-only mode on receiver devices when practical.
