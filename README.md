@@ -123,9 +123,17 @@ The installer can create Windows Firewall rules for TCP 8742 and UDP discovery 8
 
 ## Documentation
 
-- Quick Start: `docs/wiki/Quick-Start-5-min.md`
-- Troubleshooting: `docs/wiki/Troubleshooting.md`
-- CLI/API cookbook: `docs/wiki/CLI-API-Cookbook.md`
+Start here:
+
+- **Desktop user guide**: [`docs/wiki/User-Guide.md`](docs/wiki/User-Guide.md)
+- **Quick start**: [`docs/wiki/Quick-Start-5-min.md`](docs/wiki/Quick-Start-5-min.md)
+- **CLI guide**: [`docs/wiki/CLI-Guide.md`](docs/wiki/CLI-Guide.md)
+- **API reference**: [`docs/wiki/API-Reference.md`](docs/wiki/API-Reference.md)
+- **CLI/API cookbook**: [`docs/wiki/CLI-API-Cookbook.md`](docs/wiki/CLI-API-Cookbook.md)
+- **Troubleshooting**: [`docs/wiki/Troubleshooting.md`](docs/wiki/Troubleshooting.md)
+
+More technical docs:
+
 - LAN hardening: `docs/wiki/LAN-Hardening.md`
 - Compatibility matrix: `docs/wiki/Compatibility-Matrix.md`
 - Core scope: `docs/CORE_SCOPE.md`
@@ -133,7 +141,6 @@ The installer can create Windows Firewall rules for TCP 8742 and UDP discovery 8
 - Protocol contract: `docs/PROTOCOL.md`
 - Security posture matrix: `docs/SECURITY_POSTURE_MATRIX.md`
 - Roadmap: `ROADMAP.md`
-
 ## Security
 
 - **Protected browsing**: normal use avoids system locations and high-risk roots.
