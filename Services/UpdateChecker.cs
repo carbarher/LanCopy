@@ -1,4 +1,6 @@
 using System.Net.Http;
+using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
 
 namespace LanCopy.Services;
@@ -9,10 +11,21 @@ namespace LanCopy.Services;
 public static class UpdateChecker
 {
     public sealed record UpdateInfo(bool Available, string CurrentVersion, string LatestVersion, string Url, string Notes);
+    public sealed record ReleaseAssetManifest(string Sha256, string? Signature);
 
     // Repositorio de releases (owner/repo). Configurable si el proyecto se aloja en otro sitio.
     public static string Owner { get; set; } = "carbarher";
     public static string Repo { get; set; } = "LanCopy";
+
+    // Pinned ECDSA P-256 public key for signed release manifests.
+    // When set, missing, malformed, mismatched, or untrusted signatures fail closed.
+    public static string? ReleaseManifestPublicKeyPem { get; set; } =
+        """
+        -----BEGIN PUBLIC KEY-----
+        MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAELP/1JvtpIcdyFwucptVjD9YSNPpE
+        A6rMQS8865X46TMl1A8IhMCnGCX+mYqc8mEDMJU4akt+bicphRyz2CEFXg==
+        -----END PUBLIC KEY-----
+        """;
 
     public static string CurrentVersion =>
         typeof(UpdateChecker).Assembly.GetName().Version?.ToString(3) ?? "0.0.0";
@@ -223,6 +236,33 @@ public static class UpdateChecker
             }
 
             progress?.Report(1.0);
+            var checksumUrl = downloadUrl + ".sha256";
+            var manifest = await DownloadReleaseManifestAsync(checksumUrl, ct);
+            if (manifest is null)
+            {
+                Log.Debug("update", "checksum-missing", new { checksumUrl });
+                DeleteIfExists(destPath);
+                return null;
+            }
+
+            if (!VerifyReleaseManifestSignature(manifest, fileName, ReleaseManifestPublicKeyPem))
+            {
+                Log.Debug("update", "signature-invalid", new { checksumUrl, fileName });
+                DeleteIfExists(destPath);
+                return null;
+            }
+
+            var expectedHash = manifest.Sha256;
+
+            var actualHash = await ComputeSha256HexAsync(destPath, ct);
+            if (!string.Equals(expectedHash, actualHash, StringComparison.OrdinalIgnoreCase))
+            {
+                Log.Debug("update", "checksum-mismatch", new { destPath, expectedHash, actualHash });
+                DeleteIfExists(destPath);
+                return null;
+            }
+
+            await File.WriteAllTextAsync(destPath + ".sha256", SerializeReleaseManifestSidecar(manifest), ct);
             Log.Info("update", "download-complete", new { destPath, totalRead });
             return destPath;
         }
@@ -250,6 +290,42 @@ public static class UpdateChecker
         if (!File.Exists(downloadedPath))
         {
             Log.Debug("update", "apply-failed", new { error = "Downloaded file not found", downloadedPath });
+            return false;
+        }
+
+        var checksumPath = downloadedPath + ".sha256";
+        if (!File.Exists(checksumPath))
+        {
+            Log.Debug("update", "apply-failed", new { error = "Checksum sidecar missing", checksumPath });
+            return false;
+        }
+
+        try
+        {
+            var manifest = ParseReleaseAssetManifest(File.ReadAllText(checksumPath));
+            if (manifest is null)
+            {
+                Log.Debug("update", "apply-failed", new { error = "Invalid checksum sidecar", checksumPath });
+                return false;
+            }
+
+            if (!VerifyReleaseManifestSignature(manifest, Path.GetFileName(downloadedPath), ReleaseManifestPublicKeyPem))
+            {
+                Log.Debug("update", "apply-failed", new { error = "Invalid release signature", checksumPath });
+                return false;
+            }
+
+            var expected = manifest.Sha256;
+            var actual = ComputeSha256Hex(downloadedPath);
+            if (!string.Equals(expected, actual, StringComparison.OrdinalIgnoreCase))
+            {
+                Log.Debug("update", "apply-failed", new { error = "Checksum mismatch", expected, actual });
+                return false;
+            }
+        }
+        catch (Exception ex)
+        {
+            Log.Debug("update", "apply-failed", new { error = ex.Message });
             return false;
         }
 
@@ -304,13 +380,126 @@ public static class UpdateChecker
         }
         catch (Exception ex)
         {
-            if (oldPath != null && File.Exists(oldPath) && !File.Exists(currentExe))
+            if (oldPath != null && File.Exists(oldPath))
             {
-                try { File.Move(oldPath, currentExe); } catch { }
+                try
+                {
+                    if (File.Exists(currentExe))
+                        File.Delete(currentExe);
+                    File.Move(oldPath, currentExe);
+                }
+                catch (Exception restoreEx)
+                {
+                    Log.Debug("update", "restore-old-failed", new { error = restoreEx.Message });
+                }
             }
             Log.Debug("update", "apply-failed", new { error = ex.Message });
             return false;
         }
+    }
+
+    public static string ComputeSha256Hex(string filePath)
+    {
+        using var fs = File.OpenRead(filePath);
+        return Convert.ToHexString(SHA256.HashData(fs)).ToLowerInvariant();
+    }
+
+    public static async Task<string> ComputeSha256HexAsync(string filePath, CancellationToken ct = default)
+    {
+        await using var fs = File.OpenRead(filePath);
+        return Convert.ToHexString(await SHA256.HashDataAsync(fs, ct)).ToLowerInvariant();
+    }
+
+    public static string? ParseSha256Manifest(string manifestText)
+        => ParseReleaseAssetManifest(manifestText)?.Sha256;
+
+    public static ReleaseAssetManifest? ParseReleaseAssetManifest(string manifestText)
+    {
+        if (string.IsNullOrWhiteSpace(manifestText))
+            return null;
+
+        var trimmed = manifestText.Trim();
+        if (trimmed.StartsWith('{'))
+        {
+            try
+            {
+                using var doc = JsonDocument.Parse(trimmed);
+                var root = doc.RootElement;
+                var sha256 = root.TryGetProperty("sha256", out var hashEl) ? hashEl.GetString() : null;
+                var normalized = NormalizeSha256(sha256 ?? "");
+                if (!IsSha256Hex(normalized))
+                    return null;
+
+                var signature = root.TryGetProperty("signature", out var sigEl) ? sigEl.GetString() : null;
+                return new ReleaseAssetManifest(normalized, string.IsNullOrWhiteSpace(signature) ? null : signature.Trim());
+            }
+            catch (JsonException)
+            {
+                return null;
+            }
+        }
+
+        var first = manifestText.Split(new[] { ' ', '\t', '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries).FirstOrDefault();
+        if (string.IsNullOrWhiteSpace(first))
+            return null;
+
+        var legacyHash = NormalizeSha256(first);
+        return IsSha256Hex(legacyHash) ? new ReleaseAssetManifest(legacyHash, null) : null;
+    }
+
+    public static bool VerifyReleaseManifestSignature(
+        ReleaseAssetManifest manifest,
+        string assetName,
+        string? publicKeyPem = null)
+    {
+        if (string.IsNullOrWhiteSpace(publicKeyPem))
+            return true;
+
+        if (string.IsNullOrWhiteSpace(manifest.Signature) || string.IsNullOrWhiteSpace(assetName))
+            return false;
+
+        try
+        {
+            var signature = Convert.FromBase64String(manifest.Signature);
+            var payload = Encoding.UTF8.GetBytes($"{assetName}\n{manifest.Sha256}\n");
+            using var ecdsa = ECDsa.Create();
+            ecdsa.ImportFromPem(publicKeyPem);
+            return ecdsa.VerifyData(payload, signature, HashAlgorithmName.SHA256);
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private static async Task<ReleaseAssetManifest?> DownloadReleaseManifestAsync(string checksumUrl, CancellationToken ct)
+    {
+        using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(10) };
+        http.DefaultRequestHeaders.UserAgent.ParseAdd("LanCopy-UpdateChecker");
+        using var resp = await http.GetAsync(checksumUrl, HttpCompletionOption.ResponseHeadersRead, ct);
+        if (!resp.IsSuccessStatusCode)
+            return null;
+        var manifest = await resp.Content.ReadAsStringAsync(ct);
+        return ParseReleaseAssetManifest(manifest);
+    }
+
+    private static string SerializeReleaseManifestSidecar(ReleaseAssetManifest manifest)
+    {
+        if (string.IsNullOrWhiteSpace(manifest.Signature))
+            return manifest.Sha256;
+
+        return JsonSerializer.Serialize(new { sha256 = manifest.Sha256, signature = manifest.Signature });
+    }
+    private static string NormalizeSha256(string value)
+        => value.Trim().Replace(" ", "").ToLowerInvariant();
+
+    private static bool IsSha256Hex(string value)
+        => value.Length == 64 && value.All(Uri.IsHexDigit);
+
+    private static void DeleteIfExists(string path)
+    {
+        try { if (File.Exists(path)) File.Delete(path); } catch { }
+        try { if (File.Exists(path + ".sha256")) File.Delete(path + ".sha256"); } catch { }
     }
 
     /// <summary>

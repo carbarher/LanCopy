@@ -1,39 +1,7 @@
-## Build output
 bin/
 obj/
 publish/
 publish_v*/
-
-## IDE
-.vs/
-.idea/
-.vscode/settings.json
-.vscode/launch.json
-*.suo
-*.user
-*.userosscache
-*.sln.docstates
-*.DotSettings.user
-
-## Build artifacts
-*.nupkg
-*.snupkg
-BenchmarkDotNet.Artifacts/
-TestResults/
-coverage/
-
-## Installer output
 installer/Output/
-
-## OS junk
-.DS_Store
-Thumbs.db
-ehthumbs.db
-Desktop.ini
-
-## Logs
+*.user
 *.log
-
-## Crash dumps
-*.dmp
-crash.*.json

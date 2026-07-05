@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using System.Net;
+using System.Security.Cryptography;
 using System.Text.Json;
 using System.Threading.Channels;
 using LanCopy.Services;
@@ -90,7 +91,7 @@ internal static class Program
         if (string.IsNullOrWhiteSpace(localPath))
         {
             Console.Error.WriteLine("Missing source file path.");
-            Console.Error.WriteLine("Usage: send <local-file> --to <ip[:port]> [--remote <path>] [--pin <pin>] [--json]");
+            Console.Error.WriteLine("Usage: send <local-file> --to <ip[:port]> [--remote <path>] [--pin <pin>] [--allow-plaintext-fallback] [--json]");
             return 2;
         }
 
@@ -113,6 +114,7 @@ internal static class Program
         var json = HasFlag(args, "--json");
         var useTls = !HasFlag(args, "--no-tls");
         var useCompress = !HasFlag(args, "--no-compress");
+        var allowPlaintextFallback = HasFlag(args, "--allow-plaintext-fallback");
 
         var fileInfo = new FileInfo(localPath);
         long doneBytes = 0;
@@ -137,6 +139,7 @@ internal static class Program
             {
                 Pin = string.IsNullOrWhiteSpace(pin) ? null : pin,
                 UseTls = useTls,
+                AllowPlaintextFallback = allowPlaintextFallback,
                 UseCompress = useCompress
             };
 
@@ -179,7 +182,7 @@ internal static class Program
         if (string.IsNullOrWhiteSpace(localDir))
         {
             Console.Error.WriteLine("Missing source directory path.");
-            Console.Error.WriteLine("Usage: sync <local-dir> --to <ip[:port]> [--remote-root <path>] [--pin <pin>] [--json]");
+            Console.Error.WriteLine("Usage: sync <local-dir> --to <ip[:port]> [--remote-root <path>] [--pin <pin>] [--allow-plaintext-fallback] [--json]");
             return 2;
         }
 
@@ -202,6 +205,7 @@ internal static class Program
         var json = HasFlag(args, "--json");
         var useTls = !HasFlag(args, "--no-tls");
         var useCompress = !HasFlag(args, "--no-compress");
+        var allowPlaintextFallback = HasFlag(args, "--allow-plaintext-fallback");
 
         // Filter out reparse points (symlinks, junctions) — same policy as the GUI.
         var files = Directory.EnumerateFiles(localDir, "*", SearchOption.AllDirectories)
@@ -225,6 +229,7 @@ internal static class Program
             {
                 Pin = string.IsNullOrWhiteSpace(pin) ? null : pin,
                 UseTls = useTls,
+                AllowPlaintextFallback = allowPlaintextFallback,
                 UseCompress = useCompress
             };
 
@@ -628,7 +633,8 @@ internal static class Program
     internal static string NormalizeRemotePath(string? remotePath, string localPath)
     {
         if (!string.IsNullOrWhiteSpace(remotePath)) return remotePath;
-        var fileName = Path.GetFileName(localPath);
+        var normalizedLocalPath = localPath.Replace('\\', Path.DirectorySeparatorChar).Replace('/', Path.DirectorySeparatorChar);
+        var fileName = Path.GetFileName(normalizedLocalPath);
         return string.IsNullOrWhiteSpace(fileName) ? localPath : fileName;
     }
 
@@ -684,8 +690,12 @@ internal static class Program
         return generated;
     }
 
-    private static string GenerateToken()
-        => Convert.ToBase64String(Guid.NewGuid().ToByteArray()).TrimEnd('=').Replace('+', '-').Replace('/', '_');
+    internal static string GenerateToken()
+    {
+        Span<byte> bytes = stackalloc byte[32];
+        RandomNumberGenerator.Fill(bytes);
+        return Convert.ToBase64String(bytes).TrimEnd('=').Replace('+', '-').Replace('/', '_');
+    }
 
     internal static object BuildOpenApiDocument()
     {
@@ -823,9 +833,9 @@ internal static class Program
         Console.WriteLine("Commands:");
         Console.WriteLine("  peers [--wait N] [--json]                                 Discover peers on LAN");
         Console.WriteLine("  send <local-file> --to <ip[:port]> [--remote <path>]     Upload file to remote peer");
-        Console.WriteLine("       [--pin <pin>] [--no-tls] [--no-compress] [--json]");
+        Console.WriteLine("       [--pin <pin>] [--no-tls] [--allow-plaintext-fallback] [--no-compress] [--json]");
         Console.WriteLine("  sync <local-dir> --to <ip[:port]> [--remote-root <path>] Sync local directory to remote peer");
-        Console.WriteLine("       [--pin <pin>] [--no-tls] [--no-compress] [--json]");
+        Console.WriteLine("       [--pin <pin>] [--no-tls] [--allow-plaintext-fallback] [--no-compress] [--json]");
         Console.WriteLine("  transfer status <id> [--api-url URL] [--token TOKEN]     Query transfer status");
         Console.WriteLine("  transfer cancel <id> [--api-url URL] [--token TOKEN]     Cancel transfer via local API");
         Console.WriteLine("  transfer retry <id> [--api-url URL] [--token TOKEN]      Retry terminal transfer via local API");

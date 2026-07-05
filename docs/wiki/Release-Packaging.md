@@ -1,20 +1,24 @@
 # Release & Packaging
 
 ## CI flow
-- Push/PR: build + tests on Windows/Linux/macOS.
-- Tag `vX.Y.Z`: publish artifacts and create GitHub release.
+- Pull request: LanCopy CI builds and tests on Windows/Linux/macOS.
+- Tag `lancopy-vX.Y.Z`: publish LanCopy release artifacts.
 
 ## Published artifacts
-- Windows: portable EXE (x64/arm64) + optional installer.
-- Linux: tar.gz + deb (+ AppImage on x64).
-- macOS: zip + dmg (arm64/x64).
+- Windows: `LanCopy-win-x64.exe`, `LanCopy-win-arm64.exe`.
+- Linux: `LanCopy-linux-x64.tar.gz`, `LanCopy-linux-arm64.tar.gz`.
+- macOS: `LanCopy-osx-x64.zip`, `LanCopy-osx-arm64.zip`.
 
-## Version automation
-- Auto Version Tag workflow bumps csproj version.
-- CI workflow builds and publishes release assets.
+## Update manifests
+- Every release asset gets `<asset>.sha256`.
+- Without a signing secret, the sidecar is a legacy plain SHA-256 hash.
+- With `LANCOPY_RELEASE_SIGNING_PRIVATE_KEY_PEM`, the sidecar is JSON with `sha256` and `signature`.
+- Signatures cover `assetName + newline + sha256 + newline` with ECDSA P-256/SHA-256.
 
 ## Validation checklist
-1. CI green on master.
+1. LanCopy CI green on Windows/Linux/macOS.
 2. Tag workflow completed.
 3. Release exists and contains expected assets.
-4. Download links in README resolve correctly.
+4. Every artifact has a `.sha256` sidecar.
+5. Signed-update mode uses the public key pinned in the app.
+6. Download links in README resolve correctly.

@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using System.Net;
 using LanCopy.Services;
 using Xunit;
 
@@ -33,6 +34,15 @@ public class PeerDiscoveryTests
         Assert.Contains("127.0.0.1", ips);
     }
 
+    [Theory]
+    [InlineData("192.168.1.34", "255.255.255.0", "192.168.1.255")]
+    [InlineData("10.0.8.20", "255.255.240.0", "10.0.15.255")]
+    [InlineData("172.16.4.10", "255.255.252.0", "172.16.7.255")]
+    public void CalculateBroadcastAddress_UsesInterfaceSubnetMask(string ip, string mask, string expected)
+    {
+        var actual = PeerDiscovery.CalculateBroadcastAddress(IPAddress.Parse(ip), IPAddress.Parse(mask));
+        Assert.Equal(expected, actual.ToString());
+    }
     [Fact]
     public void GetPeers_ReturnsEmptyWhenNoPeersDiscovered()
     {

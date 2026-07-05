@@ -16,22 +16,16 @@ public class TransferIntegrationTests : IDisposable
         _shared = Path.Combine(Path.GetTempPath(), "LanCopySrv_" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(_shared);
         ShareRoot.SetRoot(_shared);
-
-        _port = GetFreePort();
-        _server = new FileServer { RestrictToShareRoot = true };
-        _server.Start(_port);
+        _server = new FileServer { RestrictToShareRoot = true, AuthorizePeerCommand = (_, _) => true };
+        _server.Start(0);
+        _port = _server.Port;
     }
 
-    private static int GetFreePort()
-    {
-        var l = new TcpListener(System.Net.IPAddress.Loopback, 0);
-        l.Start();
-        var port = ((System.Net.IPEndPoint)l.LocalEndpoint).Port;
-        l.Stop();
-        return port;
-    }
 
     private LanClient Client() => new("127.0.0.1", _port);
+
+    private static string OutsidePath(string fileName)
+        => Path.Combine(Path.GetTempPath(), "LanCopyOutside_" + Guid.NewGuid().ToString("N"), fileName);
 
     [Fact]
     public async Task Upload_Then_Download_PreservesContent()
@@ -72,7 +66,7 @@ public class TransferIntegrationTests : IDisposable
     public async Task List_OutsideRoot_IsBlocked()
     {
         await Assert.ThrowsAnyAsync<Exception>(async () =>
-            await Client().ListAsync(@"C:\Windows"));
+            await Client().ListAsync(OutsidePath("list.txt")));
     }
 
     [Fact]
@@ -80,7 +74,7 @@ public class TransferIntegrationTests : IDisposable
     {
         var outFile = Path.Combine(Path.GetTempPath(), "leak_" + Guid.NewGuid().ToString("N") + ".ini");
         await Assert.ThrowsAnyAsync<Exception>(async () =>
-            await Client().DownloadAsync(@"C:\Windows\win.ini", outFile));
+            await Client().DownloadAsync(OutsidePath("win.ini"), outFile));
     }
 
     [Fact]
@@ -91,7 +85,7 @@ public class TransferIntegrationTests : IDisposable
         var srcFile = Path.Combine(srcDir, "evil.txt");
         await File.WriteAllTextAsync(srcFile, "x");
         await Assert.ThrowsAnyAsync<Exception>(async () =>
-            await Client().UploadAsync(srcFile, @"C:\Users\Public\evil.txt"));
+            await Client().UploadAsync(srcFile, OutsidePath("evil.txt")));
     }
 
     [Fact]

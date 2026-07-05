@@ -107,6 +107,12 @@ jobs:
         if: startsWith(matrix.rid, 'win-')
         shell: pwsh
         run: Copy-Item "publish/${{ matrix.rid }}/LanCopy.exe" "LanCopy-${{ matrix.rid }}.exe" -Force
+      - name: Checksum Windows artifact
+        if: startsWith(matrix.rid, 'win-')
+        shell: pwsh
+        run: |
+          $hash = (Get-FileHash "LanCopy-${{ matrix.rid }}.exe" -Algorithm SHA256).Hash.ToLowerInvariant()
+          Set-Content -NoNewline "LanCopy-${{ matrix.rid }}.exe.sha256" $hash
       - name: Package Linux (tar.gz)
         if: startsWith(matrix.rid, 'linux-')
         run: |
@@ -117,6 +123,7 @@ jobs:
           cp packaging/linux/lancopy.desktop pkg/usr/share/applications/lancopy.desktop
           cp Assets/app.png pkg/usr/share/icons/hicolor/512x512/apps/lancopy.png
           tar -C pkg -czf LanCopy-${{ matrix.rid }}.tar.gz .
+          sha256sum LanCopy-${{ matrix.rid }}.tar.gz | awk '{print $1}' > LanCopy-${{ matrix.rid }}.tar.gz.sha256
           arch="amd64"
           if [ "${{ matrix.rid }}" = "linux-arm64" ]; then arch="arm64"; fi
           mkdir -p deb/DEBIAN deb/usr/bin deb/usr/share/applications deb/usr/share/icons/hicolor/512x512/apps
@@ -133,6 +140,7 @@ jobs:
           Description: LAN file transfer app (encrypted, cross-platform)
           EOF
           dpkg-deb --build deb "LanCopy-${{ matrix.rid }}.deb"
+          sha256sum "LanCopy-${{ matrix.rid }}.deb" | awk '{print $1}' > "LanCopy-${{ matrix.rid }}.deb.sha256"
       - name: Package Linux AppImage (x64)
         if: matrix.rid == 'linux-x64'
         run: |
@@ -153,6 +161,7 @@ jobs:
           curl -fsSL -o appimagetool.AppImage https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-x86_64.AppImage
           chmod +x appimagetool.AppImage
           ARCH=x86_64 VERSION="${GITHUB_REF_NAME#v}" ./appimagetool.AppImage --appimage-extract-and-run "$appdir" "LanCopy-linux-x64.AppImage"
+          sha256sum LanCopy-linux-x64.AppImage | awk '{print $1}' > LanCopy-linux-x64.AppImage.sha256
       - name: Package macOS (.app)
         if: startsWith(matrix.rid, 'osx-')
         run: |
@@ -161,6 +170,8 @@ jobs:
           packaging/macos/make-app.sh publish/${{ matrix.rid }}/LanCopy "${{ github.ref_name }}"
           ditto -c -k --sequesterRsrc --keepParent LanCopy.app LanCopy-${{ matrix.rid }}.zip
           hdiutil create -volname "LanCopy" -srcfolder LanCopy.app -ov -format UDZO LanCopy-${{ matrix.rid }}.dmg
+          shasum -a 256 LanCopy-${{ matrix.rid }}.zip | awk '{print $1}' > LanCopy-${{ matrix.rid }}.zip.sha256
+          shasum -a 256 LanCopy-${{ matrix.rid }}.dmg | awk '{print $1}' > LanCopy-${{ matrix.rid }}.dmg.sha256
       - name: Upload
         uses: actions/upload-artifact@v4
         with:

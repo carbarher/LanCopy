@@ -2,27 +2,6 @@
 
 All notable changes to LanCopy are documented in this file.
 
-## [1.5.5] — 2026-07-03
-
-### Features
-- Universal Clipboard: automatic clipboard sync between peers
-- Push Links: auto-open received URLs on the remote machine
-- Quick-access bookmarks (Favorites) in local/remote file browsers
-- Remote Shutdown/Restart (LanControl) with confirmation dialog and PIN
-- Recursive remote search with 500ms debounce and 250-entry cap
-- Trash Restore: restore files and directories from the Audit window
-
-### Fixed
-- 47 critical bug fixes: race conditions (TOCTOU), SemaphoreSlim deadlocks, TLS SafeHandle leaks, injection vulnerabilities, and DoS vectors
-
-### Performance
-- 20 optimizations (M1-O20): zero-alloc hot paths, FileInfo-based single-syscall, pre-serialized UDP payloads, O(1) active IP tracking, direct stream serialization, ArrayPool for download buffers, lazy-cached FileEntry display properties, single-pass FileSorter
-
-### Infrastructure
-- Added `.editorconfig`, `.gitattributes`, expanded `.gitignore`
-- Added Dependabot and PR template
-- Tests now run cross-platform (removed win-x64 RuntimeIdentifier)
-
 ## [1.0.17] - 2026-07-02
 
 ### Fixed

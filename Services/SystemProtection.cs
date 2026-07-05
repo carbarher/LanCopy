@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Text.RegularExpressions;
 
 namespace LanCopy.Services;
 
@@ -28,8 +29,90 @@ internal static class SystemProtection
         void AddSys(Environment.SpecialFolder f)
         {
             var p = Environment.GetFolderPath(f);
-            if (!string.IsNullOrEmpty(p)) _systemRoots.Add(p);
+            if (!string.IsNullOrEmpty(p)) _systemRoots.Add(NormalizeRoot(p));
         }
+        void AddSysPath(string? p)
+        {
+            if (!string.IsNullOrWhiteSpace(p)) _systemRoots.Add(NormalizeRoot(p));
+        }
+
+        void AddKnownSystemNamesForDrive(string? driveRoot)
+        {
+            if (string.IsNullOrWhiteSpace(driveRoot)) return;
+            string root;
+            try
+            {
+                root = Path.GetPathRoot(Path.GetFullPath(driveRoot)) ?? driveRoot;
+            }
+            catch
+            {
+                root = driveRoot;
+            }
+
+            if (string.IsNullOrWhiteSpace(root)) return;
+
+            string[] names =
+            [
+                "Windows",
+                "WinNT",
+                "Program Files",
+                "Program Files (x86)",
+                "ProgramData",
+                "System Volume Information",
+                "$Recycle.Bin",
+                "Recovery",
+                "Boot",
+                "EFI",
+                "Config.Msi",
+                "MSOCache",
+                "PerfLogs",
+                "$WinREAgent",
+                "$WINDOWS.~BT",
+                "$Windows.~WS",
+                "Documents and Settings",
+                "pagefile.sys",
+                "swapfile.sys",
+                "hiberfil.sys",
+                "bootmgr",
+                "BOOTNXT",
+                "DumpStack.log.tmp"
+            ];
+
+            foreach (var name in names)
+                AddSysPath(Path.Combine(root, name));
+        }
+
+        void AddUnixSystemRoots()
+        {
+            string[] roots =
+            [
+                "/bin",
+                "/sbin",
+                "/usr",
+                "/etc",
+                "/var",
+                "/private",
+                "/opt",
+                "/dev",
+                "/proc",
+                "/sys",
+                "/run",
+                "/boot",
+                "/root",
+                "/snap",
+                "/nix",
+                "/System",
+                "/Library",
+                "/Applications",
+                "/Network",
+                "/Volumes",
+                "/cores"
+            ];
+
+            foreach (var root in roots)
+                AddSysPath(root);
+        }
+
         void AddPersonal(Environment.SpecialFolder f)
         {
             var p = Environment.GetFolderPath(f);
@@ -42,6 +125,24 @@ internal static class SystemProtection
         AddSys(Environment.SpecialFolder.ProgramFiles);
         AddSys(Environment.SpecialFolder.ProgramFilesX86);
         AddSys(Environment.SpecialFolder.CommonApplicationData); // C:\ProgramData
+        AddSysPath(Environment.GetEnvironmentVariable("ProgramFiles"));
+        AddSysPath(Environment.GetEnvironmentVariable("ProgramW6432"));
+        AddSysPath(Environment.GetEnvironmentVariable("ProgramFiles(x86)"));
+        AddSysPath(Environment.GetEnvironmentVariable("SystemRoot"));
+        AddSysPath(Environment.GetEnvironmentVariable("WinDir"));
+        AddSysPath(Environment.GetEnvironmentVariable("ProgramData"));
+        AddUnixSystemRoots();
+
+        AddKnownSystemNamesForDrive(Environment.GetEnvironmentVariable("SystemDrive"));
+        try
+        {
+            foreach (var drive in DriveInfo.GetDrives())
+                AddKnownSystemNamesForDrive(drive.Name);
+        }
+        catch
+        {
+            // If drive enumeration is unavailable, environment/special folders still protect the OS drive.
+        }
 
         AddPersonal(Environment.SpecialFolder.UserProfile);   // C:\Users\<user>
         AddPersonal(Environment.SpecialFolder.MyDocuments);
@@ -66,6 +167,7 @@ internal static class SystemProtection
     public static bool IsProtected(string? path)
     {
         if (string.IsNullOrWhiteSpace(path)) return true;
+        if (IsDriveRootLike(path)) return true;
         string normalized;
         try { normalized = Path.GetFullPath(path); }
         catch { return true; }
@@ -96,6 +198,7 @@ internal static class SystemProtection
     public static bool IsProtectedForRemote(string? path)
     {
         if (string.IsNullOrWhiteSpace(path)) return true;
+        if (IsDriveRootLike(path)) return true;
         string normalized;
         try { normalized = Path.GetFullPath(path); }
         catch { return true; }
@@ -109,11 +212,40 @@ internal static class SystemProtection
         return false;
     }
 
+    private static bool IsDriveRootLike(string path)
+    {
+        var trimmed = path.Trim().TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        if (Regex.IsMatch(trimmed, @"^[a-zA-Z]:$")) return true;
+
+        try
+        {
+            var full = Path.GetFullPath(path);
+            var root = Path.GetPathRoot(full);
+            return !string.IsNullOrEmpty(root)
+                && string.Equals(full.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar),
+                                 root.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar),
+                                 StringComparison.OrdinalIgnoreCase);
+        }
+        catch
+        {
+            return true;
+        }
+    }
+
+    private static string NormalizeRoot(string path)
+    {
+        try { return Path.GetFullPath(path).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar); }
+        catch { return path.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar); }
+    }
+
     private static bool IsUnderOrEqual(string path, string root)
     {
+        path = NormalizeRoot(path);
+        root = NormalizeRoot(root);
         if (string.Equals(path, root, StringComparison.OrdinalIgnoreCase)) return true;
         var rootWithSep = root.EndsWith(Path.DirectorySeparatorChar)
             ? root : root + Path.DirectorySeparatorChar;
         return path.StartsWith(rootWithSep, StringComparison.OrdinalIgnoreCase);
     }
 }
+

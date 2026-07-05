@@ -24,6 +24,12 @@ internal static class SafeFileOps
 
     public static string Normalize(string path) => Path.GetFullPath(path.Trim());
 
+    private static bool IsDriveRootInput(string path)
+    {
+        var trimmed = path.Trim().TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        return trimmed.Length == 2 && char.IsLetter(trimmed[0]) && trimmed[1] == ':';
+    }
+
     public static bool TryValidateMutationPath(string? path, out string normalized, out string reason, bool requireExists = true)
     {
         normalized = "";
@@ -32,6 +38,12 @@ internal static class SafeFileOps
         if (string.IsNullOrWhiteSpace(path))
         {
             reason = "svc.emptyPath";
+            return false;
+        }
+
+        if (IsDriveRootInput(path))
+        {
+            reason = "svc.driveRootProtected";
             return false;
         }
 
@@ -362,3 +374,4 @@ internal static class SafeFileOps
         if (_statCache.TryRemove(normalizedPath, out _)) Interlocked.Decrement(ref _statCacheCount);
     }
 }
+

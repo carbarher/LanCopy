@@ -29,6 +29,10 @@ Welcome to the LanCopy wiki.
 ### 🔒 Security & Ops
 - [LAN Hardening](LAN-Hardening)
 - [Security Model](Security-Model)
+- [Threat Model](../THREAT_MODEL)
+- [Security Posture Matrix](../SECURITY_POSTURE_MATRIX)
+- [Protocol Contract](../PROTOCOL)
+- [Core Scope](../CORE_SCOPE)
 - [Release & Packaging](Release-Packaging)
 
 ### ❓ Help

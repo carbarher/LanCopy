@@ -258,7 +258,7 @@ public partial class MainWindow
             _server.DisconnectNoticeReceived += OnDisconnectNoticeReceived;
             this.FindControl<TextBlock>("txtMyIp")!.Text = $"{_server.LocalIp}:{_server.Port}";
 
-            _discovery = new PeerDiscovery(_server.LocalIp, _server.Port);
+            _discovery = new PeerDiscovery(_server.LocalIp, _server.Port, _tlsEnabled);
             _discovery.PeersChanged += OnPeersChanged;
             _discovery.Start();
 
@@ -287,7 +287,7 @@ public partial class MainWindow
             var combo = this.FindControl<ComboBox>("cmbPeers");
             if (combo == null) return;
             var peers = _discovery?.GetPeers() ?? [];
-            var newItems = peers.Select(p => $"{p.Name} ({p.Ip}:{p.Port})").ToList();
+            var newItems = peers.Select(p => $"{p.Name} ({p.Ip}:{p.Port}){FormatPeerTlsSuffix(p.TlsEnabled)}").ToList();
 
             var prev = combo.SelectedItem as string;
             combo.ItemsSource = newItems;
@@ -316,7 +316,22 @@ public partial class MainWindow
                 var target = (!string.IsNullOrEmpty(savedIp2)
                     ? peers.FirstOrDefault(p => p.Ip == savedIp2)
                     : null) ?? newPeers[0];
-                _ = ConnectAsync(target.Ip, target.Port);
+                if (target.TlsEnabled is bool targetTls && targetTls != _tlsEnabled)
+                {
+                    if (targetTls)
+                    {
+                        SetStatus(L["st.tlsAutoUsingSecure"]);
+                        _ = ConnectAsync(target.Ip, target.Port, useTlsOverride: true);
+                    }
+                    else
+                    {
+                        SetStatus(L["st.tlsPeerNeedsCompatibility"]);
+                    }
+                }
+                else
+                {
+                    _ = ConnectAsync(target.Ip, target.Port);
+                }
             }
 
             // Notificar peer nuevo
@@ -329,6 +344,14 @@ public partial class MainWindow
             _knownPeerIps = peers.Select(p => p.Ip).ToHashSet(); // P3: HashSet<string>
         });
     }
+
+    private static string FormatPeerTlsSuffix(bool? tlsEnabled)
+        => tlsEnabled switch
+        {
+            true => " TLS",
+            false => " sin TLS",
+            _ => ""
+        };
     private void CmbPeers_SelectionChanged(object? sender, SelectionChangedEventArgs e)
     {
         var combo = (ComboBox)sender!;
@@ -417,7 +440,7 @@ public partial class MainWindow
     // F6: Descargar archivos seleccionados del panel remoto (pull download)
     private async void DownloadSelected_Click(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
     {
-        var selected = this.FindControl<ListBox>("remoteList")
+        var selected = this.FindControl<DataGrid>("remoteList")
             ?.SelectedItems?.OfType<FileEntry>()
             .Where(f => f.Name != ".." && !f.IsDirectory).ToList() ?? [];
         if (selected.Count == 0) { SetStatus(L["st.selectFiles"]); return; }
@@ -431,7 +454,7 @@ public partial class MainWindow
         // F6: placeholder para D&D remoto. La descarga real se hace via DownloadSelected_Click.
     }
 
-    private void ShowSelectionStatus(ListBox list)
+    private void ShowSelectionStatus(DataGrid list)
     {
         var selected = list.SelectedItems?.OfType<FileEntry>()
                            .Where(f => f.Name != "..").ToList() ?? [];
@@ -453,13 +476,16 @@ public partial class MainWindow
     private void UpdateLocalPath()
     {
         if (_txtLocalPath != null)
-            _txtLocalPath.Text = string.IsNullOrEmpty(_localPath) ? L["path.drives"] : _localPath;
+            _txtLocalPath.Text = string.IsNullOrEmpty(_localPath) ? L["path.localDrives"] : _localPath;
     }
 
     private void UpdateRemotePath()
     {
-        if (_txtRemotePath != null)
-            _txtRemotePath.Text = string.IsNullOrEmpty(_remotePath) ? L["path.drives"] : _remotePath;
+        if (_txtRemotePath == null) return;
+
+        _txtRemotePath.Text = _client == null
+            ? "—"
+            : string.IsNullOrEmpty(_remotePath) ? L["path.drives"] : _remotePath;
     }
 
     private void SetStatus(string text)
@@ -549,3 +575,6 @@ public partial class MainWindow
     }
 
 }
+
+
+

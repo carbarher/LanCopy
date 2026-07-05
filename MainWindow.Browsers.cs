@@ -33,8 +33,8 @@ public partial class MainWindow
 {
     private bool _debounceInited = false;
     // M9: referencias cacheadas a los ListBox — evita recorrer el árbol visual en cada GetSelectedItems
-    private ListBox? _localList;
-    private ListBox? _remoteList;
+    private DataGrid? _localList;
+    private DataGrid? _remoteList;
     private void StartBrowserAutoRefresh()
     {
         if (!_debounceInited) { InitDebounce(); _debounceInited = true; } // B4: inicializar handler una vez
@@ -151,7 +151,7 @@ public partial class MainWindow
 
     private async void LocalList_DoubleTapped(object? sender, TappedEventArgs e)
     {
-        var list = (ListBox)sender!;
+        var list = (DataGrid)sender!;
         if (list.SelectedItem is FileEntry { IsDirectory: true } item)
         {
             _localPath = item.FullPath;
@@ -161,7 +161,7 @@ public partial class MainWindow
     }
 
     private void LocalList_SelectionChanged(object? sender, SelectionChangedEventArgs e) =>
-        ShowSelectionStatus((ListBox)sender!);
+        ShowSelectionStatus((DataGrid)sender!);
 
     // ── Carpetas favoritas (accesos rápidos) ─────────────────────────────────
 
@@ -236,7 +236,7 @@ public partial class MainWindow
             Interlocked.Exchange(ref _localEntriesSignature, signature);
             _localItemsAll = entries;
             ApplyLocalFilter(this.FindControl<TextBox>("txtLocalFilter")?.Text?.Trim() ?? "");
-            Dispatcher.UIThread.Post(UpdateLocalPath);
+            Dispatcher.UIThread.Post(() => { UpdateLocalPath(); RememberCurrentPeerFolders(); });
         }
         catch (Exception ex) { SetStatus(L.Format("st.localError", ex.Message)); }
     }
@@ -360,7 +360,7 @@ public partial class MainWindow
     private async void RemoteList_DoubleTapped(object? sender, TappedEventArgs e)
     {
         if (_client == null) return;
-        var list = (ListBox)sender!;
+        var list = (DataGrid)sender!;
         if (list.SelectedItem is FileEntry { IsDirectory: true } item)
         {
             _remotePath = item.FullPath;
@@ -370,7 +370,7 @@ public partial class MainWindow
     }
 
     private void RemoteList_SelectionChanged(object? sender, SelectionChangedEventArgs e) =>
-        ShowSelectionStatus((ListBox)sender!);
+        ShowSelectionStatus((DataGrid)sender!);
 
     private async void RemoteGoUp(object? sender, RoutedEventArgs e)
     {
@@ -418,7 +418,7 @@ public partial class MainWindow
             var signature = ComputeEntriesSignature(entries);
             if (autoRefresh && signature == Interlocked.Read(ref _remoteEntriesSignature)) return;
             Interlocked.Exchange(ref _remoteEntriesSignature, signature);
-            Dispatcher.UIThread.Post(() => { _remoteItemsAll = entries; ApplyRemoteSort(); UpdateRemotePath(); });
+            Dispatcher.UIThread.Post(() => { _remoteItemsAll = entries; ApplyRemoteSort(); UpdateRemotePath(); RememberCurrentPeerFolders(); });
         }
         catch (Exception ex)
         {
@@ -558,10 +558,11 @@ public partial class MainWindow
     private List<FileEntry> GetSelectedItems(string listName)
     {
         // M9: usar referencias cacheadas en lugar de FindControl (recorre árbol visual en cada llamada)
-        if (_localList == null) _localList = this.FindControl<ListBox>("localList");
-        if (_remoteList == null) _remoteList = this.FindControl<ListBox>("remoteList");
+        if (_localList == null) _localList = this.FindControl<DataGrid>("localList");
+        if (_remoteList == null) _remoteList = this.FindControl<DataGrid>("remoteList");
         var lb = listName == "localList" ? _localList : _remoteList;
         return lb?.SelectedItems?.OfType<FileEntry>().Where(f => f.Name != "..").ToList() ?? [];
     }
 
 }
+

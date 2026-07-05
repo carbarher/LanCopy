@@ -417,22 +417,62 @@ public partial class MainWindow
 
     private void ChkTls_Changed(object? sender, RoutedEventArgs e)
     {
+        if (_securityToggleGuard) return;
         _tlsEnabled = (sender as CheckBox)?.IsChecked == true;
+        if (_safeModeEnabled && !_tlsEnabled)
+        {
+            _securityToggleGuard = true;
+            try
+            {
+                _tlsEnabled = true;
+                var chkTls = this.FindControl<CheckBox>("chkTls");
+                if (chkTls != null) chkTls.IsChecked = true;
+            }
+            finally { _securityToggleGuard = false; }
+            SetStatus(L["security.keepsTls"]);
+            return;
+        }
         _server.TlsEnabled = _tlsEnabled;
+        _discovery?.UpdateTlsEnabled(_tlsEnabled);
         SaveSettings(
             this.FindControl<TextBox>("txtRemoteIp")?.Text?.Trim() ?? "",
             this.FindControl<TextBox>("txtRemotePort")?.Text?.Trim() ?? "8742");
         SetStatus(_tlsEnabled ? L["st.tlsOn"] : L["st.tlsOff"]);
+        UpdateServerModeBadge();
     }
 
     private void ChkShareRoot_Changed(object? sender, RoutedEventArgs e)
     {
+        if (_securityToggleGuard) return;
         _restrictShareRoot = (sender as CheckBox)?.IsChecked == true;
+        if (_safeModeEnabled && !_restrictShareRoot)
+        {
+            _securityToggleGuard = true;
+            try
+            {
+                _restrictShareRoot = true;
+                var chk = this.FindControl<CheckBox>("chkShareRoot");
+                if (chk != null) chk.IsChecked = true;
+            }
+            finally { _securityToggleGuard = false; }
+            SetStatus(L["security.keepsSharedFolder"]);
+            return;
+        }
         _server.RestrictToShareRoot = _restrictShareRoot;
+        UpdateFullDiskSessionTimer();
         SaveSettings(
             this.FindControl<TextBox>("txtRemoteIp")?.Text?.Trim() ?? "",
             this.FindControl<TextBox>("txtRemotePort")?.Text?.Trim() ?? "8742");
-        SetStatus(_restrictShareRoot ? L["st.shareRootOn"] : L["st.shareRootOff"]);
+        if (_restrictShareRoot)
+        {
+            SetStatus(L["st.shareRootOn"]);
+            UpdateServerModeBadge();
+        }
+        else
+        {
+            SetStatus(L.Format("security.fullDiskEnabled", (int)FullDiskSessionDuration.TotalMinutes));
+            UpdateServerModeBadge();
+        }
     }
 
     private void ChkReadOnly_Changed(object? sender, RoutedEventArgs e)
@@ -443,16 +483,32 @@ public partial class MainWindow
             this.FindControl<TextBox>("txtRemoteIp")?.Text?.Trim() ?? "",
             this.FindControl<TextBox>("txtRemotePort")?.Text?.Trim() ?? "8742");
         SetStatus(_readOnly ? L["st.readOnlyOn"] : L["st.readOnlyOff"]);
+        UpdateServerModeBadge();
     }
 
     private void ChkSafeModeNoDelete_Changed(object? sender, RoutedEventArgs e)
     {
+        if (_securityToggleGuard) return;
         _safeModeNoRemoteDelete = (sender as CheckBox)?.IsChecked == true;
+        if (_safeModeEnabled && !_safeModeNoRemoteDelete)
+        {
+            _securityToggleGuard = true;
+            try
+            {
+                _safeModeNoRemoteDelete = true;
+                var chk = this.FindControl<CheckBox>("chkSafeModeNoDelete");
+                if (chk != null) chk.IsChecked = true;
+            }
+            finally { _securityToggleGuard = false; }
+            SetStatus(L["security.keepsNoDelete"]);
+            return;
+        }
         _server.SafeModeNoRemoteDelete = _safeModeNoRemoteDelete;
         SaveSettings(
             this.FindControl<TextBox>("txtRemoteIp")?.Text?.Trim() ?? "",
             this.FindControl<TextBox>("txtRemotePort")?.Text?.Trim() ?? "8742");
         SetStatus(_safeModeNoRemoteDelete ? L["st.safeModeNoDeleteOn"] : L["st.safeModeNoDeleteOff"]);
+        UpdateServerModeBadge();
     }
 
     private void ChkRequireApproval_Changed(object? sender, RoutedEventArgs e)
@@ -463,6 +519,18 @@ public partial class MainWindow
             this.FindControl<TextBox>("txtRemoteIp")?.Text?.Trim() ?? "",
             this.FindControl<TextBox>("txtRemotePort")?.Text?.Trim() ?? "8742");
         SetStatus(_requireApproval ? L["st.approvalOn"] : L["st.approvalOff"]);
+        UpdateServerModeBadge();
+    }
+
+    private void ChkRequireHighRiskApproval_Changed(object? sender, RoutedEventArgs e)
+    {
+        _requireHighRiskApproval = (sender as CheckBox)?.IsChecked != false;
+        _server.ApproveHighRisk = _requireHighRiskApproval ? OnApproveHighRiskAsync : null;
+        SaveSettings(
+            this.FindControl<TextBox>("txtRemoteIp")?.Text?.Trim() ?? "",
+            this.FindControl<TextBox>("txtRemotePort")?.Text?.Trim() ?? "8742");
+        SetStatus(_requireHighRiskApproval ? L["st.highRiskApprovalOn"] : L["st.highRiskApprovalOff"]);
+        UpdateServerModeBadge();
     }
 
     // Llamado por el servidor (hilo de red) antes de aceptar un fichero. Marshala a la UI,
@@ -483,6 +551,54 @@ public partial class MainWindow
         catch { return false; }
     }
 
+    private async Task<bool> OnApproveHighRiskAsync(FileServer.HighRiskCommand info, CancellationToken ct)
+    {
+        try
+        {
+            return await Dispatcher.UIThread.InvokeAsync(async () =>
+            {
+                if (ct.IsCancellationRequested) return false;
+
+                var target = !string.IsNullOrWhiteSpace(info.Path) ? info.Path
+                    : !string.IsNullOrWhiteSpace(info.Action) ? info.Action
+                    : L["st.na"];
+                var commandLabel = info.Command switch
+                {
+                    "delete" => L["cmd.highRisk.delete"],
+                    "power" => L["cmd.highRisk.power"],
+                    "delta_hashes" or "put_delta_blocks" => L["cmd.highRisk.sync"],
+                    _ => info.Command
+                };
+                var message = L.Format("dlg.highRiskApprove.body", commandLabel, info.Ip, target);
+                if (!await MessageBox(message, L["dlg.highRiskApprove.title"]))
+                    return false;
+
+                var configuredPin = this.FindControl<TextBox>("txtPin")?.Text?.Trim() ?? "";
+                if (string.IsNullOrEmpty(configuredPin))
+                    return true;
+
+                var pinDlg = new InputDialog(L["dlg.highRiskPin.title"], L["dlg.highRiskPin.prompt"], "");
+                await pinDlg.ShowDialog(this);
+                var entered = await pinDlg.GetResultAsync();
+                if (string.IsNullOrWhiteSpace(entered))
+                    return false;
+                return FixedTimeEquals(entered.Trim(), configuredPin);
+            });
+        }
+        catch (Exception ex)
+        {
+            Log.Warn("ui", "high-risk-approval-dialog-failed", new { ip = info.Ip, cmd = info.Command, error = ex.Message });
+            return false;
+        }
+    }
+
+    private static bool FixedTimeEquals(string a, string b)
+    {
+        var aa = System.Text.Encoding.UTF8.GetBytes(a);
+        var bb = System.Text.Encoding.UTF8.GetBytes(b);
+        return CryptographicOperations.FixedTimeEquals(aa, bb);
+    }
+
     private void ChkCompress_Changed(object? sender, RoutedEventArgs e)
     {
         _compressEnabled = (sender as CheckBox)?.IsChecked == true;
@@ -494,20 +610,305 @@ public partial class MainWindow
 
     private void ChkAutoClipboard_Changed(object? sender, RoutedEventArgs e)
     {
+        if (_securityToggleGuard) return;
         _autoClipboard = (sender as CheckBox)?.IsChecked == true;
+        if (_safeModeEnabled && _autoClipboard)
+        {
+            _securityToggleGuard = true;
+            try
+            {
+                _autoClipboard = false;
+                var chk = this.FindControl<CheckBox>("chkAutoClipboard");
+                if (chk != null) chk.IsChecked = false;
+            }
+            finally { _securityToggleGuard = false; }
+            SetStatus(L["security.keepsClipboardOff"]);
+            return;
+        }
         SaveSettings(
             this.FindControl<TextBox>("txtRemoteIp")?.Text?.Trim() ?? "",
             this.FindControl<TextBox>("txtRemotePort")?.Text?.Trim() ?? "8742");
         SetStatus(_autoClipboard ? L["st.autoClipboardOn"] : L["st.autoClipboardOff"]);
+        UpdateServerModeBadge();
     }
 
     private void ChkAutoOpenLinks_Changed(object? sender, RoutedEventArgs e)
     {
+        if (_securityToggleGuard) return;
         _autoOpenLinks = (sender as CheckBox)?.IsChecked == true;
+        if (_safeModeEnabled && _autoOpenLinks)
+        {
+            _securityToggleGuard = true;
+            try
+            {
+                _autoOpenLinks = false;
+                var chk = this.FindControl<CheckBox>("chkAutoOpenLinks");
+                if (chk != null) chk.IsChecked = false;
+            }
+            finally { _securityToggleGuard = false; }
+            SetStatus(L["security.keepsLinksOff"]);
+            return;
+        }
         SaveSettings(
             this.FindControl<TextBox>("txtRemoteIp")?.Text?.Trim() ?? "",
             this.FindControl<TextBox>("txtRemotePort")?.Text?.Trim() ?? "8742");
         SetStatus(_autoOpenLinks ? L["st.autoOpenLinksOn"] : L["st.autoOpenLinksOff"]);
+        UpdateServerModeBadge();
+    }
+
+    private async void ChkSafeMode_Changed(object? sender, RoutedEventArgs e)
+    {
+        if (_securityToggleGuard) return;
+
+        var shouldProtect = (sender as CheckBox)?.IsChecked != false;
+        if (shouldProtect)
+        {
+            _safeModeUntilUtc = null;
+            _safeModeUntilClose = false;
+            _safeModeEnabled = true;
+            ApplySafeModePolicy(persist: true, showStatus: true);
+            return;
+        }
+
+        await StartMoreAccessFromUserAsync();
+    }
+
+    private async void DisableSafeModeTemporarily_Click(object? sender, RoutedEventArgs e)
+    {
+        if (_securityToggleGuard) return;
+        await StartMoreAccessFromUserAsync();
+    }
+
+    private async Task StartMoreAccessFromUserAsync()
+    {
+        var dlg = new MoreAccessDurationDialog();
+        await dlg.ShowDialog(this);
+        var result = await dlg.GetResultAsync();
+
+        switch (result)
+        {
+            case MoreAccessDurationDialog.MoreAccessDuration.TenMinutes:
+                StartMoreAccessSession(TimeSpan.FromMinutes(10), untilClose: false);
+                break;
+            case MoreAccessDurationDialog.MoreAccessDuration.ThirtyMinutes:
+                StartMoreAccessSession(TimeSpan.FromMinutes(30), untilClose: false);
+                break;
+            case MoreAccessDurationDialog.MoreAccessDuration.UntilClose:
+                StartMoreAccessSession(null, untilClose: true);
+                break;
+            default:
+                RestoreSafeModeCheck();
+                break;
+        }
+    }
+
+    private void StartMoreAccessSession(TimeSpan? duration, bool untilClose)
+    {
+        _safeModeSessionTimer?.Stop();
+        _fullDiskSessionTimer?.Stop();
+        _fullDiskUntilUtc = null;
+        _safeModeUntilClose = untilClose;
+        _safeModeUntilUtc = untilClose || duration is null ? null : DateTimeOffset.UtcNow.Add(duration.Value);
+
+        _safeModeEnabled = false;
+        _tlsEnabled = true;
+        _restrictShareRoot = false;
+        _safeModeNoRemoteDelete = true;
+        _requireHighRiskApproval = true;
+        _remotePowerEnabled = false;
+        _autoClipboard = false;
+        _autoOpenLinks = false;
+
+        _server.TlsEnabled = true;
+        _server.RestrictToShareRoot = false;
+        _server.SafeModeNoRemoteDelete = true;
+        _server.ApproveHighRisk = OnApproveHighRiskAsync;
+        _server.RemotePowerEnabled = false;
+        _discovery?.UpdateTlsEnabled(true);
+
+        _securityToggleGuard = true;
+        try
+        {
+            this.FindControl<CheckBox>("chkSafeMode")!.IsChecked = false;
+            var chkTls = this.FindControl<CheckBox>("chkTls");
+            if (chkTls != null) { chkTls.IsChecked = true; chkTls.IsEnabled = true; }
+            var chkShareRoot = this.FindControl<CheckBox>("chkShareRoot");
+            if (chkShareRoot != null) { chkShareRoot.IsChecked = false; chkShareRoot.IsEnabled = true; }
+            var chkSafeDelete = this.FindControl<CheckBox>("chkSafeModeNoDelete");
+            if (chkSafeDelete != null) { chkSafeDelete.IsChecked = true; chkSafeDelete.IsEnabled = true; }
+            var chkRisk = this.FindControl<CheckBox>("chkRequireHighRiskApproval");
+            if (chkRisk != null) { chkRisk.IsChecked = true; chkRisk.IsEnabled = true; }
+            var chkAutoClip = this.FindControl<CheckBox>("chkAutoClipboard");
+            if (chkAutoClip != null) { chkAutoClip.IsChecked = false; chkAutoClip.IsEnabled = true; }
+            var chkAutoLinks = this.FindControl<CheckBox>("chkAutoOpenLinks");
+            if (chkAutoLinks != null) { chkAutoLinks.IsChecked = false; chkAutoLinks.IsEnabled = true; }
+        }
+        finally
+        {
+            _securityToggleGuard = false;
+        }
+
+        if (!untilClose)
+        {
+            _safeModeSessionTimer ??= new DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };
+            _safeModeSessionTimer.Tick -= SafeModeSessionTimer_Tick;
+            _safeModeSessionTimer.Tick += SafeModeSessionTimer_Tick;
+            _safeModeSessionTimer.Start();
+        }
+
+        UpdateServerModeBadge();
+        SetStatus(untilClose
+            ? L["security.moreAccessUntilClose"]
+            : L.Format("security.moreAccessFor", (int)Math.Ceiling(duration!.Value.TotalMinutes)));
+    }
+
+    private void RestoreSafeModeCheck()
+    {
+        _securityToggleGuard = true;
+        try
+        {
+            var chk = this.FindControl<CheckBox>("chkSafeMode");
+            if (chk != null) chk.IsChecked = _safeModeEnabled;
+        }
+        finally
+        {
+            _securityToggleGuard = false;
+        }
+    }
+
+    private void SafeModeSessionTimer_Tick(object? sender, EventArgs e)
+    {
+        if (_safeModeUntilClose)
+            return;
+
+        if (_safeModeUntilUtc is not null && DateTimeOffset.UtcNow < _safeModeUntilUtc.Value)
+        {
+            UpdateServerModeBadge();
+            return;
+        }
+
+        _safeModeSessionTimer?.Stop();
+        _safeModeUntilUtc = null;
+        _safeModeUntilClose = false;
+        _safeModeEnabled = true;
+        ApplySafeModePolicy(persist: true, showStatus: true);
+        SetStatus(L["security.restored"]);
+    }
+    private void ApplySafeModePolicy(bool persist, bool showStatus)
+    {
+        _securityToggleGuard = true;
+        try
+        {
+            var chkSafeMode = this.FindControl<CheckBox>("chkSafeMode");
+            if (chkSafeMode != null) chkSafeMode.IsChecked = _safeModeEnabled;
+            if (_safeModeEnabled)
+            {
+                _safeModeSessionTimer?.Stop();
+                _safeModeUntilUtc = null;
+                _safeModeUntilClose = false;
+                _tlsEnabled = true;
+                _restrictShareRoot = true;
+                _safeModeNoRemoteDelete = true;
+                _requireHighRiskApproval = true;
+                _remotePowerEnabled = false;
+                _autoClipboard = false;
+                _autoOpenLinks = false;
+
+                _server.TlsEnabled = true;
+                _server.RestrictToShareRoot = true;
+                _server.SafeModeNoRemoteDelete = true;
+                _server.ApproveHighRisk = OnApproveHighRiskAsync;
+                _server.RemotePowerEnabled = false;
+
+                _fullDiskUntilUtc = null;
+                _fullDiskSessionTimer?.Stop();
+
+                var chkTls = this.FindControl<CheckBox>("chkTls");
+                if (chkTls != null) { chkTls.IsChecked = true; chkTls.IsEnabled = false; }
+                var chkShareRoot = this.FindControl<CheckBox>("chkShareRoot");
+                if (chkShareRoot != null) { chkShareRoot.IsChecked = true; chkShareRoot.IsEnabled = false; }
+                var chkSafeDelete = this.FindControl<CheckBox>("chkSafeModeNoDelete");
+                if (chkSafeDelete != null) { chkSafeDelete.IsChecked = true; chkSafeDelete.IsEnabled = false; }
+                var chkRisk = this.FindControl<CheckBox>("chkRequireHighRiskApproval");
+                if (chkRisk != null) { chkRisk.IsChecked = true; chkRisk.IsEnabled = false; }
+                var chkAutoClip = this.FindControl<CheckBox>("chkAutoClipboard");
+                if (chkAutoClip != null) { chkAutoClip.IsChecked = false; chkAutoClip.IsEnabled = false; }
+                var chkAutoLinks = this.FindControl<CheckBox>("chkAutoOpenLinks");
+                if (chkAutoLinks != null) { chkAutoLinks.IsChecked = false; chkAutoLinks.IsEnabled = false; }
+            }
+            else
+            {
+                var chkTls = this.FindControl<CheckBox>("chkTls");
+                if (chkTls != null) chkTls.IsEnabled = true;
+                var chkShareRoot = this.FindControl<CheckBox>("chkShareRoot");
+                if (chkShareRoot != null) chkShareRoot.IsEnabled = true;
+                var chkSafeDelete = this.FindControl<CheckBox>("chkSafeModeNoDelete");
+                if (chkSafeDelete != null) chkSafeDelete.IsEnabled = true;
+                var chkRisk = this.FindControl<CheckBox>("chkRequireHighRiskApproval");
+                if (chkRisk != null) chkRisk.IsEnabled = true;
+                var chkAutoClip = this.FindControl<CheckBox>("chkAutoClipboard");
+                if (chkAutoClip != null) chkAutoClip.IsEnabled = true;
+                var chkAutoLinks = this.FindControl<CheckBox>("chkAutoOpenLinks");
+                if (chkAutoLinks != null) chkAutoLinks.IsEnabled = true;
+                UpdateFullDiskSessionTimer();
+            }
+        }
+        finally
+        {
+            _securityToggleGuard = false;
+        }
+
+        UpdateServerModeBadge();
+        if (showStatus)
+            SetStatus(_safeModeEnabled ? L["security.safeOn"] : L["security.safeOff"]);
+        if (persist)
+        {
+            SaveSettings(
+                this.FindControl<TextBox>("txtRemoteIp")?.Text?.Trim() ?? "",
+                this.FindControl<TextBox>("txtRemotePort")?.Text?.Trim() ?? "8742");
+        }
+    }
+
+    private void UpdateFullDiskSessionTimer()
+    {
+        if (_safeModeEnabled || _restrictShareRoot)
+        {
+            _fullDiskUntilUtc = null;
+            _fullDiskSessionTimer?.Stop();
+            return;
+        }
+
+        _fullDiskUntilUtc = DateTimeOffset.UtcNow.Add(FullDiskSessionDuration);
+        _fullDiskSessionTimer ??= new DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };
+        _fullDiskSessionTimer.Tick -= FullDiskSessionTimer_Tick;
+        _fullDiskSessionTimer.Tick += FullDiskSessionTimer_Tick;
+        _fullDiskSessionTimer.Start();
+    }
+
+    private void FullDiskSessionTimer_Tick(object? sender, EventArgs e)
+    {
+        if (_fullDiskUntilUtc is null || DateTimeOffset.UtcNow < _fullDiskUntilUtc.Value)
+            return;
+
+        _fullDiskSessionTimer?.Stop();
+        _fullDiskUntilUtc = null;
+        _restrictShareRoot = true;
+        _server.RestrictToShareRoot = true;
+        _securityToggleGuard = true;
+        try
+        {
+            var chkShareRoot = this.FindControl<CheckBox>("chkShareRoot");
+            if (chkShareRoot != null) chkShareRoot.IsChecked = true;
+        }
+        finally
+        {
+            _securityToggleGuard = false;
+        }
+
+        SaveSettings(
+            this.FindControl<TextBox>("txtRemoteIp")?.Text?.Trim() ?? "",
+            this.FindControl<TextBox>("txtRemotePort")?.Text?.Trim() ?? "8742");
+        SetStatus(L["security.fullDiskExpired"]);
     }
 }
 

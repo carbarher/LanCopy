@@ -17,21 +17,12 @@ public class ConsentTests : IDisposable
         _shared = Path.Combine(Path.GetTempPath(), "LanCopyConsent_" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(_shared);
         ShareRoot.SetRoot(_shared);
-
-        _port = GetFreePort();
-        _server = new FileServer { RestrictToShareRoot = true };
+        _server = new FileServer { RestrictToShareRoot = true, AuthorizePeerCommand = (_, _) => true };
         _server.ApproveIncoming = (info, ct) => Task.FromResult(_approve);
-        _server.Start(_port);
+        _server.Start(0);
+        _port = _server.Port;
     }
 
-    private static int GetFreePort()
-    {
-        var l = new TcpListener(System.Net.IPAddress.Loopback, 0);
-        l.Start();
-        var port = ((System.Net.IPEndPoint)l.LocalEndpoint).Port;
-        l.Stop();
-        return port;
-    }
 
     private LanClient Client() => new("127.0.0.1", _port);
 

@@ -25,11 +25,13 @@ using Avalonia.Styling;
 using Avalonia.Threading;
 using LanCopy.Models;
 using LanCopy.Localization;
+using LanCopy.Dialogs;
 using LanCopy.Services;
+using LanCopy.Services.UI;
 
 namespace LanCopy;
 
-public partial class MainWindow : Window
+public partial class MainWindow : Window, IConnectionUiHost, ITransferUiHost
 {
     // Constantes de validación
     private const int MinPinLength = 4;
@@ -46,6 +48,7 @@ public partial class MainWindow : Window
 
     private string _localPath = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
     private string _remotePath = "";
+    private readonly Dictionary<string, PeerFolderState> _peerFolders = new(StringComparer.OrdinalIgnoreCase);
 
     private int _isUploading;    // Feature 2: bidireccional — separado de downloading
     private int _isDownloading;
@@ -76,7 +79,10 @@ public partial class MainWindow : Window
     // Feature 7: sparkline de velocidad (últimos 10 valores en MB/s)
     private readonly Queue<double> _speedHistory = new();
     // F3: historial de textos recibidos desde peers
-    private readonly System.Collections.ObjectModel.ObservableCollection<string> _receivedTexts = new();
+    private readonly System.Collections.ObjectModel.ObservableCollection<ChatMessage> _chatMessages = new();
+    private ChatWindow? _chatWindow;
+    private string? _lastTextSenderIp;
+    private int _lastTextSenderPort = NetworkValidation.DefaultPort;
     private bool _sortSmallestFirst = false; // F7: enviar archivos peque�os primero
     private const int SparklineLen = 10;
 
@@ -95,16 +101,27 @@ public partial class MainWindow : Window
 
     // Feature 9: TLS + compresión toggles
     private bool _tlsEnabled = true; // SEGURIDAD: TLS activado por defecto (cifrado silencioso)
+    private readonly HashSet<string> _plaintextCompatibilityApprovedPeers = new(StringComparer.OrdinalIgnoreCase);
     private bool _advancedMode;      // UX: interfaz avanzada oculta por defecto
     private bool _welcomeShown;      // UX: true tras mostrar el asistente la primera vez
     private bool _restrictShareRoot = true; // SEGURIDAD: confina peers a carpeta compartida
     private bool _readOnly; // SEGURIDAD: si true, el servidor rechaza put/delete/rename
+    private bool _safeModeEnabled = true; // SEGURIDAD: política global de defaults seguros
     private bool _safeModeNoRemoteDelete; // SEGURIDAD: bloquea solo el borrado remoto
+    private bool _remotePowerEnabled; // SEGURIDAD: comandos de apagado remoto desactivados por defecto
     private bool _requireApproval; // SEGURIDAD: pedir consentimiento antes de aceptar ficheros
+    private bool _requireHighRiskApproval = true; // SEGURIDAD: confirmar localmente comandos remotos de alto riesgo
     private bool _compressEnabled;
     private bool _autoClipboard;
     private bool _autoOpenLinks;
     private DispatcherTimer? _autoClipboardTimer;
+    private DispatcherTimer? _fullDiskSessionTimer;
+    private DispatcherTimer? _safeModeSessionTimer;
+    private DateTimeOffset? _fullDiskUntilUtc;
+    private DateTimeOffset? _safeModeUntilUtc;
+    private bool _safeModeUntilClose;
+    private bool _securityToggleGuard;
+    private static readonly TimeSpan FullDiskSessionDuration = TimeSpan.FromMinutes(10);
     private string? _lastClipboardText;
     private int _bandwidthLimitMbps;
     private string _theme = "Auto"; // tema UI: Dark|Light|Auto
@@ -141,20 +158,17 @@ public partial class MainWindow : Window
         private WindowNotificationManager? _notifManager; // Feature 7: toast
     private ProgressWindow? _progressWin;       // UX: ventana de progreso para procesos largos
     private DispatcherTimer? _statusBlinkTimer; // UX: parpadeo del mensaje de estado que requiere atencion
-    private DispatcherTimer? _connectionWatchdogTimer;
     private DispatcherTimer? _browserRefreshTimer;
     private bool _statusBlinkOn;
     private bool _connectButtonIsConnected;
     private bool _connectButtonIsBusy;
-    private int _isConnectionProbeRunning;
     private int _isBrowserAutoRefreshRunning;
     private int _isReconnectInProgress;
     private long _localEntriesSignature;
     private long _remoteEntriesSignature;
-    private int _stallRecoverInProgress;
-    private DateTimeOffset _lastStallRecoverAt;
     private int _isWindowClosing;
-    private int _forceClose; // 1 = cierre real desde tray Exit, 0 = minimizar a tray
+    private readonly ConnectionUiService _connectionUiService;
+    private readonly TransferUiService _transferUiService;
  
     public MainWindow() : this(null)
     {
@@ -176,6 +190,8 @@ public partial class MainWindow : Window
         _btnCancel  = this.FindControl<Button>("btnCancel");
         _btnPause   = this.FindControl<Button>("btnPause");
         _btnResume  = this.FindControl<Button>("btnResume");
+        _connectionUiService = new ConnectionUiService(this);
+        _transferUiService = new TransferUiService(this);
         InitializeTransferUi();
         _notifManager = new WindowNotificationManager(TopLevel.GetTopLevel(this)!)
         {
@@ -183,12 +199,11 @@ public partial class MainWindow : Window
             MaxItems = 3
         };
 
-        this.FindControl<ListBox>("localList")!.ItemsSource = _localItems;
-        this.FindControl<ListBox>("remoteList")!.ItemsSource = _remoteItems;
-        {  var tl = this.FindControl<ListBox>("receivedTextsList"); if (tl != null) tl.ItemsSource = _receivedTexts; }
+        this.FindControl<DataGrid>("localList")!.ItemsSource = _localItems;
+        this.FindControl<DataGrid>("remoteList")!.ItemsSource = _remoteItems;
 
         // Feature 6: drag & drop desde explorador de Windows al panel local
-        var localList = this.FindControl<ListBox>("localList")!;
+        var localList = this.FindControl<DataGrid>("localList")!;
         DragDrop.SetAllowDrop(localList, true);
         localList.AddHandler(DragDrop.DropEvent, OnLocalDrop);
         localList.AddHandler(DragDrop.DragOverEvent, OnLocalDragOver);
@@ -200,16 +215,24 @@ public partial class MainWindow : Window
             _tlsEnabled = startup.TlsEnabled;
             _restrictShareRoot = startup.RestrictShareRoot;
             _readOnly = startup.ReadOnly;
+            _safeModeEnabled = startup.SafeModeEnabled;
             _safeModeNoRemoteDelete = startup.SafeModeNoRemoteDelete;
+            _remotePowerEnabled = startup.RemotePowerEnabled;
             _welcomeShown = startup.WelcomeShown;
             _requireApproval = startup.RequireApproval;
+            _requireHighRiskApproval = startup.RequireHighRiskApproval;
             _server.TlsEnabled = _tlsEnabled;
             _server.RestrictToShareRoot = _restrictShareRoot;
             _server.ReadOnly = _readOnly;
             _server.SafeModeNoRemoteDelete = _safeModeNoRemoteDelete;
+            _server.RemotePowerEnabled = _remotePowerEnabled;
             _server.RequiredPin = startup.RequiredPin;
             _server.ApproveIncoming = _requireApproval ? OnApproveIncomingAsync : null;
+            _server.ApproveHighRisk = _requireHighRiskApproval ? OnApproveHighRiskAsync : null;
+            _server.AuthorizePeerCommand = CommandAuthorizer.IsAllowed;
+            ApplySafeModePolicy(persist: false, showStatus: false);
             { var chkSafe = this.FindControl<CheckBox>("chkSafeModeNoDelete"); if (chkSafe != null) chkSafe.IsChecked = _safeModeNoRemoteDelete; }
+            { var chkRisk = this.FindControl<CheckBox>("chkRequireHighRiskApproval"); if (chkRisk != null) chkRisk.IsChecked = _requireHighRiskApproval; }
             _server.Start(startup.LocalPort);
             _server.TransferProgress += OnServerTransferProgress;
             _server.TextReceived += OnTextReceived;
@@ -219,14 +242,12 @@ public partial class MainWindow : Window
             SetStatus(L.Format("st.serverActive", $"{_server.LocalIp}:{_server.Port}"));
 
             // Feature 12: iniciar auto-descubrimiento UDP
-            _discovery = new PeerDiscovery(_server.LocalIp, _server.Port);
+            _discovery = new PeerDiscovery(_server.LocalIp, _server.Port, _tlsEnabled);
             _discovery.PeersChanged += OnPeersChanged; // v5-F7 merged
             _discovery.Start();
 
             SetupTray(); // idea-tray
             StartAutoClipboardTimer(); // temporizador portapapeles
-            Closing += (s, e) => { _autoClipboardTimer?.Stop(); };
-
             if (startupArgs != null && startupArgs.Length > 0)
             {
                 _ = ProcessStartupArgsAsync(startupArgs);
@@ -247,37 +268,59 @@ public partial class MainWindow : Window
         }
         this.FlowDirection = L.IsRtl ? FlowDirection.RightToLeft : FlowDirection.LeftToRight;
         ApplyUiMode(); // UX: aplica modo simple/avanzado al arrancar
-        Closing += (_, ev) =>
-        {
-            // Minimizar a tray en vez de cerrar (si el tray esta activo y no es cierre forzado)
-            if (_tray != null && Volatile.Read(ref _forceClose) == 0)
-            {
-                ev.Cancel = true;
-                Hide();
-                return;
-            }
-            Interlocked.Exchange(ref _isWindowClosing, 1);
-            StopConnectionWatchdog();
-            StopBrowserAutoRefresh();
-            try { SaveSettings(this.FindControl<TextBox>("txtRemoteIp")?.Text ?? "", this.FindControl<TextBox>("txtRemotePort")?.Text ?? "8742"); }
-            catch (Exception ex) { Log.Warn("ui", "save-settings-on-close-failed", new { error = ex.Message }); }
-            // B28: cancelar operaciones activas ANTES de disponer recursos.
-            // Si _client.Dispose() llegara antes de _uploadCts.Cancel(), la transferencia
-            // en curso recibe ObjectDisposedException en vez de OperationCanceledException.
-            _uploadCts.Cancel(); _downloadCts.Cancel();
-            _saveDebounce?.Stop(); _saveDebounce = null; // O9: disponer timer
-            _server.Stop(); _discovery?.Stop(); _client?.Dispose(); _clientDown?.Dispose();
-            _uploadCts.Dispose(); _downloadCts.Dispose();
-            try { if (_tray != null) _tray.IsVisible = false; }
-            catch (Exception ex) { Log.Debug("ui", "hide-tray-on-close-failed", new { error = ex.Message }); }
-            // M2-FIX: Vaciar el buffer de logs antes de salir para no perder entradas del shutdown.
-            Log.Shutdown(2000);
-        };
+        Closing += (_, _) => ShutdownAppResources();
+
         Opened += OnWindowOpened;
         StartConnectionWatchdog();
         StartBrowserAutoRefresh();
     }
 
+    private void ShutdownAppResources()
+    {
+        if (Interlocked.Exchange(ref _isWindowClosing, 1) == 1) return;
+
+        try { SaveSettings(this.FindControl<TextBox>("txtRemoteIp")?.Text ?? "", this.FindControl<TextBox>("txtRemotePort")?.Text ?? "8742"); }
+        catch (Exception ex) { Log.Warn("ui", "save-settings-on-close-failed", new { error = ex.Message }); }
+
+        StopConnectionWatchdog();
+        StopBrowserAutoRefresh();
+        StopStatusBlink();
+        if (_watchFolderActive) StopWatch();
+        _transferUiService.Shutdown();
+
+        try { _autoClipboardTimer?.Stop(); _autoClipboardTimer = null; } catch (Exception ex) { Log.Debug("ui", "stop-auto-clipboard-timer-failed", new { error = ex.Message }); }
+        try { _fullDiskSessionTimer?.Stop(); _fullDiskSessionTimer = null; } catch (Exception ex) { Log.Debug("ui", "stop-full-disk-timer-failed", new { error = ex.Message }); }
+        try { _safeModeSessionTimer?.Stop(); _safeModeSessionTimer = null; } catch (Exception ex) { Log.Debug("ui", "stop-safe-mode-timer-failed", new { error = ex.Message }); }
+        try { _localFilterDebounce?.Stop(); _localFilterDebounce = null; } catch (Exception ex) { Log.Debug("ui", "stop-local-filter-debounce-failed", new { error = ex.Message }); }
+        try { _saveDebounce?.Stop(); _saveDebounce = null; } catch (Exception ex) { Log.Debug("ui", "stop-save-debounce-failed", new { error = ex.Message }); }
+        try { _remoteRefreshDebounce?.Cancel(); _remoteRefreshDebounce?.Dispose(); _remoteRefreshDebounce = null; } catch (Exception ex) { Log.Debug("ui", "cancel-remote-refresh-debounce-failed", new { error = ex.Message }); }
+        try { _watchDebounce?.Stop(); _watchDebounce?.Dispose(); _watchDebounce = null; } catch (Exception ex) { Log.Debug("ui", "dispose-watch-debounce-failed", new { error = ex.Message }); }
+        try { _watcher?.Dispose(); _watcher = null; } catch (Exception ex) { Log.Debug("ui", "dispose-local-watcher-failed", new { error = ex.Message }); }
+        try { _watchFolderWatcher?.Dispose(); _watchFolderWatcher = null; } catch (Exception ex) { Log.Debug("ui", "dispose-watch-folder-watcher-failed", new { error = ex.Message }); }
+
+        try { _uploadCts.Cancel(); } catch (Exception ex) { Log.Debug("ui", "cancel-upload-cts-on-close-failed", new { error = ex.Message }); }
+        try { _downloadCts.Cancel(); } catch (Exception ex) { Log.Debug("ui", "cancel-download-cts-on-close-failed", new { error = ex.Message }); }
+
+        try { _server.Stop(); } catch (Exception ex) { Log.Debug("ui", "server-stop-on-close-failed", new { error = ex.Message }); }
+        try { _discovery?.Stop(); _discovery = null; } catch (Exception ex) { Log.Debug("ui", "discovery-stop-on-close-failed", new { error = ex.Message }); }
+        try { _client?.Dispose(); _client = null; } catch (Exception ex) { Log.Debug("ui", "client-dispose-on-close-failed", new { error = ex.Message }); }
+        try { _clientDown?.Dispose(); _clientDown = null; } catch (Exception ex) { Log.Debug("ui", "download-client-dispose-on-close-failed", new { error = ex.Message }); }
+        try { _uploadCts.Dispose(); } catch (Exception ex) { Log.Debug("ui", "upload-cts-dispose-on-close-failed", new { error = ex.Message }); }
+        try { _downloadCts.Dispose(); } catch (Exception ex) { Log.Debug("ui", "download-cts-dispose-on-close-failed", new { error = ex.Message }); }
+
+        try
+        {
+            if (_tray != null)
+            {
+                _tray.IsVisible = false;
+                if (_tray is IDisposable disposableTray) disposableTray.Dispose();
+                _tray = null;
+            }
+        }
+        catch (Exception ex) { Log.Debug("ui", "dispose-tray-on-close-failed", new { error = ex.Message }); }
+
+        Log.Shutdown(2000);
+    }
     private async void OnWindowOpened(object? sender, EventArgs e)
     {
         try
@@ -314,7 +357,11 @@ public partial class MainWindow : Window
         var autoIp = this.FindControl<TextBox>("txtRemoteIp")?.Text?.Trim() ?? "";
         var autoPortStr = this.FindControl<TextBox>("txtRemotePort")?.Text?.Trim() ?? "8742";
         if (!string.IsNullOrEmpty(autoIp) && NetworkValidation.TryParsePort(autoPortStr, out var autoPort))
-            { SetStatus(L.Format("st.connecting", $"{autoIp}:{autoPortStr}")); _ = ConnectAsync(autoIp, autoPort); }
+        {
+            ApplyPeerFolderState(autoIp, autoPortStr);
+            SetStatus(L.Format("st.connecting", $"{autoIp}:{autoPortStr}"));
+            _ = ConnectAsync(autoIp, autoPort);
+        }
 
         // F1: slider de paralelismo
         var slider = this.FindControl<Slider>("sldParallel"); // U2: nombre correcto seg�n AXAML
@@ -372,7 +419,7 @@ public partial class MainWindow : Window
         await RefreshLocalAsync();
         try
         {
-            var list = this.FindControl<ListBox>("localList");
+            var list = this.FindControl<DataGrid>("localList");
             if (list != null)
             {
                 var wanted = new HashSet<string>(files.Select(Path.GetFullPath), StringComparer.OrdinalIgnoreCase);
@@ -389,3 +436,7 @@ public partial class MainWindow : Window
 
 // ── Modelo: perfil de conexión (Feature 3) ────────────────────────────────────
 internal record ConnectionProfile(string Name, string Ip, string Port, string Pin = "", bool Tls = false, bool Compress = false);
+internal record PeerFolderState(string LocalPath = "", string RemotePath = "");
+
+
+

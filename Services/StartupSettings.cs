@@ -19,6 +19,9 @@ public static class StartupSettings
         bool RestrictShareRoot,
         bool ReadOnly,
         bool RequireApproval,
+        bool RequireHighRiskApproval,
+        bool RemotePowerEnabled,
+        bool SafeModeEnabled,
         bool SafeModeNoRemoteDelete,
         bool WelcomeShown);
 
@@ -32,15 +35,19 @@ public static class StartupSettings
             // O18: Leer de FileStream directamente para evitar File.ReadAllText string allocation
             using var fs = File.OpenRead(settingsPath);
             var doc = JsonSerializer.Deserialize<JsonElement>(fs);
-            return new ServerConfig(
+            var cfg = new ServerConfig(
                 LocalPort: ReadLocalPort(doc),
                 RequiredPin: ReadPin(doc),
                 TlsEnabled: ReadBool(doc, "tlsEnabled", defaultValue: true),
                 RestrictShareRoot: ReadBool(doc, "restrictShareRoot", defaultValue: true),
                 ReadOnly: ReadBool(doc, "readOnly", defaultValue: false),
                 RequireApproval: ReadBool(doc, "requireApproval", defaultValue: false),
+                RequireHighRiskApproval: ReadBool(doc, "requireHighRiskApproval", defaultValue: true),
+                RemotePowerEnabled: ReadBool(doc, "remotePowerEnabled", defaultValue: false),
+                SafeModeEnabled: ReadBool(doc, "safeModeEnabled", defaultValue: true),
                 SafeModeNoRemoteDelete: ReadBool(doc, "safeModeNoRemoteDelete", defaultValue: true),
                 WelcomeShown: ReadBool(doc, "welcomeShown", defaultValue: false));
+            return ApplySecurityPolicy(cfg);
         }
         catch (Exception ex)
         {
@@ -50,7 +57,27 @@ public static class StartupSettings
     }
 
     public static ServerConfig Defaults()
-        => new(DefaultLocalPort, null, true, true, false, false, true, false);
+        => new(DefaultLocalPort, null, true, true, false, false, true, false, true, true, false);
+
+    private static ServerConfig ApplySecurityPolicy(ServerConfig cfg)
+    {
+        // Full-disk browsing is temporary by design: never keep it across app restarts.
+        // If the previous run ended during a temporary "more access" session, restart protected.
+        if (!cfg.RestrictShareRoot)
+            cfg = cfg with { RestrictShareRoot = true, SafeModeEnabled = true };
+
+        if (!cfg.SafeModeEnabled)
+            return cfg;
+
+        return cfg with
+        {
+            TlsEnabled = true,
+            RestrictShareRoot = true,
+            RequireHighRiskApproval = true,
+            SafeModeNoRemoteDelete = true,
+            RemotePowerEnabled = false
+        };
+    }
 
     private static int ReadLocalPort(JsonElement doc)
     {
@@ -90,3 +117,5 @@ public static class StartupSettings
         };
     }
 }
+
+

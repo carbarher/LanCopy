@@ -26,6 +26,7 @@ using Avalonia.Threading;
 using LanCopy.Models;
 using LanCopy.Localization;
 using LanCopy.Services;
+using LanCopy.Services.UI;
 using Polly;
 
 namespace LanCopy;
@@ -34,52 +35,9 @@ public partial class MainWindow
 {
     // ── Connection ───────────────────────────────────────────────────────────
 
-    private void StartConnectionWatchdog()
-    {
-        if (_connectionWatchdogTimer != null) return;
-        _connectionWatchdogTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(4) };
-        _connectionWatchdogTimer.Tick += ConnectionWatchdog_Tick;
-        _connectionWatchdogTimer.Start();
-    }
+    private void StartConnectionWatchdog() => _connectionUiService.StartConnectionWatchdog();
 
-    private void StopConnectionWatchdog()
-    {
-        if (_connectionWatchdogTimer == null) return;
-        _connectionWatchdogTimer.Stop();
-        _connectionWatchdogTimer.Tick -= ConnectionWatchdog_Tick;
-        _connectionWatchdogTimer = null;
-    }
-
-    private async void ConnectionWatchdog_Tick(object? sender, EventArgs e)
-    {
-        if (Volatile.Read(ref _isWindowClosing) == 1) return;
-        if (_connectButtonIsBusy || _isTransferring != 0 || Volatile.Read(ref _isReconnectInProgress) == 1) return;
-        if (Interlocked.CompareExchange(ref _isConnectionProbeRunning, 1, 0) != 0) return;
-
-        try
-        {
-            LanClient? snap;
-            await _clientLock.WaitAsync();
-            try { snap = _client; }
-            finally { _clientLock.Release(); }
-            if (snap == null) return;
-
-            // U4: usar GetHealthAsync como keepalive (no enumera directorio, solo consulta métricas)
-            using var probeCts = new CancellationTokenSource(TimeSpan.FromSeconds(2));
-            _ = await snap.GetHealthAsync(probeCts.Token);
-        }
-        catch (Exception ex)
-        {
-            Log.Debug("conn", "watchdog-health-probe-failed", new { error = ex.Message });
-            if (Volatile.Read(ref _isWindowClosing) == 1 || _isTransferring != 0) return;
-            await DisconnectAsync(silent: true);
-            SetStatus(L["st.disconnected"]);
-        }
-        finally
-        {
-            Interlocked.Exchange(ref _isConnectionProbeRunning, 0);
-        }
-    }
+    private void StopConnectionWatchdog() => _connectionUiService.StopConnectionWatchdog();
 
     private async void Connect_Click(object? sender, RoutedEventArgs e)
     {
@@ -124,6 +82,19 @@ public partial class MainWindow
         {
             Log.Warn("ui", "copy-pairing-code-failed", new { error = ex.Message });
             SetStatus(L["st.codeError"]);
+        }
+    }
+
+    private async void ShowTrustedDevices_Click(object? sender, RoutedEventArgs e)
+    {
+        try
+        {
+            await new TrustedDevicesDialog().ShowDialog(this);
+        }
+        catch (Exception ex)
+        {
+            Log.Warn("ui", "show-trusted-devices-failed", new { error = ex.Message });
+            SetStatus("Could not open trusted devices.");
         }
     }
 
@@ -187,164 +158,52 @@ public partial class MainWindow
         {
             SetStatus(L["st.invalidPort"]); return;
         }
-        SaveSettings(ip, portStr);
-        await ConnectAsync(ip, port);
-    }
-
-    private async Task ConnectAsync(string ip, int port, bool silent = false)
-    {
-        UpdateConnectButton(isConnected: false, isBusy: true);
-        if (!silent)
+        var discoveredPeer = _discovery?.GetPeers().FirstOrDefault(p => p.Ip == ip && p.Port == port);
+        bool? useTlsOverride = null;
+        if (discoveredPeer?.TlsEnabled is bool peerTls && peerTls != _tlsEnabled)
         {
-            SetStatus(L.Format("st.connecting", $"{ip}:{port}"));
-            SetConnStatus(L["conn.connecting"], BrushConnecting);
-        }
-
-        await _clientLock.WaitAsync();
-        LanClient newClient;
-        try { _client?.Dispose(); _client = newClient = MakeClient(ip, port); }
-        finally { _clientLock.Release(); }
-
-        try
-        {
-            // C9-FIX: añadir timeout explícito de 15s para que ConnectAsync falle rápido si el
-            // servidor no responde. Sin CT, ListAsync solo dependía del KeepAlive TCP (~30s),
-            // lo que dejaba la UI bloqueada en "conectando..." sin posibilidad de cancelación.
-            using var connectCts = new System.Threading.CancellationTokenSource(TimeSpan.FromSeconds(15));
-            var entries = await newClient.ListAsync(_remotePath, connectCts.Token);
-            Dispatcher.UIThread.Post(() => { _remoteItemsAll = entries; ApplyRemoteSort(); UpdateRemotePath(); });
-            SetConnStatus(L["conn.connectedWord"], BrushConnected);
-            UpdateConnectButton(isConnected: true, isBusy: false);
-            UpdateRemoteCreateFolderButton(isConnected: true);
-            if (!silent)
+            if (peerTls)
             {
-                var emojiId = newClient.RemoteCertificate != null
-                    ? $"  🔒 {CertTrust.EmojiFingerprint(newClient.RemoteCertificate)}"
-                    : "";
-                SetStatus(L.Format("st.connected", $"{ip}:{port}") + emojiId);
+                useTlsOverride = true;
+                SetStatus(L["st.tlsAutoUsingSecure"]);
             }
-        }
-        catch (Exception ex)
-        {
-            if (!string.IsNullOrEmpty(_remotePath) &&
-                (ex.Message.Contains("svc.accessDenied") || ex.Message.Contains("svc.outsideShare") || ex.Message.Contains("svc.invalidPath") || ex.Message.Contains("svc.sysProtected")))
+            else
             {
-                try
+                var allowed = await AskPlaintextCompatibilityAsync($"{ip}:{port}");
+                if (!allowed)
                 {
-                    _remotePath = "";
-                    // C9-FIX: mismo timeout de 15s en el fallback a ruta raíz
-                    using var fallbackCts = new System.Threading.CancellationTokenSource(TimeSpan.FromSeconds(15));
-                    var entries = await newClient.ListAsync("", fallbackCts.Token);
-                    Dispatcher.UIThread.Post(() => { _remoteItemsAll = entries; ApplyRemoteSort(); UpdateRemotePath(); });
-                    SetConnStatus(L["conn.connectedWord"], BrushConnected);
-                    UpdateConnectButton(isConnected: true, isBusy: false);
-                    UpdateRemoteCreateFolderButton(isConnected: true);
-                    if (!silent) SetStatus(L.Format("st.connected", $"{ip}:{port}"));
+                    SetStatus(L["st.tlsCompatibilityCancelled"]);
                     return;
                 }
-                catch (Exception fallbackEx)
-                {
-                    Log.Warn("ui", "connect-fallback-root-list-failed", new { ip, port, error = fallbackEx.Message });
-                }
+                useTlsOverride = false;
+                _plaintextCompatibilityApprovedPeers.Add(PeerSecurityKey(ip, port));
+                SetStatus(L["st.tlsAutoUsingCompatible"]);
             }
-
-            await _clientLock.WaitAsync();
-            try
-            {
-                // Evita clobber de una conexión más nueva si hubo intentos solapados.
-                if (ReferenceEquals(_client, newClient))
-                {
-                    _client.Dispose();
-                    _client = null;
-                }
-            }
-            finally { _clientLock.Release(); }
-            SetConnStatus(L["conn.error"], BrushError);
-            UpdateConnectButton(isConnected: false, isBusy: false);
-            UpdateRemoteCreateFolderButton(isConnected: false);
-            if (!silent) SetStatus(L.Format("st.connectFailed", $"{ip}:{port}", L[ex.Message]));
         }
+
+        ApplyPeerFolderState(ip, portStr);
+        SaveSettings(ip, portStr);
+        await ConnectAsync(ip, port, useTlsOverride: useTlsOverride);
     }
 
-    private async Task<bool> IsConnectedAsync()
+    private Task ConnectAsync(string ip, int port, bool silent = false, bool? useTlsOverride = null)
+        => _connectionUiService.ConnectAsync(ip, port, silent, useTlsOverride: useTlsOverride);
+
+    private async Task<bool> AskPlaintextCompatibilityAsync(string peer)
     {
-        await _clientLock.WaitAsync();
-        try { return _client != null; }
-        finally { _clientLock.Release(); }
+        var dialog = new TlsCompatibilityDialog(peer);
+        _ = dialog.ShowDialog<bool>(this);
+        return await dialog.GetResultAsync();
     }
 
-    private async Task DisconnectAsync(bool silent = false, bool notifyPeer = false)
-    {
-        UpdateConnectButton(isConnected: true, isBusy: true);
-        if (notifyPeer) await TrySendDisconnectNoticeAsync();
-        try { _uploadCts.Cancel(); }
-        catch (ObjectDisposedException ex) { Log.Debug("conn", "upload-cts-cancel-disposed-on-disconnect", new { error = ex.Message }); }
-        try { _downloadCts.Cancel(); }
-        catch (ObjectDisposedException ex) { Log.Debug("conn", "download-cts-cancel-disposed-on-disconnect", new { error = ex.Message }); }
-        if (_watchFolderActive) Dispatcher.UIThread.Post(StopWatch);
+    private Task<bool> IsConnectedAsync() => _connectionUiService.IsConnectedAsync();
 
-        await _clientLock.WaitAsync();
-        try { _client?.Dispose(); _client = null; }
-        finally { _clientLock.Release(); }
+    private Task DisconnectAsync(bool silent = false, bool notifyPeer = false) =>
+        _connectionUiService.DisconnectAsync(silent, notifyPeer);
 
-        await _clientLockDown.WaitAsync();
-        try { _clientDown?.Dispose(); _clientDown = null; }
-        finally { _clientLockDown.Release(); }
+    private Task TrySendDisconnectNoticeAsync() => _connectionUiService.TrySendDisconnectNoticeAsync();
 
-        Dispatcher.UIThread.Post(() =>
-        {
-            _remotePath = "";
-            _remoteItemsAll = [];
-            _remoteItems.ReplaceAll([]);
-            Interlocked.Exchange(ref _remoteEntriesSignature, 0);
-            UpdateRemotePath();
-        });
-
-        SetConnStatus(L["conn.disconnectedWord"], BrushError);
-        UpdateConnectButton(isConnected: false, isBusy: false);
-        UpdateRemoteCreateFolderButton(isConnected: false);
-        if (!silent) SetStatus(L["st.disconnected"]);
-    }
-
-    private async Task TrySendDisconnectNoticeAsync()
-    {
-        var ip = this.FindControl<TextBox>("txtRemoteIp")?.Text?.Trim() ?? "";
-        var portText = this.FindControl<TextBox>("txtRemotePort")?.Text?.Trim() ?? "8742";
-        if (string.IsNullOrWhiteSpace(ip) || !int.TryParse(portText, out var port)) return;
-
-        try
-        {
-            using var cli = MakeClient(ip, port);
-            // C9-FIX: timeout de 3s — best-effort notice; si el peer no responde en 3s no vale la pena esperar.
-            // Sin CT, bloqueaba ~30s por KeepAlive TCP durante el cierre de la app.
-            using var disconnectCts = new System.Threading.CancellationTokenSource(TimeSpan.FromSeconds(3));
-            await cli.SendDisconnectNoticeAsync(disconnectCts.Token);
-        }
-        catch (Exception ex)
-        {
-            Log.Debug("ui", "disconnect-notice-send-failed", new { ip, port, error = ex.Message });
-        }
-    }
-
-    private void OnDisconnectNoticeReceived(string ip)
-    {
-        Dispatcher.UIThread.Post(async () =>
-        {
-            try
-            {
-                var remoteIp = this.FindControl<TextBox>("txtRemoteIp")?.Text?.Trim() ?? "";
-                if (!string.Equals(remoteIp, ip, StringComparison.OrdinalIgnoreCase)) return;
-                if (!await IsConnectedAsync()) return;
-
-                await DisconnectAsync(silent: true);
-                SetStatus(L["st.disconnected"]);
-            }
-            catch (Exception ex)
-            {
-                Log.Warn("conn", "disconnect-notice-handler-failed", new { ip, error = ex.Message });
-            }
-        });
-    }
+    private void OnDisconnectNoticeReceived(string ip) => _connectionUiService.OnDisconnectNoticeReceived(ip);
 
     private void UpdateConnectButton(bool isConnected, bool isBusy)
     {
@@ -374,96 +233,147 @@ public partial class MainWindow
     /// <summary>
     /// Intenta reconectar hasta 3 veces con pausa de 2 s entre intentos.
     /// </summary>
-    private async Task<bool> TryReconnectAsync(string ip, int port, CancellationToken ct)
+    private Task<bool> TryReconnectAsync(string ip, int port, CancellationToken ct) =>
+        _connectionUiService.TryReconnectAsync(ip, port, ct);
+
+    bool IConnectionUiHost.IsWindowClosing => Volatile.Read(ref _isWindowClosing) == 1;
+
+    bool IConnectionUiHost.IsTransferInProgress => _isTransferring != 0;
+
+    bool IConnectionUiHost.IsConnectButtonBusy => _connectButtonIsBusy;
+
+    bool IConnectionUiHost.IsWatchFolderActive => _watchFolderActive;
+
+    string IConnectionUiHost.RemotePath
     {
-        if (string.IsNullOrEmpty(ip) || port < 1) return false;
-        if (Interlocked.CompareExchange(ref _isReconnectInProgress, 1, 0) != 0)
-            return await WaitReconnectWindowAsync(ct);
-        SetConnStatus(L["conn.reconnecting"], BrushConnecting);
-        var retryPolicy = Policy
-            .Handle<Exception>(ex => ex is not OperationCanceledException)
-            .WaitAndRetryAsync(
-                retryCount: 3,
-                sleepDurationProvider: attempt =>
-                {
-                    var jitter = Random.Shared.Next(150, 550);
-                    return TimeSpan.FromMilliseconds(Math.Min(5000, (int)(Math.Pow(2, attempt) * 350) + jitter));
-                },
-                onRetryAsync: (ex, _, attempt, _) =>
-                {
-                    SetStatus(L.Format("st.reconnecting", attempt));
-                    return Task.CompletedTask;
-                });
+        get => _remotePath;
+        set => _remotePath = value;
+    }
 
-        try
+    string IConnectionUiHost.RemoteIpText
+    {
+        get => this.FindControl<TextBox>("txtRemoteIp")?.Text?.Trim() ?? "";
+        set
         {
-            await retryPolicy.ExecuteAsync(async token =>
-            {
-                token.ThrowIfCancellationRequested();
-                var tempClient = MakeClient(ip, port);
-                try
-                {
-                    // C11-FIX: timeout de 8s por intento de reconexión — sin CT propio, cada ListAsync
-                    // esperaba hasta ~30s (KeepAlive TCP). Con 3 retries → 90s de bloqueo potencial.
-                    using var retryCts = CancellationTokenSource.CreateLinkedTokenSource(token);
-                    retryCts.CancelAfter(TimeSpan.FromSeconds(8));
-                    _ = await tempClient.ListAsync("", retryCts.Token);
-                    await _clientLock.WaitAsync(token);
-                    try
-                    {
-                        _client?.Dispose();
-                        _client = tempClient;
-                        tempClient = null;
-                    }
-                    finally { _clientLock.Release(); }
-                }
-                finally
-                {
-                    tempClient?.Dispose();
-                }
-            }, ct);
-
-            SetConnStatus(L["conn.reconnectedWord"], BrushConnected);
-            UpdateConnectButton(isConnected: true, isBusy: false);
-            UpdateRemoteCreateFolderButton(isConnected: true);
-            SetStatus(L["st.reconnected"]);
-            return true;
-        }
-        catch (OperationCanceledException)
-        {
-            return false;
-        }
-        catch (Exception ex)
-        {
-            Log.Warn("conn", "reconnect-failed", new { ip, port, error = ex.Message });
-            SetConnStatus(L["conn.disconnectedWord"], BrushError);
-            UpdateConnectButton(isConnected: false, isBusy: false);
-            UpdateRemoteCreateFolderButton(isConnected: false);
-            SetStatus(L["st.reconnectFailed"]);
-
-            await _clientLock.WaitAsync();
-            try { _client?.Dispose(); _client = null; }
-            finally { _clientLock.Release(); }
-
-            return false;
-        }
-        finally
-        {
-            Interlocked.Exchange(ref _isReconnectInProgress, 0);
+            var box = this.FindControl<TextBox>("txtRemoteIp");
+            if (box != null) box.Text = value;
         }
     }
 
-    private async Task<bool> WaitReconnectWindowAsync(CancellationToken ct)
+    string IConnectionUiHost.RemotePortText
     {
-        const int maxChecks = 15;
-        for (int i = 0; i < maxChecks; i++)
+        get => this.FindControl<TextBox>("txtRemotePort")?.Text?.Trim() ?? "8742";
+        set
         {
-            if (ct.IsCancellationRequested) return false;
-            if (Volatile.Read(ref _isReconnectInProgress) == 0) return await IsConnectedAsync();
-            try { await Task.Delay(200, ct); }
-            catch (OperationCanceledException) { return false; }
+            var box = this.FindControl<TextBox>("txtRemotePort");
+            if (box != null) box.Text = value;
         }
-        return await IsConnectedAsync();
+    }
+
+    void IConnectionUiHost.SaveConnectionSettings(string ip, string portText) => SaveSettings(ip, portText);
+
+    LanClient IConnectionUiHost.CreateLanClient(string ip, int port, bool? useTlsOverride) => MakeClient(ip, port, useTlsOverride);
+
+    async Task<LanClient?> IConnectionUiHost.GetClientAsync(CancellationToken ct)
+    {
+        await _clientLock.WaitAsync(ct);
+        try { return _client; }
+        finally { _clientLock.Release(); }
+    }
+
+    async Task IConnectionUiHost.ReplaceClientAsync(LanClient client, CancellationToken ct)
+    {
+        await _clientLock.WaitAsync(ct);
+        try
+        {
+            _client?.Dispose();
+            _client = client;
+        }
+        finally { _clientLock.Release(); }
+    }
+
+    async Task<bool> IConnectionUiHost.TryClearClientAsync(LanClient client, CancellationToken ct)
+    {
+        await _clientLock.WaitAsync(ct);
+        try
+        {
+            if (!ReferenceEquals(_client, client)) return false;
+            _client.Dispose();
+            _client = null;
+            return true;
+        }
+        finally { _clientLock.Release(); }
+    }
+
+    async Task IConnectionUiHost.DisposeClientAsync(CancellationToken ct)
+    {
+        await _clientLock.WaitAsync(ct);
+        try
+        {
+            _client?.Dispose();
+            _client = null;
+        }
+        finally { _clientLock.Release(); }
+    }
+
+    async Task IConnectionUiHost.DisposeDownloadClientAsync(CancellationToken ct)
+    {
+        await _clientLockDown.WaitAsync(ct);
+        try
+        {
+            _clientDown?.Dispose();
+            _clientDown = null;
+        }
+        finally { _clientLockDown.Release(); }
+    }
+
+    void IConnectionUiHost.SetRemoteEntries(List<FileEntry> entries) =>
+        Dispatcher.UIThread.Post(() =>
+        {
+            _remoteItemsAll = entries;
+            ApplyRemoteSort();
+            UpdateRemotePath();
+            RememberCurrentPeerFolders();
+        });
+
+    void IConnectionUiHost.ClearRemoteEntries() =>
+        Dispatcher.UIThread.Post(() =>
+        {
+            RememberCurrentPeerFolders(force: true);
+            _remotePath = "";
+            _remoteItemsAll = [];
+            _remoteItems.ReplaceAll([]);
+            Interlocked.Exchange(ref _remoteEntriesSignature, 0);
+            UpdateRemotePath();
+        });
+
+    void IConnectionUiHost.SetStatus(string text) => SetStatus(text);
+
+    void IConnectionUiHost.SetConnectionStatus(string text, SolidColorBrush brush) => SetConnStatus(text, brush);
+
+    void IConnectionUiHost.SetConnectButtonState(bool isConnected, bool isBusy) => UpdateConnectButton(isConnected, isBusy);
+
+    void IConnectionUiHost.SetRemoteCreateFolderEnabled(bool isEnabled) => UpdateRemoteCreateFolderButton(isEnabled);
+
+    void IConnectionUiHost.SetReconnectInProgress(bool isInProgress) =>
+        Interlocked.Exchange(ref _isReconnectInProgress, isInProgress ? 1 : 0);
+
+    void IConnectionUiHost.StopWatchFolder() => StopWatch();
+
+    void IConnectionUiHost.CancelUploadTransfers()
+    {
+        try { _uploadCts.Cancel(); }
+        catch (ObjectDisposedException ex) { Log.Debug("conn", "upload-cts-cancel-disposed-on-disconnect", new { error = ex.Message }); }
+        catch (Exception ex) { Log.Warn("conn", "upload-cts-cancel-failed", new { error = ex.Message }); }
+    }
+
+    void IConnectionUiHost.CancelDownloadTransfers()
+    {
+        try { _downloadCts.Cancel(); }
+        catch (ObjectDisposedException ex) { Log.Debug("conn", "download-cts-cancel-disposed-on-disconnect", new { error = ex.Message }); }
+        catch (Exception ex) { Log.Warn("conn", "download-cts-cancel-failed", new { error = ex.Message }); }
     }
 
 }
+
+

@@ -16,20 +16,11 @@ public class ReadOnlyModeTests : IDisposable
         _shared = Path.Combine(Path.GetTempPath(), "LanCopyRO_" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(_shared);
         ShareRoot.SetRoot(_shared);
-
-        _port = GetFreePort();
-        _server = new FileServer { RestrictToShareRoot = true, ReadOnly = true };
-        _server.Start(_port);
+        _server = new FileServer { RestrictToShareRoot = true, ReadOnly = true, AuthorizePeerCommand = (_, _) => true };
+        _server.Start(0);
+        _port = _server.Port;
     }
 
-    private static int GetFreePort()
-    {
-        var l = new TcpListener(System.Net.IPAddress.Loopback, 0);
-        l.Start();
-        var port = ((System.Net.IPEndPoint)l.LocalEndpoint).Port;
-        l.Stop();
-        return port;
-    }
 
     private LanClient Client() => new("127.0.0.1", _port);
 

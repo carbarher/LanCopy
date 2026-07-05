@@ -16,13 +16,13 @@
     <PublishReadyToRun>false</PublishReadyToRun>
     <EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>
     <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
-    <Version>1.5.8</Version>
-    <AssemblyVersion>1.5.8</AssemblyVersion>
-    <FileVersion>1.5.8</FileVersion>
+    <Version>1.6.5</Version>
+    <AssemblyVersion>1.6.5</AssemblyVersion>
+    <FileVersion>1.6.5</FileVersion>
     <Company>carbar</Company>
     <Authors>carbar</Authors>
     <Product>LanCopy</Product>
-    <Description>Encrypted, cross-platform LAN file transfer — fast, private, no cloud.</Description>
+    <Description>Transferencia de archivos por LAN, cifrada y multiplataforma.</Description>
     <Copyright>Copyright (c) 2026 carbar</Copyright>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
     <RepositoryUrl>https://github.com/carbarher/LanCopy</RepositoryUrl>
@@ -48,8 +48,10 @@
     <PackageReference Include="Avalonia.Desktop" Version="12.0.0" />
     <PackageReference Include="Avalonia.Themes.Fluent" Version="12.0.0" />
     <PackageReference Include="Avalonia.Fonts.Inter" Version="12.0.0" />
+    <PackageReference Include="Avalonia.Controls.DataGrid" Version="12.0.0" />
     <PackageReference Include="Polly" Version="8.4.1" />
     <PackageReference Include="QRCoder" Version="1.6.0" />
     <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="9.0.0" />
   </ItemGroup>
 </Project>
+

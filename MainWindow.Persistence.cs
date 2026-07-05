@@ -63,6 +63,7 @@ public partial class MainWindow
                         }
                     }
                 }
+                LoadPeerFolderStates(doc);
                 // Carpeta local guardada
                 if (doc.TryGetProperty("localPath", out var lpEl))
                 {
@@ -113,6 +114,15 @@ public partial class MainWindow
                     if (chk != null) chk.IsChecked = _readOnly;
                 });
             }
+            if (doc.TryGetProperty("safeModeEnabled", out var safeModeEl))
+            {
+                _safeModeEnabled = safeModeEl.GetBoolean();
+                await Dispatcher.UIThread.InvokeAsync(() =>
+                {
+                    var chk = this.FindControl<CheckBox>("chkSafeMode");
+                    if (chk != null) chk.IsChecked = _safeModeEnabled;
+                });
+            }
             if (doc.TryGetProperty("safeModeNoRemoteDelete", out var safeEl))
             {
                 _safeModeNoRemoteDelete = safeEl.GetBoolean();
@@ -123,6 +133,11 @@ public partial class MainWindow
                     if (chk != null) chk.IsChecked = _safeModeNoRemoteDelete;
                 });
             }
+            if (doc.TryGetProperty("remotePowerEnabled", out var rpeEl))
+            {
+                _remotePowerEnabled = rpeEl.GetBoolean();
+                _server.RemotePowerEnabled = _remotePowerEnabled;
+            }
             // SEGURIDAD: consentimiento del receptor
             if (doc.TryGetProperty("requireApproval", out var raEl))
             {
@@ -132,6 +147,16 @@ public partial class MainWindow
                 {
                     var chk = this.FindControl<CheckBox>("chkRequireApproval");
                     if (chk != null) chk.IsChecked = _requireApproval;
+                });
+            }
+            if (doc.TryGetProperty("requireHighRiskApproval", out var hraEl))
+            {
+                _requireHighRiskApproval = hraEl.GetBoolean();
+                _server.ApproveHighRisk = _requireHighRiskApproval ? OnApproveHighRiskAsync : null;
+                await Dispatcher.UIThread.InvokeAsync(() =>
+                {
+                    var chk = this.FindControl<CheckBox>("chkRequireHighRiskApproval");
+                    if (chk != null) chk.IsChecked = _requireHighRiskApproval;
                 });
             }
             // Feature 2: compresión
@@ -162,6 +187,23 @@ public partial class MainWindow
                     if (chk != null) chk.IsChecked = _autoOpenLinks;
                 });
             }
+            var startupSecurity = StartupSettings.Load(SettingsPath);
+            _tlsEnabled = startupSecurity.TlsEnabled;
+            _restrictShareRoot = startupSecurity.RestrictShareRoot;
+            _readOnly = startupSecurity.ReadOnly;
+            _safeModeEnabled = startupSecurity.SafeModeEnabled;
+            _safeModeNoRemoteDelete = startupSecurity.SafeModeNoRemoteDelete;
+            _remotePowerEnabled = startupSecurity.RemotePowerEnabled;
+            _requireApproval = startupSecurity.RequireApproval;
+            _requireHighRiskApproval = startupSecurity.RequireHighRiskApproval;
+            _server.TlsEnabled = _tlsEnabled;
+            _server.RestrictToShareRoot = _restrictShareRoot;
+            _server.ReadOnly = _readOnly;
+            _server.SafeModeNoRemoteDelete = _safeModeNoRemoteDelete;
+            _server.RemotePowerEnabled = _remotePowerEnabled;
+            _server.ApproveIncoming = _requireApproval ? OnApproveIncomingAsync : null;
+            _server.ApproveHighRisk = _requireHighRiskApproval ? OnApproveHighRiskAsync : null;
+            await Dispatcher.UIThread.InvokeAsync(() => ApplySafeModePolicy(persist: false, showStatus: false));
             if (doc.TryGetProperty("bandwidthLimitMbps", out var bwEl))
             {
                 var bwValue = bwEl.ValueKind switch
@@ -237,6 +279,68 @@ public partial class MainWindow
         catch (Exception ex) { Log.Error("persistence", "load-settings", new { error = ex.Message }); }
     }
 
+    private void LoadPeerFolderStates(JsonElement doc)
+    {
+        try
+        {
+            if (!doc.TryGetProperty("peerFolders", out var peerFoldersEl) || peerFoldersEl.ValueKind != JsonValueKind.Object) return;
+            _peerFolders.Clear();
+            foreach (var peerEl in peerFoldersEl.EnumerateObject())
+            {
+                if (peerEl.Value.ValueKind != JsonValueKind.Object) continue;
+                var localPath = peerEl.Value.TryGetProperty("localPath", out var localEl)
+                    ? localEl.GetString() ?? ""
+                    : peerEl.Value.TryGetProperty("LocalPath", out var legacyLocalEl) ? legacyLocalEl.GetString() ?? "" : "";
+                var remotePath = peerEl.Value.TryGetProperty("remotePath", out var remoteEl)
+                    ? remoteEl.GetString() ?? ""
+                    : peerEl.Value.TryGetProperty("RemotePath", out var legacyRemoteEl) ? legacyRemoteEl.GetString() ?? "" : "";
+                _peerFolders[peerEl.Name] = new PeerFolderState(localPath, remotePath);
+            }
+        }
+        catch (Exception ex) { Log.Warn("persistence", "load-peer-folders-failed", new { error = ex.Message }); }
+    }
+
+    private void ApplyPeerFolderState(string ip, string port)
+    {
+        var key = PeerFolderKey(ip, port);
+        if (string.IsNullOrEmpty(key)) return;
+
+        if (_peerFolders.TryGetValue(key, out var folders))
+        {
+            _localPath = !string.IsNullOrWhiteSpace(folders.LocalPath) && Directory.Exists(folders.LocalPath)
+                ? folders.LocalPath
+                : "";
+            _remotePath = folders.RemotePath ?? "";
+        }
+        else
+        {
+            _localPath = "";
+            _remotePath = "";
+        }
+
+        UpdateLocalPath();
+        UpdateRemotePath();
+    }
+
+    private void RememberCurrentPeerFolders(bool force = false)
+    {
+        if (!force && _client == null) return;
+        var ip = this.FindControl<TextBox>("txtRemoteIp")?.Text?.Trim() ?? "";
+        var port = this.FindControl<TextBox>("txtRemotePort")?.Text?.Trim() ?? "8742";
+        var key = PeerFolderKey(ip, port);
+        if (string.IsNullOrEmpty(key)) return;
+
+        _peerFolders[key] = new PeerFolderState(_localPath ?? "", _remotePath ?? "");
+        SaveSettingsDeferred(ip, port);
+    }
+
+    private static string PeerFolderKey(string ip, string port)
+    {
+        ip = ip.Trim();
+        port = port.Trim();
+        if (string.IsNullOrWhiteSpace(ip) || string.IsNullOrWhiteSpace(port)) return "";
+        return $"{ip}:{port}";
+    }
     // P6: versi�n debounceda para callers frecuentes (combo, perfiles)
     private DispatcherTimer? _saveDebounce;
     private string _savePendingIp = "", _savePendingPort = "8742";
@@ -263,13 +367,15 @@ public partial class MainWindow
         var lastPeer  = this.FindControl<ComboBox>("cmbPeers")?.SelectedItem as string ?? "";
         var selProfile= this.FindControl<ComboBox>("cmbProfiles")?.SelectedItem as string ?? "";
         var localPort = this.FindControl<TextBox>("txtLocalPort")?.Text?.Trim() ?? "8742";
+        var peerFolders = _peerFolders.ToDictionary(kv => kv.Key, kv => new { localPath = kv.Value.LocalPath, remotePath = kv.Value.RemotePath }, StringComparer.OrdinalIgnoreCase);
         var snapshot = new
         {
-            remoteIp  = ip, remotePort = port, localPath = _localPath,
+            remoteIp  = ip, remotePort = port, localPath = _localPath, peerFolders,
             lastPeer, selectedProfile = selProfile, localPort, pin,
             tlsEnabled = _tlsEnabled, restrictShareRoot = _restrictShareRoot,
-            readOnly = _readOnly, safeModeNoRemoteDelete = _safeModeNoRemoteDelete,
-            requireApproval = _requireApproval, compressEnabled = _compressEnabled,
+            readOnly = _readOnly, safeModeEnabled = _safeModeEnabled, safeModeNoRemoteDelete = _safeModeNoRemoteDelete,
+            remotePowerEnabled = _remotePowerEnabled,
+            requireApproval = _requireApproval, requireHighRiskApproval = _requireHighRiskApproval, compressEnabled = _compressEnabled,
             autoClipboard = _autoClipboard, autoOpenLinks = _autoOpenLinks,
             bandwidthLimitMbps = _bandwidthLimitMbps, advancedMode = _advancedMode,
             welcomeShown = _welcomeShown, language = L.Current, theme = _theme,
@@ -295,4 +401,5 @@ public partial class MainWindow
     }
 
 }
+
 

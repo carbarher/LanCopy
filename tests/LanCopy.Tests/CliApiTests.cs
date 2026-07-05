@@ -69,6 +69,27 @@ public class CliApiTests
         Assert.Equal(2, code);
     }
 
+    [Fact]
+    public void GenerateToken_ProducesStrongBase64UrlValue()
+    {
+        var token = LanCopy.Cli.Program.GenerateToken();
+        Assert.False(string.IsNullOrWhiteSpace(token));
+        Assert.Equal(43, token.Length); // 32 bytes base64url without padding
+        Assert.DoesNotContain("=", token, StringComparison.Ordinal);
+        Assert.DoesNotContain("+", token, StringComparison.Ordinal);
+        Assert.DoesNotContain("/", token, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void GenerateToken_ProducesUniqueValues()
+    {
+        var values = new HashSet<string>(StringComparer.Ordinal);
+        for (var i = 0; i < 64; i++)
+            values.Add(LanCopy.Cli.Program.GenerateToken());
+
+        Assert.Equal(64, values.Count);
+    }
+
     // ── ParseEndpoint tests ───────────────────────────────────────────────────
 
     [Theory]

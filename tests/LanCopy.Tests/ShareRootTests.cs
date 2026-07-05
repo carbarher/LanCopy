@@ -36,7 +36,7 @@ public class ShareRootTests
     {
         var root = NewTempRoot();
         ShareRoot.SetRoot(root);
-        Assert.False(ShareRoot.TryResolve("..\\..\\..\\Windows", out _, out var reason));
+        Assert.False(ShareRoot.TryResolve(Path.Combine("..", "..", "outside"), out _, out var reason));
         Assert.False(string.IsNullOrEmpty(reason));
     }
 
@@ -45,7 +45,8 @@ public class ShareRootTests
     {
         var root = NewTempRoot();
         ShareRoot.SetRoot(root);
-        Assert.False(ShareRoot.TryResolve(@"C:\Windows\win.ini", out _, out _));
+        var outside = Path.Combine(Path.GetTempPath(), "LanCopyOutside_" + Guid.NewGuid().ToString("N"), "file.txt");
+        Assert.False(ShareRoot.TryResolve(outside, out _, out _));
     }
 
     [Fact]

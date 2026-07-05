@@ -13,34 +13,99 @@ namespace LanCopy.Services;
 /// </summary>
 public static class CertTrust
 {
+    public enum PeerTrustLevel
+    {
+        Unknown = 0,
+        Paired = 1,
+        Trusted = 2,
+        OwnerDevice = 3
+    }
+
+    public enum ValidationResult
+    {
+        TrustedKnown,
+        TrustedFirstUse,
+        IdentityChanged,
+        InvalidCertificate
+    }
+
+    public sealed record KnownHost(
+        string Host,
+        string DeviceName,
+        string LastAddress,
+        string Fingerprint,
+        string FingerprintShort,
+        DateTimeOffset? LastSeenUtc,
+        PeerTrustLevel TrustLevel);
+
+    private sealed record KnownHostEntry(
+        string Fingerprint,
+        string? DeviceName,
+        string? LastAddress,
+        DateTimeOffset? LastSeenUtc,
+        PeerTrustLevel TrustLevel);
+
     private static readonly object _lock = new();
     private static readonly string StorePath = Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
         "LanCopy", "known_hosts.json");
 
     // OPT-FIX #2: Lazy loading del diccionario para mejorar cold-start (~50ms)
-    private static readonly Lazy<Dictionary<string, string>> _lazyCache = 
+    private static readonly Lazy<Dictionary<string, KnownHostEntry>> _lazyCache =
         new(() => LoadInternal());
 
-    private static Dictionary<string, string> LoadInternal()
+    private static Dictionary<string, KnownHostEntry> LoadInternal()
     {
         try
         {
             if (File.Exists(StorePath))
             {
                 var json = File.ReadAllText(StorePath);
-                return JsonSerializer.Deserialize<Dictionary<string, string>>(json)
-                       ?? new Dictionary<string, string>();
+                using var doc = JsonDocument.Parse(json);
+                if (doc.RootElement.ValueKind != JsonValueKind.Object)
+                    return new Dictionary<string, KnownHostEntry>(StringComparer.OrdinalIgnoreCase);
+
+                var map = new Dictionary<string, KnownHostEntry>(StringComparer.OrdinalIgnoreCase);
+                foreach (var prop in doc.RootElement.EnumerateObject())
+                {
+                    if (prop.Value.ValueKind == JsonValueKind.String)
+                    {
+                        var fp = prop.Value.GetString();
+                        if (!string.IsNullOrWhiteSpace(fp))
+                        {
+                            map[prop.Name] = new KnownHostEntry(
+                                fp.Trim(),
+                                DeviceName: prop.Name,
+                                LastAddress: prop.Name,
+                                LastSeenUtc: null,
+                                TrustLevel: PeerTrustLevel.Paired);
+                        }
+                        continue;
+                    }
+                    if (prop.Value.ValueKind != JsonValueKind.Object)
+                        continue;
+
+                    var fpObj = ReadOptionalString(prop.Value, "fingerprint");
+                    if (string.IsNullOrWhiteSpace(fpObj))
+                        continue;
+                    map[prop.Name] = new KnownHostEntry(
+                        fpObj.Trim(),
+                        DeviceName: ReadOptionalString(prop.Value, "deviceName") ?? prop.Name,
+                        LastAddress: ReadOptionalString(prop.Value, "lastAddress") ?? prop.Name,
+                        LastSeenUtc: ReadOptionalDate(prop.Value, "lastSeenUtc"),
+                        TrustLevel: ReadOptionalTrustLevel(prop.Value, "trustLevel"));
+                }
+                return map;
             }
         }
         catch (Exception ex)
         {
             Log.Warn("cert", "load-known-hosts-failed", new { error = ex.Message });
         }
-        return new Dictionary<string, string>();
+        return new Dictionary<string, KnownHostEntry>(StringComparer.OrdinalIgnoreCase);
     }
 
-    private static void Save(Dictionary<string, string> map)
+    private static void Save(Dictionary<string, KnownHostEntry> map)
     {
         try
         {
@@ -100,16 +165,32 @@ public static class CertTrust
     /// respecto al guardado (posible MITM).
     /// </summary>
     public static bool ValidateOrPin(string host, X509Certificate? cert)
+        => ValidateOrPinDetailed(host, cert) is ValidationResult.TrustedKnown or ValidationResult.TrustedFirstUse;
+
+    public static ValidationResult ValidateOrPinDetailed(string host, X509Certificate? cert)
     {
-        if (cert == null) return false;
+        if (cert == null) return ValidationResult.InvalidCertificate;
         var fp = Fingerprint(cert);
-        Dictionary<string, string>? toSave = null;
-        bool result;
+        Dictionary<string, KnownHostEntry>? toSave = null;
+        var now = DateTimeOffset.UtcNow;
+        var deviceName = TryGetDeviceName(cert) ?? host;
         lock (_lock)
         {
             var map = _lazyCache.Value;
             if (map.TryGetValue(host, out var known))
-                return string.Equals(known, fp, StringComparison.OrdinalIgnoreCase);
+            {
+                if (!string.Equals(known.Fingerprint, fp, StringComparison.OrdinalIgnoreCase))
+                    return ValidationResult.IdentityChanged;
+
+                map[host] = known with
+                {
+                    DeviceName = deviceName,
+                    LastAddress = host,
+                    LastSeenUtc = now
+                };
+                toSave = new Dictionary<string, KnownHostEntry>(map);
+                goto SaveAndReturnKnown;
+            }
 
             // TOFU: primera vez, solo requerimos cert autofirmado (LanCopy los genera).
             X509Certificate2? x509 = null;
@@ -117,7 +198,7 @@ public static class CertTrust
             {
                 x509 = cert as X509Certificate2 ?? new X509Certificate2(cert);
                 if (!IsSelfSigned(x509))
-                    return false; // Rechazar certs emitidos por CA externas
+                    return ValidationResult.InvalidCertificate; // Rechazar certs emitidos por CA externas
             }
             finally
             {
@@ -127,16 +208,149 @@ public static class CertTrust
                 }
             }
 
-            map[host] = fp;
+            map[host] = new KnownHostEntry(fp, deviceName, host, now, PeerTrustLevel.Paired);
             // S3: copiar el mapa DENTRO del lock pero guardar FUERA — Save hace I/O de disco
             // y retener el lock durante cientos de ms bloquea a todos los callers concurrentes
-            toSave = new Dictionary<string, string>(map);
-            result = true;
+            toSave = new Dictionary<string, KnownHostEntry>(map);
         }
         // Guardar fuera del lock — si dos hilos llegan aquí simultáneamente, la segunda escritura
         // sobreescribe la primera con el mismo contenido: inocuo.
         if (toSave != null) Save(toSave);
-        return result;
+        return ValidationResult.TrustedFirstUse;
+    SaveAndReturnKnown:
+        if (toSave != null) Save(toSave);
+        return ValidationResult.TrustedKnown;
+    }
+
+    public static IReadOnlyList<KnownHost> ListKnownHosts()
+    {
+        lock (_lock)
+        {
+            return _lazyCache.Value
+                .Select(kv => new KnownHost(
+                    Host: kv.Key,
+                    DeviceName: string.IsNullOrWhiteSpace(kv.Value.DeviceName) ? kv.Key : kv.Value.DeviceName!,
+                    LastAddress: string.IsNullOrWhiteSpace(kv.Value.LastAddress) ? kv.Key : kv.Value.LastAddress!,
+                    Fingerprint: kv.Value.Fingerprint,
+                    FingerprintShort: ShortFingerprint(kv.Value.Fingerprint),
+                    LastSeenUtc: kv.Value.LastSeenUtc,
+                    TrustLevel: kv.Value.TrustLevel))
+                .OrderByDescending(x => x.LastSeenUtc ?? DateTimeOffset.MinValue)
+                .ThenBy(x => x.DeviceName, StringComparer.OrdinalIgnoreCase)
+                .ToList();
+        }
+    }
+
+    public static PeerTrustLevel GetTrustLevel(string host)
+    {
+        if (string.IsNullOrWhiteSpace(host))
+            return PeerTrustLevel.Unknown;
+        lock (_lock)
+        {
+            return _lazyCache.Value.TryGetValue(host.Trim(), out var entry)
+                ? entry.TrustLevel
+                : PeerTrustLevel.Unknown;
+        }
+    }
+
+    public static bool SetTrustLevel(string host, PeerTrustLevel trustLevel)
+    {
+        if (string.IsNullOrWhiteSpace(host))
+            return false;
+        Dictionary<string, KnownHostEntry>? toSave = null;
+        bool updated = false;
+        lock (_lock)
+        {
+            var map = _lazyCache.Value;
+            if (!map.TryGetValue(host.Trim(), out var current))
+                return false;
+            if (current.TrustLevel != trustLevel)
+            {
+                map[host.Trim()] = current with { TrustLevel = trustLevel };
+                toSave = new Dictionary<string, KnownHostEntry>(map);
+                updated = true;
+            }
+        }
+        if (toSave != null) Save(toSave);
+        return updated;
+    }
+
+    public static bool ForgetHost(string host)
+    {
+        if (string.IsNullOrWhiteSpace(host))
+            return false;
+
+        Dictionary<string, KnownHostEntry>? toSave = null;
+        bool removed;
+        lock (_lock)
+        {
+            removed = _lazyCache.Value.Remove(host.Trim());
+            if (removed)
+                toSave = new Dictionary<string, KnownHostEntry>(_lazyCache.Value);
+        }
+        if (toSave != null) Save(toSave);
+        return removed;
+    }
+
+    public static string ShortFingerprint(string fingerprintHex)
+    {
+        if (string.IsNullOrWhiteSpace(fingerprintHex))
+            return "";
+        var clean = fingerprintHex.Trim();
+        if (clean.Length <= 16)
+            return clean;
+        return $"{clean[..8]}…{clean[^8..]}";
+    }
+
+    private static string? ReadOptionalString(JsonElement obj, string property)
+    {
+        if (!obj.TryGetProperty(property, out var el) || el.ValueKind != JsonValueKind.String)
+            return null;
+        return el.GetString();
+    }
+
+    private static DateTimeOffset? ReadOptionalDate(JsonElement obj, string property)
+    {
+        var raw = ReadOptionalString(obj, property);
+        if (string.IsNullOrWhiteSpace(raw))
+            return null;
+        return DateTimeOffset.TryParse(raw, out var parsed) ? parsed : null;
+    }
+
+    private static PeerTrustLevel ReadOptionalTrustLevel(JsonElement obj, string property)
+    {
+        if (!obj.TryGetProperty(property, out var el))
+            return PeerTrustLevel.Paired;
+        if (el.ValueKind == JsonValueKind.Number && el.TryGetInt32(out var n)
+            && Enum.IsDefined(typeof(PeerTrustLevel), n))
+            return (PeerTrustLevel)n;
+        if (el.ValueKind == JsonValueKind.String)
+        {
+            var raw = el.GetString();
+            if (Enum.TryParse<PeerTrustLevel>(raw, ignoreCase: true, out var parsed))
+                return parsed;
+        }
+        return PeerTrustLevel.Paired;
+    }
+
+    private static string? TryGetDeviceName(X509Certificate cert)
+    {
+        X509Certificate2? x509 = null;
+        try
+        {
+            x509 = cert as X509Certificate2 ?? new X509Certificate2(cert);
+            var name = x509.GetNameInfo(X509NameType.SimpleName, false);
+            return string.IsNullOrWhiteSpace(name) ? null : name;
+        }
+        catch
+        {
+            return null;
+        }
+        finally
+        {
+            if (x509 != null && !ReferenceEquals(x509, cert))
+                x509.Dispose();
+        }
     }
      
     private static bool IsSelfSigned(X509Certificate2 cert)

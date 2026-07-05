@@ -46,6 +46,9 @@
                     <Button x:Name="btnFindPeer" Content="{l:Tr btn.findpeer}" Click="Diagnose_Click"
                             Background="{DynamicResource InputBg}" Foreground="{DynamicResource InputFg}" Padding="8,5"
                             ToolTip.Tip="{l:Tr tip.findpeer}"/>
+                    <Button x:Name="btnChat" Content="{l:Tr btn.chat}" Click="OpenChat_Click"
+                            Background="{DynamicResource InputBg}" Foreground="{DynamicResource InputFg}" Padding="8,5"
+                            ToolTip.Tip="{l:Tr tip.chat}"/>
                     <Button x:Name="btnHelp" Content="{l:Tr btn.help}" Click="ShowWelcome_Click"
                             Background="{DynamicResource InputBg}" Foreground="{DynamicResource InputFg}" Padding="8,5"
                             ToolTip.Tip="{l:Tr tip.help}"/>
@@ -59,12 +62,18 @@
                               Padding="4,3" BorderBrush="{DynamicResource BorderFg}" FontSize="12"
                               SelectionChanged="CmbLang_SelectionChanged"
                               ToolTip.Tip="{l:Tr tip.language}"/>
+                    <CheckBox x:Name="chkSafeMode" Content="{l:Tr chk.safeMode}" Foreground="{DynamicResource TextFg}" FontSize="12" IsChecked="True"
+                              IsCheckedChanged="ChkSafeMode_Changed"
+                              ToolTip.Tip="{l:Tr tip.safeMode}"/>
+                    <Button x:Name="btnDisableSafeModeTemp" Content="{l:Tr btn.safeModeTemp}" Click="DisableSafeModeTemporarily_Click"
+                            Background="{DynamicResource InputBg}" Foreground="#FF8A80" Padding="8,3" FontSize="12"
+                            ToolTip.Tip="{l:Tr tip.safeModeTemp}"/>
+                    <TextBlock x:Name="txtServerModeBadge" Text="" Foreground="#28A745" FontWeight="SemiBold" VerticalAlignment="Center" FontSize="12" Margin="8,0,0,0" ToolTip.Tip="{l:Tr security.safeSummary}"/>
                     <Button x:Name="btnAdvancedToggle" Content="{l:Tr btn.advanced.show}" Click="ToggleAdvanced_Click"
                             Background="Transparent" Foreground="{DynamicResource MutedFg}" Padding="6,3" FontSize="12"
                             ToolTip.Tip="{l:Tr tip.advanced}"/>
                 </StackPanel>
             </WrapPanel>
-
             <!-- ══ PANEL AVANZADO (plegable) ══════════════════════════════════════ -->
             <StackPanel x:Name="advancedPanel" Spacing="6" IsVisible="False">
             <!-- Fila A: puerto local + conexión manual -->
@@ -80,6 +89,9 @@
                     <Button x:Name="btnPairCode" Content="🔗" Click="CopyPairingCode_Click"
                             Background="{DynamicResource InputBg}" Foreground="#FFD700" Padding="6,2" FontSize="12"
                             ToolTip.Tip="{l:Tr tip.paircode}"/>
+                    <Button x:Name="btnTrustedDevices" Content="🔐 Devices" Click="ShowTrustedDevices_Click"
+                            Background="{DynamicResource InputBg}" Foreground="{DynamicResource InputFg}" Padding="6,2" FontSize="12"
+                            ToolTip.Tip="Manage trusted identities, safe defaults, and risky permissions"/>
                 </StackPanel>
                 <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Spacing="6" Margin="0,2,0,2">
                     <TextBlock Text="{l:Tr label.manual}" Foreground="{DynamicResource TextFg}" VerticalAlignment="Center" FontSize="12"/>
@@ -114,13 +126,14 @@
                             ToolTip.Tip="{l:Tr tip.deleteprofile}"/>
                 </StackPanel>
                 <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Spacing="10" Margin="0,2,16,2">
-                    <CheckBox x:Name="chkTls" Content="{l:Tr chk.tls}" Foreground="{DynamicResource TextFg}" FontSize="12" IsChecked="True"
+                    <CheckBox x:Name="chkTls" IsVisible="False" Content="{l:Tr chk.tls}" Foreground="{DynamicResource TextFg}" FontSize="12" IsChecked="True"
                               IsCheckedChanged="ChkTls_Changed"
                               ToolTip.Tip="{l:Tr tip.tls}"/>
-                    <CheckBox x:Name="chkShareRoot" Content="{l:Tr chk.shareRoot}" Foreground="{DynamicResource TextFg}" FontSize="12" IsChecked="True" IsCheckedChanged="ChkShareRoot_Changed" ToolTip.Tip="{l:Tr tip.shareRoot}"/>
+                    <CheckBox x:Name="chkShareRoot" IsVisible="False" Content="{l:Tr chk.shareRoot}" Foreground="{DynamicResource TextFg}" FontSize="12" IsChecked="True" IsCheckedChanged="ChkShareRoot_Changed" ToolTip.Tip="{l:Tr tip.shareRoot}"/>
                     <CheckBox x:Name="chkReadOnly" Content="{l:Tr chk.readOnly}" Foreground="{DynamicResource TextFg}" FontSize="12" IsCheckedChanged="ChkReadOnly_Changed" ToolTip.Tip="{l:Tr tip.readOnly}"/>
-                    <CheckBox x:Name="chkSafeModeNoDelete" Content="{l:Tr chk.safeModeNoDelete}" Foreground="{DynamicResource TextFg}" FontSize="12" IsCheckedChanged="ChkSafeModeNoDelete_Changed" ToolTip.Tip="{l:Tr tip.safeModeNoDelete}"/>
+                    <CheckBox x:Name="chkSafeModeNoDelete" IsVisible="False" Content="{l:Tr chk.safeModeNoDelete}" Foreground="{DynamicResource TextFg}" FontSize="12" IsCheckedChanged="ChkSafeModeNoDelete_Changed" ToolTip.Tip="{l:Tr tip.safeModeNoDelete}"/>
                     <CheckBox x:Name="chkRequireApproval" Content="{l:Tr chk.requireApproval}" Foreground="{DynamicResource TextFg}" FontSize="12" IsCheckedChanged="ChkRequireApproval_Changed" ToolTip.Tip="{l:Tr tip.requireApproval}"/>
+                    <CheckBox x:Name="chkRequireHighRiskApproval" IsVisible="False" Content="{l:Tr chk.requireHighRiskApproval}" Foreground="{DynamicResource TextFg}" FontSize="12" IsChecked="True" IsCheckedChanged="ChkRequireHighRiskApproval_Changed" ToolTip.Tip="{l:Tr tip.requireHighRiskApproval}"/>
                     <CheckBox x:Name="chkCompress" Content="{l:Tr chk.compress}" Foreground="{DynamicResource TextFg}" FontSize="12"
                               IsCheckedChanged="ChkCompress_Changed"
                               ToolTip.Tip="{l:Tr tip.compress}"/>
@@ -137,14 +150,6 @@
             <!-- Fila C: extras (texto, broadcast, sendto, ancho de banda) -->
             <WrapPanel>
                 <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Spacing="6" Margin="0,2,16,2">
-                    <TextBox x:Name="txtSendText" Width="150" Background="{DynamicResource InputBg}" Foreground="{DynamicResource InputFg}"
-                             PlaceholderText="{l:Tr text.placeholder}" Padding="6,3" FontSize="12" BorderBrush="{DynamicResource BorderFg}"
-                             ToolTip.Tip="{l:Tr tip.sendtext}"/>
-                    <Button x:Name="btnSendText" Content="{l:Tr btn.sendtext}" Click="SendText_Click"
-                            Background="{DynamicResource InputBg}" Foreground="{DynamicResource InputFg}" Padding="6,3" FontSize="12"
-                            ToolTip.Tip="{l:Tr tip.sendtext}"/>
-                </StackPanel>
-                <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Spacing="6" Margin="0,2,16,2">
                     <Button x:Name="btnBroadcast" Content="{l:Tr btn.broadcast}" Click="Broadcast_Click"
                             Background="{DynamicResource InputBg}" Foreground="{DynamicResource InputFg}" Padding="6,3" FontSize="12"
                             ToolTip.Tip="{l:Tr tip.broadcast}"/>
@@ -157,6 +162,9 @@
                     <Button x:Name="btnDiagExport" Content="{l:Tr btn.diagexport}" Click="ExportDiagnostics_Click"
                             Background="{DynamicResource InputBg}" Foreground="#00BCD4" Padding="6,3" FontSize="12"
                             ToolTip.Tip="{l:Tr tip.diagexport}"/>
+                    <Button x:Name="btnRemotePowerAdvanced" Content="{l:Tr btn.remotePower}" Click="RemotePower_Click"
+                            Background="{DynamicResource InputBg}" Foreground="Tomato" Padding="6,3" FontSize="12"
+                            ToolTip.Tip="{l:Tr tip.remotePower}"/>
                 </StackPanel>
                 <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Spacing="6" Margin="0,2,0,2">
                     <TextBlock Text="{l:Tr bw.label}" Foreground="{DynamicResource TextFg}" VerticalAlignment="Center" FontSize="12"/>
@@ -179,7 +187,7 @@
         <Grid Grid.Row="1" ColumnDefinitions="*,Auto,*">
 
             <!-- ── Panel izquierdo: Local ──────────────────────────────────── -->
-            <Grid Grid.Column="0" RowDefinitions="Auto,Auto,Auto,Auto,Auto,*" Background="{DynamicResource ChromeBg}">
+            <Grid Grid.Column="0" RowDefinitions="Auto,Auto,Auto,*" Background="{DynamicResource ChromeBg}">
                 <Border Grid.Row="0" Background="{DynamicResource ToolbarBg}" Padding="10,7">
                     <TextBlock Text="{l:Tr panel.thispc}" Foreground="{DynamicResource InputFg}" FontWeight="Bold" FontSize="13" ToolTip.Tip="{l:Tr tip.thispc}"/>
                 </Border>
@@ -200,14 +208,8 @@
                                 ToolTip.Tip="{l:Tr tip.localhome}"/>
                     </Grid>
                 </Border>
-                <!-- Filtro búsqueda local -->
-                <Border Grid.Row="2" Background="{DynamicResource PanelBg}" Padding="6,3" BorderBrush="{DynamicResource DividerBg}" BorderThickness="0,0,0,1">
-                    <TextBox x:Name="txtLocalFilter" PlaceholderText="{l:Tr localfilter.placeholder}" 
-                             Background="{DynamicResource InputBg}" Foreground="{DynamicResource InputFg}" Padding="5,3" BorderBrush="{DynamicResource BorderFg}"
-                             TextChanged="TxtLocalFilter_TextChanged" ToolTip.Tip="{l:Tr tip.localfilter}"/>
-                </Border>
                 <!-- Cabeceras de ordenación local (Feature 6) -->
-                <Border Grid.Row="3" Background="{DynamicResource PanelBg}" Padding="4,2" BorderBrush="{DynamicResource DividerBg}" BorderThickness="0,0,0,1">
+                <Border Grid.Row="2" Background="{DynamicResource PanelBg}" Padding="4,2" BorderBrush="{DynamicResource DividerBg}" BorderThickness="0,0,0,1">
                     <StackPanel Orientation="Horizontal" Spacing="4">
                         <Button x:Name="btnLocalSortName" Content="{l:Tr sort.name}" Click="LocalSortName_Click"
                                 Background="Transparent" Foreground="{DynamicResource MutedFg}" FontSize="12" Padding="2,1"
@@ -221,20 +223,21 @@
                     </StackPanel>
                 </Border>
                 <!-- DragDrop.AllowDrop para recibir archivos arrastrados desde el panel remoto (#14) -->
-                <ListBox Grid.Row="5" x:Name="localList"
-                         SelectionMode="Multiple"
-                         Background="Transparent" BorderThickness="0"
-                         ScrollViewer.VerticalScrollBarVisibility="Auto"
-                         ScrollViewer.HorizontalScrollBarVisibility="Auto"
-                         DoubleTapped="LocalList_DoubleTapped"
-                         SelectionChanged="LocalList_SelectionChanged"
-                         DragDrop.AllowDrop="True" ToolTip.Tip="{l:Tr tip.locallist}">
-                    <ListBox.ItemContainerTheme>
-                        <ControlTheme TargetType="ListBoxItem" BasedOn="{StaticResource {x:Type ListBoxItem}}">
-                            <Setter Property="Padding" Value="6,3"/>
-                        </ControlTheme>
-                    </ListBox.ItemContainerTheme>
-                    <ListBox.ContextMenu>
+                                <DataGrid Grid.Row="3" x:Name="localList"
+                          AutoGenerateColumns="False"
+                          IsReadOnly="True"
+                          SelectionMode="Extended"
+                          HeadersVisibility="Column"
+                          CanUserResizeColumns="True"
+                          CanUserReorderColumns="True"
+                          CanUserSortColumns="False"
+                          GridLinesVisibility="Horizontal"
+                          RowHeight="26"
+                          Background="Transparent" BorderThickness="0"
+                          DoubleTapped="LocalList_DoubleTapped"
+                          SelectionChanged="LocalList_SelectionChanged"
+                          DragDrop.AllowDrop="True" ToolTip.Tip="{l:Tr tip.locallist}">
+                    <DataGrid.ContextMenu>
                         <ContextMenu Opening="LocalCtx_Opening">
                             <MenuItem x:Name="ctxLocalSend"   Header="{l:Tr ctx.send}"    Click="LocalCtx_Send" ToolTip.Tip="{l:Tr tip.ctxsend}"/>
                             <Separator/>
@@ -245,22 +248,38 @@
                             <Separator/>
                             <MenuItem                          Header="{l:Tr ctx.copypath}"         Click="LocalCtx_CopyPath" ToolTip.Tip="{l:Tr tip.ctxcopypath}"/>
                         </ContextMenu>
-                    </ListBox.ContextMenu>
-                    <ListBox.ItemTemplate>
-                        <DataTemplate x:DataType="models:FileEntry">
-                            <Grid ColumnDefinitions="22,*,100,65" MinWidth="380">
-                                <TextBlock Grid.Column="0" Text="{Binding Icon}" FontSize="13" VerticalAlignment="Center"/>
-                                <TextBlock Grid.Column="1" Text="{Binding Name}" Foreground="{DynamicResource TextFg}"
-                                           FontSize="12" VerticalAlignment="Center" Margin="4,0"
-                                           TextTrimming="CharacterEllipsis"/>
-                                <TextBlock Grid.Column="2" Text="{Binding DateText}" Foreground="{DynamicResource MutedFg}"
-                                           FontSize="11" HorizontalAlignment="Right" VerticalAlignment="Center" Margin="4,0"/>
-                                <TextBlock Grid.Column="3" Text="{Binding SizeText}" Foreground="{DynamicResource MutedFg}"
-                                           FontSize="12" HorizontalAlignment="Right" VerticalAlignment="Center"/>
-                            </Grid>
-                        </DataTemplate>
-                    </ListBox.ItemTemplate>
-                </ListBox>
+                    </DataGrid.ContextMenu>
+                    <DataGrid.Columns>
+                        <DataGridTemplateColumn Header="{l:Tr sort.name}" Width="*" MinWidth="140">
+                            <DataGridTemplateColumn.CellTemplate>
+                                <DataTemplate x:DataType="models:FileEntry">
+                                    <Grid ColumnDefinitions="22,*" MinWidth="120">
+                                        <TextBlock Grid.Column="0" Text="{Binding Icon}" FontSize="13" VerticalAlignment="Center"/>
+                                        <TextBlock Grid.Column="1" Text="{Binding Name}" Foreground="{DynamicResource TextFg}"
+                                                   FontSize="12" VerticalAlignment="Center" Margin="4,0"
+                                                   TextTrimming="CharacterEllipsis"/>
+                                    </Grid>
+                                </DataTemplate>
+                            </DataGridTemplateColumn.CellTemplate>
+                        </DataGridTemplateColumn>
+                        <DataGridTemplateColumn Header="{l:Tr sort.size}" Width="90" MinWidth="64">
+                            <DataGridTemplateColumn.CellTemplate>
+                                <DataTemplate x:DataType="models:FileEntry">
+                                    <TextBlock Text="{Binding SizeText}" Foreground="{DynamicResource MutedFg}"
+                                               FontSize="12" HorizontalAlignment="Right" VerticalAlignment="Center" Margin="4,0"/>
+                                </DataTemplate>
+                            </DataGridTemplateColumn.CellTemplate>
+                        </DataGridTemplateColumn>
+                        <DataGridTemplateColumn Header="{l:Tr sort.date}" Width="120" MinWidth="92">
+                            <DataGridTemplateColumn.CellTemplate>
+                                <DataTemplate x:DataType="models:FileEntry">
+                                    <TextBlock Text="{Binding DateText}" Foreground="{DynamicResource MutedFg}"
+                                               FontSize="11" HorizontalAlignment="Right" VerticalAlignment="Center" Margin="4,0"/>
+                                </DataTemplate>
+                            </DataGridTemplateColumn.CellTemplate>
+                        </DataGridTemplateColumn>
+                    </DataGrid.Columns>
+                </DataGrid>
             </Grid>
 
             <!-- ── Botones de transferencia ─────────────────────────────────── -->
@@ -316,12 +335,12 @@
             </Border>
 
             <!-- ── Panel derecho: Remoto ─────────────────────────────────────── -->
-            <Grid Grid.Column="2" RowDefinitions="Auto,Auto,Auto,Auto,*" Background="{DynamicResource ChromeBg}">
+            <Grid Grid.Column="2" RowDefinitions="Auto,Auto,Auto,*" Background="{DynamicResource ChromeBg}">
                 <Border Grid.Row="0" Background="{DynamicResource ToolbarBg}" Padding="10,7">
                     <TextBlock Text="{l:Tr panel.remotepc}" Foreground="{DynamicResource InputFg}" FontWeight="Bold" FontSize="13" ToolTip.Tip="{l:Tr tip.remotepc}"/>
                 </Border>
                 <Border Grid.Row="1" Background="{DynamicResource PanelBg}" Padding="6,4" BorderBrush="{DynamicResource DividerBg}" BorderThickness="0,0,0,1">
-                    <Grid ColumnDefinitions="28,*,28,28,28,28">
+                    <Grid ColumnDefinitions="28,*,28,28">
                         <Button Grid.Column="0" Content="↑" Click="RemoteGoUp"
                                 Background="{DynamicResource InputBg}" Foreground="{DynamicResource InputFg}" Padding="0" Width="24" Height="24"
                                 ToolTip.Tip="{l:Tr tip.remoteup}"/>
@@ -329,17 +348,10 @@
                                    Text="—" Foreground="{DynamicResource TextFg}" FontSize="12"
                                    VerticalAlignment="Center" Margin="6,0" TextTrimming="CharacterEllipsis"
                                    ToolTip.Tip="{Binding #txtRemotePath.Text}"/>
-                        <Button Grid.Column="2" x:Name="btnRemoteCreateFolder" Content="📁+"
-                                Click="RemoteCtx_CreateFolder" IsEnabled="False"
-                                Background="{DynamicResource InputBg}" Foreground="{DynamicResource InputFg}" Padding="0" Width="24" Height="24"
-                                ToolTip.Tip="{l:Tr tip.ctxnewfolderremote}"/>
-                        <Button Grid.Column="3" Content="⭐" Click="RemoteFavorites_Click"
+                        <Button Grid.Column="2" Content="⭐" Click="RemoteFavorites_Click"
                                 Background="{DynamicResource InputBg}" Foreground="Gold" Padding="0" Width="24" Height="24"
-                                ToolTip.Tip="Remote Favorites"/>
-                        <Button Grid.Column="4" Content="⚡" Click="RemotePower_Click"
-                                Background="{DynamicResource InputBg}" Foreground="Tomato" Padding="0" Width="24" Height="24"
-                                ToolTip.Tip="Power options of the remote PC"/>
-                        <Button Grid.Column="5" Content="🏠" Click="RemoteGoHome"
+                                ToolTip.Tip="{l:Tr tip.remoteFavorites}"/>
+                        <Button Grid.Column="3" Content="🏠" Click="RemoteGoHome"
                                 Background="{DynamicResource InputBg}" Foreground="{DynamicResource InputFg}" Padding="0" Width="24" Height="24"
                                 ToolTip.Tip="{l:Tr tip.remotehome}"/>
                     </Grid>
@@ -358,54 +370,65 @@
                                 ToolTip.Tip="{l:Tr tip.sortdate}"/>
                     </StackPanel>
                 </Border>
-                <!-- Remote search box -->
-                <Border Grid.Row="3" Background="{DynamicResource PanelBg}" Padding="6,3" BorderBrush="{DynamicResource DividerBg}" BorderThickness="0,0,0,1">
-                    <TextBox x:Name="txtRemoteSearch" PlaceholderText="Search remote files..." 
-                             Background="{DynamicResource InputBg}" Foreground="{DynamicResource InputFg}" Padding="5,3" BorderBrush="{DynamicResource BorderFg}"
-                             TextChanged="TxtRemoteSearch_TextChanged" ToolTip.Tip="Type to search files recursively on the remote PC"/>
-                </Border>
-                <ListBox Grid.Row="4" x:Name="remoteList"
-                         SelectionMode="Multiple"
-                         Background="Transparent" BorderThickness="0"
-                         ScrollViewer.VerticalScrollBarVisibility="Auto"
-                         ScrollViewer.HorizontalScrollBarVisibility="Auto"
-                         DoubleTapped="RemoteList_DoubleTapped"
-                         SelectionChanged="RemoteList_SelectionChanged"
-                         DragDrop.AllowDrop="True" ToolTip.Tip="{l:Tr tip.remotelist}">
-                    <ListBox.ItemContainerTheme>
-                        <ControlTheme TargetType="ListBoxItem" BasedOn="{StaticResource {x:Type ListBoxItem}}">
-                            <Setter Property="Padding" Value="6,3"/>
-                        </ControlTheme>
-                    </ListBox.ItemContainerTheme>
-                    <ListBox.ContextMenu>
+                                <DataGrid Grid.Row="3" x:Name="remoteList"
+                          AutoGenerateColumns="False"
+                          IsReadOnly="True"
+                          SelectionMode="Extended"
+                          HeadersVisibility="Column"
+                          CanUserResizeColumns="True"
+                          CanUserReorderColumns="True"
+                          CanUserSortColumns="False"
+                          GridLinesVisibility="Horizontal"
+                          RowHeight="26"
+                          Background="Transparent" BorderThickness="0"
+                          DoubleTapped="RemoteList_DoubleTapped"
+                          SelectionChanged="RemoteList_SelectionChanged"
+                          DragDrop.AllowDrop="True" ToolTip.Tip="{l:Tr tip.remotelist}">
+                    <DataGrid.ContextMenu>
                         <ContextMenu Opening="RemoteCtx_Opening">
                             <MenuItem x:Name="ctxRemoteReceive" Header="{l:Tr ctx.receivelocal}"    Click="RemoteCtx_Receive" ToolTip.Tip="{l:Tr tip.ctxreceivelocal}"/>
                             <Separator/>
                             <MenuItem x:Name="ctxRemoteCreateFolder" Header="{l:Tr ctx.newfolder}" Click="RemoteCtx_CreateFolder" ToolTip.Tip="{l:Tr tip.ctxnewfolderremote}"/>
-                            <Separator/>
                             <MenuItem x:Name="ctxRemoteRename"  Header="{l:Tr ctx.rename}"           Click="RemoteCtx_Rename" ToolTip.Tip="{l:Tr ctx.renameremote}"/>
+                            <Separator/>
                             <MenuItem x:Name="ctxRemoteDelete"  Header="{l:Tr ctx.delete}"              Click="RemoteCtx_Delete" ToolTip.Tip="{l:Tr ctx.deleteremote}"/>
                             <Separator/>
                             <MenuItem x:Name="ctxRemoteVerify"  Header="{l:Tr ctx.verifylocal}"  Click="RemoteCtx_Verify" ToolTip.Tip="{l:Tr tip.ctxverifylocal}"/>
                             <Separator/>
                             <MenuItem                            Header="{l:Tr ctx.copypath}"         Click="RemoteCtx_CopyPath" ToolTip.Tip="{l:Tr tip.ctxcopypath}"/>
                         </ContextMenu>
-                    </ListBox.ContextMenu>
-                    <ListBox.ItemTemplate>
-                        <DataTemplate x:DataType="models:FileEntry">
-                            <Grid ColumnDefinitions="22,*,100,65" MinWidth="380">
-                                <TextBlock Grid.Column="0" Text="{Binding Icon}" FontSize="13" VerticalAlignment="Center"/>
-                                <TextBlock Grid.Column="1" Text="{Binding Name}" Foreground="{DynamicResource TextFg}"
-                                           FontSize="12" VerticalAlignment="Center" Margin="4,0"
-                                           TextTrimming="CharacterEllipsis"/>
-                                <TextBlock Grid.Column="2" Text="{Binding DateText}" Foreground="{DynamicResource MutedFg}"
-                                           FontSize="11" HorizontalAlignment="Right" VerticalAlignment="Center" Margin="4,0"/>
-                                <TextBlock Grid.Column="3" Text="{Binding SizeText}" Foreground="{DynamicResource MutedFg}"
-                                           FontSize="12" HorizontalAlignment="Right" VerticalAlignment="Center"/>
-                            </Grid>
-                        </DataTemplate>
-                    </ListBox.ItemTemplate>
-                </ListBox>
+                    </DataGrid.ContextMenu>
+                    <DataGrid.Columns>
+                        <DataGridTemplateColumn Header="{l:Tr sort.name}" Width="*" MinWidth="140">
+                            <DataGridTemplateColumn.CellTemplate>
+                                <DataTemplate x:DataType="models:FileEntry">
+                                    <Grid ColumnDefinitions="22,*" MinWidth="120">
+                                        <TextBlock Grid.Column="0" Text="{Binding Icon}" FontSize="13" VerticalAlignment="Center"/>
+                                        <TextBlock Grid.Column="1" Text="{Binding Name}" Foreground="{DynamicResource TextFg}"
+                                                   FontSize="12" VerticalAlignment="Center" Margin="4,0"
+                                                   TextTrimming="CharacterEllipsis"/>
+                                    </Grid>
+                                </DataTemplate>
+                            </DataGridTemplateColumn.CellTemplate>
+                        </DataGridTemplateColumn>
+                        <DataGridTemplateColumn Header="{l:Tr sort.size}" Width="90" MinWidth="64">
+                            <DataGridTemplateColumn.CellTemplate>
+                                <DataTemplate x:DataType="models:FileEntry">
+                                    <TextBlock Text="{Binding SizeText}" Foreground="{DynamicResource MutedFg}"
+                                               FontSize="12" HorizontalAlignment="Right" VerticalAlignment="Center" Margin="4,0"/>
+                                </DataTemplate>
+                            </DataGridTemplateColumn.CellTemplate>
+                        </DataGridTemplateColumn>
+                        <DataGridTemplateColumn Header="{l:Tr sort.date}" Width="120" MinWidth="92">
+                            <DataGridTemplateColumn.CellTemplate>
+                                <DataTemplate x:DataType="models:FileEntry">
+                                    <TextBlock Text="{Binding DateText}" Foreground="{DynamicResource MutedFg}"
+                                               FontSize="11" HorizontalAlignment="Right" VerticalAlignment="Center" Margin="4,0"/>
+                                </DataTemplate>
+                            </DataGridTemplateColumn.CellTemplate>
+                        </DataGridTemplateColumn>
+                    </DataGrid.Columns>
+                </DataGrid>
             </Grid>
         </Grid>
 
@@ -441,3 +464,9 @@
         </Border>
     </Grid>
 </Window>
+
+
+
+
+
+

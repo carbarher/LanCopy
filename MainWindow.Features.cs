@@ -25,6 +25,7 @@ using Avalonia.Styling;
 using Avalonia.Threading;
 using LanCopy.Models;
 using LanCopy.Localization;
+using LanCopy.Dialogs;
 using LanCopy.Services;
 
 namespace LanCopy;
@@ -121,15 +122,19 @@ public partial class MainWindow
         {
             // Q6: usar el helper extraído en lugar de código inline duplicado
             var health = await TryGetRemoteHealthAsync(remoteIp, remotePort);
+            sb.AppendLine();
             if (health != null)
             {
-                sb.AppendLine();
                 sb.AppendLine(L["diag.remoteHealth"]); // U1: era hardcodeado en español
                 sb.AppendLine(L.Format("diag.connActive", health.ConnCurrent, health.ConnLimit));
                 sb.AppendLine(L.Format("diag.perIpLimit", health.PerIpLimit, health.ActiveIps));
                 sb.AppendLine(L.Format("diag.pinFails", health.PinFailsTracked));
                 sb.AppendLine(L.Format("diag.hashCache", health.HashCacheEntries));
                 sb.AppendLine(L.Format("diag.rateLimit", health.CommandRateLimit, health.CommandRateWindowSeconds, health.CommandRateTracked));
+            }
+            else
+            {
+                sb.AppendLine(L.Format("diag.remoteUnreachable", $"{remoteIp}:{remotePort}"));
             }
         }
 
@@ -157,7 +162,7 @@ public partial class MainWindow
                 summary.AppendLine($"Local endpoint: {_server.LocalIp}:{_server.Port}");
                 summary.AppendLine($"Connected: {(await IsConnectedAsync() ? "yes" : "no")}");
                 summary.AppendLine($"TLS: {_tlsEnabled}; Compress: {_compressEnabled}; RestrictShareRoot: {_restrictShareRoot}");
-                summary.AppendLine($"SafeModeNoDelete: {_safeModeNoRemoteDelete}; ReadOnly: {_readOnly}; RequireApproval: {_requireApproval}");
+                summary.AppendLine($"SafeMode: {_safeModeEnabled}; SafeModeNoDelete: {_safeModeNoRemoteDelete}; ReadOnly: {_readOnly}; RequireApproval: {_requireApproval}");
                 var peers = _discovery?.GetPeers() ?? [];
                 summary.AppendLine($"Discovered peers: {peers.Count}");
                 foreach (var p in peers) summary.AppendLine($"  - {p.Name} ({p.Ip}:{p.Port})");
@@ -312,16 +317,27 @@ public partial class MainWindow
         _server.RequiredPin = string.IsNullOrEmpty(pin) ? null : pin;
     }
 
-    private LanClient MakeClient(string ip, int port)
+    private LanClient MakeClient(string ip, int port, bool? useTlsOverride = null)
     {
         var pin = this.FindControl<TextBox>("txtPin")?.Text?.Trim() ?? "";
         return new LanClient(ip, port)
         {
             Pin = string.IsNullOrEmpty(pin) ? null : pin,
-            UseTls = _tlsEnabled,
+            UseTls = ResolveClientTlsMode(ip, port, useTlsOverride),
             UseCompress = _compressEnabled
         };
     }
+
+    private bool ResolveClientTlsMode(string ip, int port, bool? useTlsOverride)
+    {
+        if (useTlsOverride is bool explicitMode) return explicitMode;
+        var discoveredPeer = _discovery?.GetPeers().FirstOrDefault(p => p.Ip == ip && p.Port == port);
+        if (discoveredPeer?.TlsEnabled == true) return true;
+        if (discoveredPeer?.TlsEnabled == false && _plaintextCompatibilityApprovedPeers.Contains(PeerSecurityKey(ip, port))) return false;
+        return _tlsEnabled;
+    }
+
+    private static string PeerSecurityKey(string ip, int port) => $"{ip.Trim()}:{port}";
 
     // â•â• Ideas locas â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
@@ -338,43 +354,71 @@ public partial class MainWindow
             this.FindControl<TextBox>("txtRemotePort")?.Text ?? "8742");
     }
 
-    // idea-clipboard: enviar un texto corto al remoto (se copia a su portapapeles).
-    private async void SendText_Click(object? sender, RoutedEventArgs e)
+    // Chat entre PCs en ventana independiente. Si no hay destino escrito, responde al último remitente.
+    private void OpenChat_Click(object? sender, RoutedEventArgs e) => ShowChatWindow();
+
+    private void ShowChatWindow()
     {
-        var box = this.FindControl<TextBox>("txtSendText");
-        var text = box?.Text ?? "";
-        if (string.IsNullOrEmpty(text)) { SetStatus(L["st.textEmpty"]); return; }
+        if (_chatWindow != null)
+        {
+            _chatWindow.Activate();
+            return;
+        }
+
+        _chatWindow = new ChatWindow(_chatMessages, SendChatMessageAsync);
+        _chatWindow.Closed += (_, _) => _chatWindow = null;
+        _chatWindow.Show(this);
+    }
+
+    private async Task<bool> SendChatMessageAsync(string text)
+    {
+        if (string.IsNullOrWhiteSpace(text)) { SetStatus(L["st.textEmpty"]); return false; }
+
         var ip = this.FindControl<TextBox>("txtRemoteIp")?.Text?.Trim() ?? "";
-        if (!int.TryParse(this.FindControl<TextBox>("txtRemotePort")?.Text?.Trim(), out var port)) port = 8742;
-        if (string.IsNullOrEmpty(ip)) { SetStatus(L["st.connectFirst"]); return; }
+        var port = NetworkValidation.ParsePortOrDefault(this.FindControl<TextBox>("txtRemotePort")?.Text?.Trim());
+        if (string.IsNullOrEmpty(ip) && !string.IsNullOrWhiteSpace(_lastTextSenderIp))
+        {
+            ip = _lastTextSenderIp!;
+            port = _lastTextSenderPort;
+        }
+        if (string.IsNullOrEmpty(ip)) { SetStatus(L["st.connectFirst"]); return false; }
+
         try
         {
             using var cli = MakeClient(ip, port);
-            // C9-FIX: timeout de 5s — sin CT, SendTextAsync dependía del KeepAlive TCP (~30s)
-            using var sendTextCts = new System.Threading.CancellationTokenSource(TimeSpan.FromSeconds(5));
-            await cli.SendTextAsync(text, sendTextCts.Token);
-            if (box != null) box.Text = "";
+            using var sendTextCts = new System.Threading.CancellationTokenSource(TimeSpan.FromSeconds(8));
+            var message = text.Trim();
+            await cli.SendTextAsync(message, sendTextCts.Token);
+            _chatMessages.Add(new ChatMessage { Sender = L["chat.me"], Text = message, IsOwn = true });
             SetStatus(L["st.textSent"]);
+            return true;
         }
-        catch (Exception ex) { SetStatus(L.Format("st.textFailed", ex.Message)); }
+        catch (Exception ex)
+        {
+            SetStatus(L.Format("st.textFailed", ex.Message));
+            return false;
+        }
     }
 
-    // idea-clipboard: texto recibido -> copiar al portapapeles y notificar.
+    // Chat: registrar el mensaje recibido y notificarlo sin tocar el portapapeles.
     private void OnTextReceived(string ip, string text)
     {
-        _lastClipboardText = text; // evitar bucle de reenvío
-        Dispatcher.UIThread.Post(async () =>
+        _lastClipboardText = text; // evita bucles si la sincronización automática del portapapeles está activa
+        var peer = _discovery?.GetPeers().FirstOrDefault(p => string.Equals(p.Ip, ip, StringComparison.OrdinalIgnoreCase));
+        _lastTextSenderIp = ip;
+        _lastTextSenderPort = peer?.Port ?? NetworkValidation.DefaultPort;
+        var senderName = !string.IsNullOrWhiteSpace(peer?.Name) ? peer!.Name : ip;
+        Dispatcher.UIThread.Post(() =>
         {
-            try
-            {
-                var top = TopLevel.GetTopLevel(this);
-                if (top?.Clipboard != null) await top.Clipboard.SetTextAsync(text);
-            }
-            catch (Exception ex) { Log.Debug("clipboard", "set-received-text-failed", new { ip, error = ex.Message }); }
             var preview = text.Length > 60 ? text[..60] + "\u2026" : text;
-            SetStatus(L.Format("st.textReceived", ip, preview));
+            _chatMessages.Add(new ChatMessage { Sender = senderName, Text = text, IsOwn = false });
+            ShowChatWindow();
+            SetStatus(L.Format("st.textReceived", senderName, preview));
 
             // Si es un enlace HTTP/S y auto-open está activo, lo abrimos
+            if (_safeModeEnabled)
+                return;
+
             if (_autoOpenLinks && (text.StartsWith("http://", StringComparison.OrdinalIgnoreCase) || text.StartsWith("https://", StringComparison.OrdinalIgnoreCase)))
             {
                 try
@@ -579,7 +623,7 @@ public partial class MainWindow
             var show = new NativeMenuItem(L["tray.show"]);
             show.Click += (_, _) => ShowFromTray();
             var exit = new NativeMenuItem(L["tray.exit"]);
-            exit.Click += (_, _) => { Interlocked.Exchange(ref _forceClose, 1); Close(); };
+            exit.Click += (_, _) => Close();
             menu.Items.Add(show);
             menu.Items.Add(exit);
             _tray = new TrayIcon { Icon = icon, ToolTipText = "LanCopy", Menu = menu, IsVisible = true };
@@ -1045,20 +1089,6 @@ public partial class MainWindow
         SetStatus(chk.IsChecked == true ? L["st.stealthOn"] : L["st.stealthOff"]);
     }
 
-    // F3: Doble-click en texto recibido — copiarlo al portapapeles
-    private async void ReceivedText_DoubleTapped(object? sender, Avalonia.Input.TappedEventArgs e)
-    {
-        var lb = sender as Avalonia.Controls.ListBox;
-        if (lb?.SelectedItem is not string text) return;
-        try
-        {
-            var top = Avalonia.Controls.TopLevel.GetTopLevel(this);
-            if (top?.Clipboard != null) await top.Clipboard.SetTextAsync(text);
-            SetStatus(L["st.copied"]);
-        }
-        catch (Exception ex) { Log.Debug("clipboard", "copy-received-text-from-list-failed", new { error = ex.Message }); }
-    }
-
     // F4: Enviar contenido del portapapeles al peer conectado
     private async void SendClipboard_Click(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
     {
@@ -1079,18 +1109,54 @@ public partial class MainWindow
         catch (Exception ex) { SetStatus(L.Format("st.error", ex.Message)); }
     }
 
-    // U6: Actualizar badge de modo del servidor (ReadOnly, SafeMode, etc.)
+    // U6: Indicador claro de seguridad visible en la barra superior.
     private void UpdateServerModeBadge()
     {
         var badge = this.FindControl<Avalonia.Controls.TextBlock>("txtServerModeBadge");
         if (badge == null) return;
-        var parts = new List<string>();
-        if (_readOnly) parts.Add($"\uD83D\uDD12 {L["badge.readOnly"]}"); // U3: emoji con escape unicode (era garbled '??')
-        if (_safeModeNoRemoteDelete) parts.Add($"\uD83D\uDEE1 {L["badge.safeMode"]}"); // U3: idem
-        badge.Text = parts.Count > 0 ? string.Join(" | ", parts) : "";
-        badge.IsVisible = parts.Count > 0;
-    }
 
+        if (_safeModeEnabled)
+        {
+            badge.Text = L["security.safeBadge"];
+            badge.Foreground = BrushConnected;
+            ToolTip.SetTip(badge, L["security.safeSummary"]);
+            badge.IsVisible = true;
+            return;
+        }
+
+        if (_safeModeUntilClose)
+        {
+            badge.Text = L["security.moreAccessUntilCloseBadge"];
+            badge.Foreground = BrushError;
+            ToolTip.SetTip(badge, L["security.moreAccessUntilCloseSummary"]);
+            badge.IsVisible = true;
+            return;
+        }
+
+        if (_safeModeUntilUtc is not null)
+        {
+            var remaining = _safeModeUntilUtc.Value - DateTimeOffset.UtcNow;
+            var minutes = Math.Max(1, (int)Math.Ceiling(remaining.TotalMinutes));
+            badge.Text = L.Format("security.moreAccessRemainingBadge", minutes);
+            badge.Foreground = BrushError;
+            ToolTip.SetTip(badge, L.Format("security.moreAccessRemainingSummary", minutes));
+            badge.IsVisible = true;
+            return;
+        }
+
+        var risky = !_tlsEnabled
+            || !_restrictShareRoot
+            || !_safeModeNoRemoteDelete
+            || !_requireHighRiskApproval
+            || _remotePowerEnabled
+            || _autoClipboard
+            || _autoOpenLinks;
+
+        badge.Text = risky ? L["security.advancedBadge"] : L["security.customBadge"];
+        badge.Foreground = risky ? BrushError : BrushConnecting;
+        ToolTip.SetTip(badge, risky ? L["security.advancedSummary"] : L["security.customSummary"]);
+        badge.IsVisible = true;
+    }
     // v5-F7: Mostrar/ocultar botón de broadcast según peers disponibles
     private void UpdateBroadcastButton()
     {
@@ -1156,6 +1222,7 @@ public partial class MainWindow
         _autoClipboardTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(2) };
         _autoClipboardTimer.Tick += async (_, _) =>
         {
+            if (_safeModeEnabled) return;
             if (!_autoClipboard) return;
             _autoClipboardTimer.Stop();
             try
@@ -1202,15 +1269,15 @@ public partial class MainWindow
         if (btn == null) return;
 
         var menu = new ContextMenu();
-        var itemDocs = new MenuItem { Header = "📁 Mis Documentos" };
+        var itemDocs = new MenuItem { Header = L["menu.remoteDocuments"] };
         itemDocs.Click += (_, _) => { NavigateLocal(Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments)); };
-        var itemDownloads = new MenuItem { Header = "📥 Descargas" };
+        var itemDownloads = new MenuItem { Header = L["menu.remoteDownloads"] };
         
         // Carpeta Descargas por defecto
         var downloadsPath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "Downloads");
         itemDownloads.Click += (_, _) => { NavigateLocal(downloadsPath); };
         
-        var itemDesktop = new MenuItem { Header = "🖥️ Escritorio" };
+        var itemDesktop = new MenuItem { Header = L["menu.remoteDesktop"] };
         itemDesktop.Click += (_, _) => { NavigateLocal(Environment.GetFolderPath(Environment.SpecialFolder.Desktop)); };
 
         menu.ItemsSource = new List<MenuItem> { itemDocs, itemDownloads, itemDesktop };
@@ -1243,16 +1310,16 @@ public partial class MainWindow
         if (btn == null) return;
 
         var menu = new ContextMenu();
-        var itemHome = new MenuItem { Header = "🏠 Raíz Compartida" };
+        var itemHome = new MenuItem { Header = L["menu.remoteDrives"] };
         itemHome.Click += (_, _) => { _ = NavigateRemoteAsync(""); };
         
-        var itemDocs = new MenuItem { Header = "📁 Mis Documentos" };
+        var itemDocs = new MenuItem { Header = L["menu.remoteDocuments"] };
         itemDocs.Click += (_, _) => { _ = NavigateRemoteAsync("Documents"); };
         
-        var itemDownloads = new MenuItem { Header = "📥 Descargas" };
+        var itemDownloads = new MenuItem { Header = L["menu.remoteDownloads"] };
         itemDownloads.Click += (_, _) => { _ = NavigateRemoteAsync("Downloads"); };
         
-        var itemDesktop = new MenuItem { Header = "🖥️ Escritorio" };
+        var itemDesktop = new MenuItem { Header = L["menu.remoteDesktop"] };
         itemDesktop.Click += (_, _) => { _ = NavigateRemoteAsync("Desktop"); };
 
         menu.ItemsSource = new List<MenuItem> { itemHome, itemDocs, itemDownloads, itemDesktop };
@@ -1261,6 +1328,11 @@ public partial class MainWindow
 
     private void RemotePower_Click(object? sender, RoutedEventArgs e)
     {
+        if (_safeModeEnabled)
+        {
+            SetStatus(L["security.blocksPower"]);
+            return;
+        }
         var btn = sender as Button;
         if (btn == null) return;
 
@@ -1277,6 +1349,11 @@ public partial class MainWindow
 
     private async Task ConfirmAndExecutePowerAction(string action, string message)
     {
+        if (_safeModeEnabled)
+        {
+            SetStatus(L["security.blocksPower"]);
+            return;
+        }
         if (_client == null) { SetStatus(L["st.notConnected"]); return; }
         if (!await MessageBox(message, "Confirm Power Action")) return;
 
@@ -1416,3 +1493,12 @@ public partial class MainWindow
         }
     }
 }
+
+
+
+
+
+
+
+
+

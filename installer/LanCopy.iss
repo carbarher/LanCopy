@@ -34,7 +34,7 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 
 [Tasks]
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked
-Name: "firewall"; Description: "Allow LanCopy in Windows Firewall (port 8742)"; GroupDescription: "Network:"
+Name: "firewall"; Description: "Allow LanCopy in Windows Firewall (TCP 8742 and UDP discovery 8743)"; GroupDescription: "Network:"
 
 [Files]
 ; El publish self-contained genera un unico LanCopy.exe
@@ -47,9 +47,12 @@ Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"
 Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Tasks: desktopicon
 
 [Run]
-; Regla de firewall (TCP 8742) para que la app sea accesible en la LAN
-Filename: "netsh"; Parameters: "advfirewall firewall add rule name=""LanCopy"" dir=in action=allow protocol=TCP localport=8742"; Flags: runhidden; Tasks: firewall
+; Reglas de firewall para que la app sea accesible y descubrible en redes privadas.
+Filename: "netsh"; Parameters: "advfirewall firewall add rule name=""LanCopy TCP 8742"" dir=in action=allow program=""{app}\{#MyAppExeName}"" protocol=TCP localport=8742 profile=private"; Flags: runhidden; Tasks: firewall
+Filename: "netsh"; Parameters: "advfirewall firewall add rule name=""LanCopy UDP Discovery 8743"" dir=in action=allow program=""{app}\{#MyAppExeName}"" protocol=UDP localport=8743 profile=private"; Flags: runhidden; Tasks: firewall
 Filename: "{app}\{#MyAppExeName}"; Description: "{cm:LaunchProgram,{#MyAppName}}"; Flags: nowait postinstall skipifsilent
 
 [UninstallRun]
+Filename: "netsh"; Parameters: "advfirewall firewall delete rule name=""LanCopy TCP 8742"""; Flags: runhidden
+Filename: "netsh"; Parameters: "advfirewall firewall delete rule name=""LanCopy UDP Discovery 8743"""; Flags: runhidden
 Filename: "netsh"; Parameters: "advfirewall firewall delete rule name=""LanCopy"""; Flags: runhidden

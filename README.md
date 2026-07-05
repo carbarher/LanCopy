@@ -1,6 +1,6 @@
 # LanCopy
 
-> Encrypted, cross-platform LAN file transfer — fast, private, no cloud.
+> Trust-first LAN file transfer — encrypted by default, private, no cloud.
 
 [![CI](https://github.com/carbarher/LanCopy/actions/workflows/ci.yml/badge.svg)](https://github.com/carbarher/LanCopy/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
@@ -9,8 +9,35 @@
 [![Downloads](https://img.shields.io/github/downloads/carbarher/LanCopy/total)](https://github.com/carbarher/LanCopy/releases)
 
 LanCopy moves files directly between devices on your local network over an
-encrypted channel. No accounts, no servers, no internet round-trips. Built with
-C# / .NET 9 and Avalonia UI. Available in 20 languages.
+encrypted-by-default channel. No accounts, no servers, no internet round-trips.
+Built with C# / .NET 9 and Avalonia UI. Available in 20 languages.
+
+## Five narrative blocks
+
+1. What LanCopy is.
+2. Why the default posture is safe.
+3. How to transfer files.
+4. What advanced/trust features exist.
+5. How to build, test, and get support.
+
+## 20-second demo
+
+1. Start LanCopy on two PCs on the same LAN.
+2. Keep Safe Mode on, then share the IP or pairing link.
+3. Drag files to send them; use the Advanced panel only for trusted peers.
+
+## Product modes
+
+- **Core**: safe file transfer, TLS, shared-folder confinement, resumable transfer.
+- **Advanced**: trusted devices, sync, clipboard, audit, and other opt-in power features.
+- **Labs**: protocol and architecture experiments that are not part of the daily transfer flow.
+
+Features outside LanCopy's transfer-and-trust identity stay deferred until there is a clear product need.
+
+## Clipboard modes
+
+- **Send once**: send a short text snippet or clipboard content a single time.
+- **Continuous sync**: keep the local clipboard mirrored with a trusted peer when enabled.
 
 ---
 
@@ -23,7 +50,7 @@ C# / .NET 9 and Avalonia UI. Available in 20 languages.
 ## Features
 
 - **Direct LAN transfers** — peer-to-peer, no cloud or third-party servers.
-- **Encrypted** — TLS with Trust-On-First-Use (TOFU) certificate pinning.
+- **Encrypted by default** — TLS with Trust-On-First-Use (TOFU) certificate pinning.
 - **Auto-discovery** — peers on the same network appear automatically (UDP).
 - **Easy pairing** — short voice-friendly codes, QR codes, or `lancopy://` links.
 - **Integrity** — every transfer is verified with a streaming SHA-256 hash.
@@ -34,7 +61,7 @@ C# / .NET 9 and Avalonia UI. Available in 20 languages.
 - **Universal Clipboard** — automatic clipboard sync between peers.
 - **Push Links** — auto-open received URLs on the remote machine.
 - **Quick-access bookmarks** — favorite folders in local/remote file browsers.
-- **Remote Shutdown/Restart** — LanControl with confirmation dialog and PIN.
+- **Remote Shutdown/Restart** — advanced feature, disabled by default.
 - **Remote Search** — recursive search with debounce and result cap.
 - **Trash Restore** — restore deleted files from the Audit window.
 - **Folder sync, watch mode, clipboard text send, bandwidth limit.**
@@ -44,7 +71,45 @@ C# / .NET 9 and Avalonia UI. Available in 20 languages.
 ## Requirements
 
 - .NET SDK 9.0 or later
+- Microsoft.AspNetCore.App 9.0 runtime (required by CLI/API and test host)
 - (Optional, for the Windows installer) [Inno Setup 6](https://jrsoftware.org/isdl.php)
+
+## Security defaults
+
+- TLS required by default (no silent downgrade to plaintext).
+- High-risk remote commands are rejected when the connection is plaintext.
+- Shared-folder confinement enabled by default.
+- Safe Mode is enabled by default and enforces secure settings.
+- Full-disk browsing is temporary (10 minutes) and resets on app restart.
+- Remote power disabled by default.
+- Remote hard-delete fallback is disabled unless explicitly enabled.
+- Auto clipboard sync and auto link opening are disabled by default.
+- Local API binds to `127.0.0.1` and requires `X-LanCopy-Token`.
+- Local API stays off unless you explicitly run `lancopy-cli api`.
+- Plaintext fallback is compatibility mode and must be enabled explicitly.
+- Trusted devices can be reviewed/forgotten from the Advanced panel ("🔐 Devices").
+- Trusted Devices includes presets: Read only, Send/receive, Full share, and Advanced trusted.
+- If a known device fingerprint changes, the connection is blocked until re-paired.
+- Per-device permissions can be configured from Trusted Devices (browse/download/upload/modify/delete/sync/clipboard/power).
+- Trust levels are available per device: Unknown, Paired, Trusted, OwnerDevice.
+- By default, only `browse` and `download` are enabled; write, sync, clipboard, and power stay off until explicitly enabled.
+- Safe Mode can be temporarily disabled for 10 minutes and restores itself automatically.
+- High-risk commands still require explicit permission even for Trusted devices.
+- Unknown peers are limited to minimal status commands only.
+
+| Trust level   | Default posture |
+|---------------|-----------------|
+| Unknown       | Minimal status only |
+| Paired        | Limited access  |
+| Trusted       | Advanced opt-in  |
+| OwnerDevice   | Full local trust |
+
+| Preset | Permissions |
+|--------|-------------|
+| Read only | browse, download |
+| Send/receive | browse, download, upload |
+| Full share | browse, download, upload, modify |
+| Advanced trusted | all permissions |
 
 ## Build & Run
 
@@ -167,7 +232,7 @@ See [PUBLISHING.md](PUBLISHING.md) for step-by-step release instructions.
 ```
 
 Generates `installer/Output/LanCopy-Setup-1.0.0.exe`, which installs the app and
-optionally creates the firewall rule for TCP port 8742.
+optionally creates Windows Firewall rules for TCP 8742 and UDP discovery 8743 on private networks.
 
 ## Where to Find...
 
@@ -176,6 +241,20 @@ optionally creates the firewall rule for TCP port 8742.
 - CLI/API cookbook: `docs/wiki/CLI-API-Cookbook.md`
 - LAN hardening: `docs/wiki/LAN-Hardening.md`
 - Compatibility matrix: `docs/wiki/Compatibility-Matrix.md`
+- Core scope: `docs/CORE_SCOPE.md`
+- Threat model: `docs/THREAT_MODEL.md`
+- Protocol contract: `docs/PROTOCOL.md`
+- Security posture matrix: `docs/SECURITY_POSTURE_MATRIX.md`
+- Layering plan: `docs/architecture/LAYERING_PLAN.md`
+- Sync job model: `docs/architecture/SYNC_JOB_MODEL.md`
+- Session/request/version: `docs/architecture/SESSION_REQUEST_VERSION.md`
+- Trust foundation: `docs/architecture/TRUST_FOUNDATION.md`
+- Protocol v2 handshake: `docs/architecture/PROTOCOL_V2_HANDSHAKE.md`
+- Feature deprecation: `docs/governance/FEATURE_DEPRECATION.md`
+- Security event stream: `docs/observability/SECURITY_EVENT_STREAM.md`
+- Updater verification: `docs/security/UPDATER_VERIFICATION.md`
+- Release narrative: `docs/release/NARRATIVE_1_6_TO_2_0.md`
+- Roadmap: `ROADMAP.md`
 
 ## Security
 
@@ -187,6 +266,8 @@ optionally creates the firewall rule for TCP port 8742.
   and an anti zip-bomb cap on decompression.
 
 See [SECURITY.md](SECURITY.md) to report vulnerabilities. Privacy details: [PRIVACY.md](PRIVACY.md).
+Additional security references: [docs/SECURITY_POSTURE_MATRIX.md](docs/SECURITY_POSTURE_MATRIX.md),
+[docs/THREAT_MODEL.md](docs/THREAT_MODEL.md), [docs/PROTOCOL.md](docs/PROTOCOL.md).
 
 ## CI/CD
 
@@ -207,3 +288,4 @@ TCP **8742** (file transfer), UDP **8743** (discovery).
 ## License
 
 [MIT](LICENSE) © 2026 carbar. Free to use, modify and distribute.
+

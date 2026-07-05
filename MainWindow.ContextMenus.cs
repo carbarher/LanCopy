@@ -46,7 +46,7 @@ public partial class MainWindow
 
         this.FindControl<MenuItem>("ctxLocalSend")!.IsEnabled = any && _client != null;
         this.FindControl<MenuItem>("ctxLocalRename")!.IsEnabled = single && !anyInvalid;
-        this.FindControl<MenuItem>("ctxLocalDelete")!.IsEnabled = any;
+        this.FindControl<MenuItem>("ctxLocalDelete")!.IsEnabled = any && !items.All(x => !SafeFileOps.TryValidateMutationPath(x.FullPath, out _, out _));
         this.FindControl<MenuItem>("ctxLocalVerify")!.IsEnabled = any && !items.Any(x => x.IsDirectory) && _client != null;
     }
 
@@ -81,6 +81,8 @@ public partial class MainWindow
         if (newName is "." or ".." || newName.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0
             || newName.StartsWith(" ") || newName.EndsWith(" ") || newName.EndsWith("."))
             { SetStatus(L["st.invalidName"]); return; }
+
+        if (!await MessageBox(L.Format("dlg.rename.confirmLocal", item.Name, newName), L["dlg.rename.confirmTitle"])) return;
 
         if (SafeFileOps.IsOnCooldown($"local-rename:{sourcePath}", 2))
         {
@@ -406,6 +408,8 @@ public partial class MainWindow
             || newName.StartsWith(" ") || newName.EndsWith(" ") || newName.EndsWith("."))
             { SetStatus(L["st.invalidName"]); return; }
 
+        if (!await MessageBox(L.Format("dlg.rename.confirmRemote", item.Name, newName), L["dlg.rename.confirmTitle"])) return;
+
         try
         {
             await _clientLock.WaitAsync();
@@ -455,6 +459,7 @@ public partial class MainWindow
         var remotePath = string.IsNullOrEmpty(_remotePath)
             ? folderName
             : Path.Combine(_remotePath, folderName).Replace('\\', '/');
+
 
         try
         {
@@ -759,3 +764,4 @@ public partial class MainWindow
     }
 
 }
+
