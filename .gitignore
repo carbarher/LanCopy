@@ -5,3 +5,7 @@ publish_v*/
 installer/Output/
 *.user
 *.log
+LanCopy.exe
+desktop/
+bin/
+obj/
