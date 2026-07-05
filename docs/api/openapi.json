@@ -1,0 +1,192 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "LanCopy Local API",
+    "version": "v1",
+    "description": "LanCopy local API (localhost only). All /api/v1/* endpoints except health/openapi require X-LanCopy-Token."
+  },
+  "servers": [
+    {
+      "url": "http://127.0.0.1:3489"
+    }
+  ],
+  "components": {
+    "securitySchemes": {
+      "lanCopyToken": {
+        "type": "apiKey",
+        "in": "header",
+        "name": "X-LanCopy-Token"
+      }
+    }
+  },
+  "security": [
+    {
+      "lanCopyToken": []
+    }
+  ],
+  "paths": {
+    "/api/v1/health": {
+      "get": {
+        "summary": "Health status",
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/api/v1/openapi.json": {
+      "get": {
+        "summary": "OpenAPI document",
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "OpenAPI JSON"
+          }
+        }
+      }
+    },
+    "/api/v1/peers": {
+      "get": {
+        "summary": "List discovered peers",
+        "responses": {
+          "200": {
+            "description": "Peer list"
+          }
+        }
+      }
+    },
+    "/api/v1/transfers/send": {
+      "post": {
+        "summary": "Enqueue send transfer",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "example": {
+                "localPath": "C:\\tmp\\file.zip",
+                "to": "192.168.1.50:8742",
+                "remotePath": "file.zip",
+                "pin": "1234"
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Transfer queued"
+          }
+        }
+      }
+    },
+    "/api/v1/sync": {
+      "post": {
+        "summary": "Enqueue sync transfer",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "example": {
+                "localDir": "C:\\data",
+                "to": "192.168.1.50:8742",
+                "remoteRoot": "backup",
+                "pin": "1234"
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Transfer queued"
+          }
+        }
+      }
+    },
+    "/api/v1/transfers/{id}": {
+      "get": {
+        "summary": "Get transfer status",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Transfer status"
+          },
+          "404": {
+            "description": "Not found"
+          }
+        }
+      }
+    },
+    "/api/v1/transfers/{id}/cancel": {
+      "post": {
+        "summary": "Request cancellation",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "Cancellation requested"
+          },
+          "409": {
+            "description": "Already terminal"
+          },
+          "404": {
+            "description": "Not found"
+          }
+        }
+      }
+    },
+    "/api/v1/transfers/{id}/retry": {
+      "post": {
+        "summary": "Retry a terminal transfer",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "Retry queued"
+          },
+          "409": {
+            "description": "Cannot retry current state"
+          },
+          "404": {
+            "description": "Not found"
+          }
+        }
+      }
+    },
+    "/api/v1/events": {
+      "get": {
+        "summary": "Server-Sent Events stream",
+        "responses": {
+          "200": {
+            "description": "SSE stream"
+          }
+        }
+      }
+    }
+  }
+}

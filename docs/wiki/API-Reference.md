@@ -23,6 +23,8 @@ All other `/api/v1` endpoints require `X-LanCopy-Token`.
 
 ## OpenAPI
 
+A static copy is committed at [docs/api/openapi.json](../api/openapi.json). Regenerate it from the local API before a release when endpoints change.
+
 ```powershell
 curl http://127.0.0.1:3489/api/v1/openapi.json
 ```

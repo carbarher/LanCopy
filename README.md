@@ -129,6 +129,9 @@ Start here:
 - **Quick start**: [`docs/wiki/Quick-Start-5-min.md`](docs/wiki/Quick-Start-5-min.md)
 - **CLI guide**: [`docs/wiki/CLI-Guide.md`](docs/wiki/CLI-Guide.md)
 - **API reference**: [`docs/wiki/API-Reference.md`](docs/wiki/API-Reference.md)
+- **OpenAPI JSON**: [`docs/api/openapi.json`](docs/api/openapi.json)
+- **Known limitations**: [`docs/wiki/Known-Limitations.md`](docs/wiki/Known-Limitations.md)
+- **Release checklist**: [`docs/wiki/Release-Checklist.md`](docs/wiki/Release-Checklist.md)
 - **CLI/API cookbook**: [`docs/wiki/CLI-API-Cookbook.md`](docs/wiki/CLI-API-Cookbook.md)
 - **Troubleshooting**: [`docs/wiki/Troubleshooting.md`](docs/wiki/Troubleshooting.md)
 

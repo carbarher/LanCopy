@@ -14,6 +14,8 @@ Welcome to the LanCopy wiki.
 - [Quick Start (5 min)](Quick-Start-5-min): first transfer checklist.
 - [CLI Guide](CLI-Guide): command-line usage for scripts and automation.
 - [API Reference](API-Reference): local HTTP API endpoints, payloads and events.
+- [Known Limitations](Known-Limitations): honest scope and constraints.
+- [Release Checklist](Release-Checklist): release gate before publishing.
 - [CLI & API Cookbook](CLI-API-Cookbook): copy/paste examples, Postman and curl helpers.
 - [Troubleshooting](Troubleshooting): connection and network fixes.
 
@@ -32,6 +34,7 @@ Welcome to the LanCopy wiki.
 
 - [User Guide](User-Guide)
 - [Quick Start (5 min)](Quick-Start-5-min)
+- [Known Limitations](Known-Limitations)
 - [Troubleshooting](Troubleshooting)
 - [FAQ](FAQ)
 
@@ -39,7 +42,9 @@ Welcome to the LanCopy wiki.
 
 - [CLI Guide](CLI-Guide)
 - [API Reference](API-Reference)
+- [OpenAPI JSON](../api/openapi.json)
 - [CLI & API Cookbook](CLI-API-Cookbook)
+- [CLI Distribution Decision](CLI-Distribution)
 
 ### Security & Ops
 
@@ -51,6 +56,8 @@ Welcome to the LanCopy wiki.
 - [Core Scope](../CORE_SCOPE)
 - [Compatibility Matrix](Compatibility-Matrix)
 - [Release & Packaging](Release-Packaging)
+- [Windows Installer Validation](Windows-Installer-Validation)
+- [Release Checklist](Release-Checklist)
 
 ## Languages
 

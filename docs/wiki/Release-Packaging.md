@@ -16,9 +16,16 @@
 - Signatures cover `assetName + newline + sha256 + newline` with ECDSA P-256/SHA-256.
 
 ## Validation checklist
+
+Use the full [Release Checklist](Release-Checklist) before promoting a release.
+
+Minimum gate:
+
 1. LanCopy CI green on Windows/Linux/macOS.
 2. Tag workflow completed.
 3. Release exists and contains expected assets.
 4. Every artifact has a `.sha256` sidecar.
 5. Signed-update mode uses the public key pinned in the app.
 6. Download links in README resolve correctly.
+7. Windows installer passes [Windows Installer Validation](Windows-Installer-Validation).
+8. Static OpenAPI copy `docs/api/openapi.json` is regenerated if API endpoints changed.
