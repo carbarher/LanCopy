@@ -1,5 +1,6 @@
 using System;
 using System.Collections.ObjectModel;
+using System.Collections.Specialized;
 using System.Threading.Tasks;
 using Avalonia;
 using Avalonia.Controls;
@@ -15,14 +16,17 @@ namespace LanCopy.Dialogs;
 
 internal sealed class ChatWindow : Window
 {
+    private readonly bool _focusInputOnOpen;
     private readonly Func<string, Task<bool>> _sendAsync;
     private readonly ObservableCollection<ChatMessage> _messages;
     private readonly ListBox _list;
     private readonly TextBox _input;
     private readonly Button _sendButton;
+    private readonly NotifyCollectionChangedEventHandler _messagesChangedHandler;
 
-    public ChatWindow(ObservableCollection<ChatMessage> messages, Func<string, Task<bool>> sendAsync)
+    public ChatWindow(ObservableCollection<ChatMessage> messages, Func<string, Task<bool>> sendAsync, bool focusInputOnOpen = true)
     {
+        _focusInputOnOpen = focusInputOnOpen;
         _messages = messages;
         _sendAsync = sendAsync;
 
@@ -109,8 +113,18 @@ internal sealed class ChatWindow : Window
         root.Children.Add(inputBar);
 
         Content = root;
-        _messages.CollectionChanged += (_, _) => ScrollToBottom();
-        Opened += (_, _) => { _input.Focus(); ScrollToBottom(); };
+        _messagesChangedHandler = (_, _) => ScrollToBottom();
+        _messages.CollectionChanged += _messagesChangedHandler;
+        Closed += (_, _) => _messages.CollectionChanged -= _messagesChangedHandler;
+        Opened += (_, _) =>
+        {
+            if (_focusInputOnOpen)
+            {
+                _input.Focus();
+            }
+
+            ScrollToBottom();
+        };
     }
 
     private static Control BuildBubble(ChatMessage message)
@@ -167,6 +181,3 @@ internal sealed class ChatWindow : Window
         Dispatcher.UIThread.Post(() => _list.ScrollIntoView(_messages[^1]), DispatcherPriority.Background);
     }
 }
-
-
-

@@ -332,25 +332,6 @@ public partial class MainWindow
             results.Add($"⚠️ {item.Name} — {L.Format("verify.error", L[ex.Message])}");
         }
     }
-
-    private async void LocalCtx_CopyPath(object? sender, RoutedEventArgs e)
-    {
-        var items = GetSelectedItems("localList");
-        if (items.Count == 0) return;
-        try
-        {
-            var text = string.Join(Environment.NewLine, items.Select(x => x.FullPath));
-            var clipboard = TopLevel.GetTopLevel(this)?.Clipboard;
-            if (clipboard != null) await clipboard.SetTextAsync(text);
-            SetStatus(L["st.pathsCopied"]);
-        }
-        catch (Exception ex)
-        {
-            Log.Warn("ctx-menu", "copy-path-failed", new { error = ex.Message });
-            SetStatus(L[ex.Message]);
-        }
-    }
-
     // ══ Context menus — Remote ════════════════════════════════════════════════════
 
     private void RemoteCtx_Opening(object? sender, System.ComponentModel.CancelEventArgs e)
@@ -673,25 +654,6 @@ public partial class MainWindow
             results.Add($"⚠️ {item.Name} — {L.Format("verify.error", L[ex.Message])}");
         }
     }
-
-    private async void RemoteCtx_CopyPath(object? sender, RoutedEventArgs e)
-    {
-        var items = GetSelectedItems("remoteList");
-        if (items.Count == 0) return;
-        try
-        {
-            var text = string.Join(Environment.NewLine, items.Select(x => x.FullPath));
-            var clipboard = TopLevel.GetTopLevel(this)?.Clipboard;
-            if (clipboard != null) await clipboard.SetTextAsync(text);
-            SetStatus(L["st.pathsCopied"]);
-        }
-        catch (Exception ex)
-        {
-            Log.Warn("ctx-menu", "copy-path-failed", new { error = ex.Message });
-            SetStatus(L[ex.Message]);
-        }
-    }
-
     // ══ Helpers UI ════════════════════════════════════════════════════════════════
 
     private async Task<bool> MessageBox(string message, string? title = null)
@@ -764,4 +726,3 @@ public partial class MainWindow
     }
 
 }
-

@@ -11,8 +11,6 @@ public sealed class CommandAuthorizerTests
     [InlineData("rename")]
     [InlineData("mkdir")]
     [InlineData("delete")]
-    [InlineData("text")]
-    [InlineData("clipboard/text")]
     [InlineData("delta_hashes")]
     [InlineData("put_delta_blocks")]
     [InlineData("power")]
@@ -26,6 +24,7 @@ public sealed class CommandAuthorizerTests
     [InlineData("caps")]
     [InlineData("health")]
     [InlineData("disconnect_notice")]
+    [InlineData("text")]
     public void NewPeer_CanUseMinimalSafeCommands(string cmd)
     {
         var host = "peer-" + Guid.NewGuid().ToString("N") + ".local";
@@ -57,7 +56,6 @@ public sealed class CommandAuthorizerTests
         Assert.False(CommandAuthorizer.IsAllowed(trusted, locked, "power"));
         Assert.False(CommandAuthorizer.IsAllowed(trusted, locked, "delta_hashes"));
         Assert.True(CommandAuthorizer.IsAllowed(trusted, locked, "text"));
-        Assert.False(CommandAuthorizer.IsAllowed(trusted, locked, "clipboard/text"));
     }
 
     [Fact]
@@ -71,7 +69,6 @@ public sealed class CommandAuthorizerTests
             Modify: true,
             Delete: true,
             Sync: true,
-            Clipboard: true,
             Power: true);
 
         Assert.True(CommandAuthorizer.IsAllowed(trusted, advanced, "put"));
@@ -80,5 +77,3 @@ public sealed class CommandAuthorizerTests
         Assert.True(CommandAuthorizer.IsAllowed(trusted, advanced, "delta_hashes"));
     }
 }
-
-

@@ -49,9 +49,6 @@ internal static class TransferOptions
     /// <summary>Timeout for a synchronous stat request during sync.</summary>
     public static readonly TimeSpan SyncStatTimeout = TimeSpan.FromSeconds(30);
 
-    /// <summary>Timeout for sending clipboard content to a peer.</summary>
-    public static readonly TimeSpan ClipboardSendTimeout = TimeSpan.FromSeconds(10);
-
     /// <summary>Per-peer timeout when broadcasting a file/folder to all peers.</summary>
     public static readonly TimeSpan BroadcastPerPeerTimeout = TimeSpan.FromMinutes(2);
 

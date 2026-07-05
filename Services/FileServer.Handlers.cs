@@ -1,14 +1,14 @@
-using System.IO;
-using System.IO.Compression;
-using System.Diagnostics;
-using System.Security.Cryptography;
-using System.Text.Json;
-using LanCopy.Models;
-
-namespace LanCopy.Services;
-
-public sealed partial class FileServer
-{
+using System.IO;
+using System.IO.Compression;
+using System.Diagnostics;
+using System.Security.Cryptography;
+using System.Text.Json;
+using LanCopy.Models;
+
+namespace LanCopy.Services;
+
+public sealed partial class FileServer
+{
     private async Task HandleListAsync(JsonElement req, Stream stream, CancellationToken ct)
     {
         var reqPath = req.TryGetProperty("path", out var pathEl) ? pathEl.GetString() ?? "" : "";
@@ -1046,5 +1046,5 @@ public sealed partial class FileServer
         _powerHandler ??= new PowerCommandHandler(this, (host, command) => (AuthorizePeerCommand ?? CommandAuthorizer.IsAllowed)(host, command));
         await _powerHandler.HandleAsync(req, stream, ct);
     }
-}
+}
 

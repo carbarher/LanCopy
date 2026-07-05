@@ -31,11 +31,9 @@ public static class CommandAuthorizer
             "delete" => permissions.Delete,
             "delta_hashes" => permissions.Sync,
             "text" => permissions.Browse,
-            "clipboard/text" => permissions.Clipboard,
             "power" => permissions.Power,
             "disconnect_notice" => true,
             _ => false
         };
     }
 }
-

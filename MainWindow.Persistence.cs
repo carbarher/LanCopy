@@ -169,15 +169,6 @@ public partial class MainWindow
                     if (chk != null) chk.IsChecked = _compressEnabled;
                 });
             }
-            if (doc.TryGetProperty("autoClipboard", out var autoClip))
-            {
-                _autoClipboard = autoClip.GetBoolean();
-                await Dispatcher.UIThread.InvokeAsync(() =>
-                {
-                    var chk = this.FindControl<CheckBox>("chkAutoClipboard");
-                    if (chk != null) chk.IsChecked = _autoClipboard;
-                });
-            }
             if (doc.TryGetProperty("autoOpenLinks", out var autoOpen))
             {
                 _autoOpenLinks = autoOpen.GetBoolean();
@@ -341,7 +332,7 @@ public partial class MainWindow
         if (string.IsNullOrWhiteSpace(ip) || string.IsNullOrWhiteSpace(port)) return "";
         return $"{ip}:{port}";
     }
-    // P6: versi�n debounceda para callers frecuentes (combo, perfiles)
+    // P6: version debounceda para callers frecuentes (combo, perfiles)
     private DispatcherTimer? _saveDebounce;
     private string _savePendingIp = "", _savePendingPort = "8742";
 
@@ -376,7 +367,7 @@ public partial class MainWindow
             readOnly = _readOnly, safeModeEnabled = _safeModeEnabled, safeModeNoRemoteDelete = _safeModeNoRemoteDelete,
             remotePowerEnabled = _remotePowerEnabled,
             requireApproval = _requireApproval, requireHighRiskApproval = _requireHighRiskApproval, compressEnabled = _compressEnabled,
-            autoClipboard = _autoClipboard, autoOpenLinks = _autoOpenLinks,
+            autoOpenLinks = _autoOpenLinks,
             bandwidthLimitMbps = _bandwidthLimitMbps, advancedMode = _advancedMode,
             welcomeShown = _welcomeShown, language = L.Current, theme = _theme,
             winW = this.Width, winH = this.Height,
@@ -401,5 +392,3 @@ public partial class MainWindow
     }
 
 }
-
-

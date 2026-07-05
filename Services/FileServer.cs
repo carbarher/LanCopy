@@ -347,7 +347,7 @@ public sealed partial class FileServer : IAsyncDisposable
     public readonly record struct TransferProgressInfo(bool Receiving, string FileName, long Done, long Total);
     public event Action<TransferProgressInfo>? TransferProgress;
 
-    // idea-clipboard: texto/portapapeles recibido de un peer (ip, texto).
+    // Chat recibido de un peer (ip, texto).
     public event Action<string, string>? TextReceived;
     public event Action<string>? DisconnectNoticeReceived;
 

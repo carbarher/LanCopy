@@ -18,7 +18,7 @@ public static class PeerTrustPolicy
         {
             CertTrust.PeerTrustLevel.Unknown => cmd switch
             {
-                "disconnect_notice" or "health" or "caps" => true,
+                "disconnect_notice" or "health" or "caps" or "text" => true,
                 _ => false
             },
             CertTrust.PeerTrustLevel.Paired => true,

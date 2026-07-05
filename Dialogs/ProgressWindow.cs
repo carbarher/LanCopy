@@ -19,13 +19,13 @@ internal sealed class ProgressWindow : Window
     private readonly ProgressBar _bar;
     private readonly TextBlock _line;
     private readonly TextBlock _detail;
-    private readonly TextBlock _sparkline; // F1: mini-gr�fica de velocidad
+    private readonly TextBlock _sparkline; // F1: mini-grafica de velocidad
     private readonly TextBlock _eta;       // F1: tiempo restante estimado
     private readonly Button _action;
         private readonly Button _btnOpenFolder; // F5: abrir carpeta destino
-    private readonly Button _btnOpenFile;   // F5b: abrir archivo �nico descargado
+    private readonly Button _btnOpenFile;   // F5b: abrir archivo unico descargado
     private string? _destFolder;            // F5: guardado al iniciar descarga
-    private string? _destFile;             // F5b: ruta del archivo �nico
+    private string? _destFile;             // F5b: ruta del archivo unico
     private readonly CancellationTokenSource? _cts;
     private bool _finished;
 
@@ -176,9 +176,9 @@ internal sealed class ProgressWindow : Window
         });
     }
 
-    // F5: Guardar carpeta destino para el bot�n "Abrir carpeta" (llamar antes de iniciar descarga)
+    // F5: Guardar carpeta destino para el boton "Abrir carpeta" (llamar antes de iniciar descarga)
     public void SetDestFolder(string? folder) { _destFolder = folder; }
-    // F5b: Guardar archivo �nico para el bot�n "Abrir archivo"
+    // F5b: Guardar archivo unico para el boton "Abrir archivo"
     public void SetDestFile(string? file) { _destFile = file; }
 
     // F1: Actualiza sparkline + ETA desde TransferStatus (hilo seguro).
@@ -211,7 +211,7 @@ internal sealed class ProgressWindow : Window
 
             if (!isError)
             {
-                // F5: mostrar bot�n de carpeta si hay destino
+                // F5: mostrar boton de carpeta si hay destino
                 if (!string.IsNullOrEmpty(_destFolder))
                     _btnOpenFolder.IsVisible = true;
                 if (!string.IsNullOrEmpty(_destFile) && System.IO.File.Exists(_destFile))

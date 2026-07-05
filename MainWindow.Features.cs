@@ -32,7 +32,7 @@ namespace LanCopy;
 
 public partial class MainWindow
 {
-    // â•â• UX para usuarios sin conocimientos de red â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+    // UX para usuarios sin conocimientos de red
 
     // Aplica el modo de interfaz: en modo simple se oculta el panel avanzado
     // (puertos, IP manual, perfiles, checkboxes de seguridad, etc.).
@@ -113,7 +113,7 @@ public partial class MainWindow
             if (peers.Count == 0)
                 sb.AppendLine(L["diag.nopeers"]);
             else
-                foreach (var p in peers) sb.AppendLine($"  â€¢ {p.Name}  ({p.Ip}:{p.Port})");
+                foreach (var p in peers) sb.AppendLine($"  - {p.Name}  ({p.Ip}:{p.Port})");
         }
 
         var remoteIp = this.FindControl<TextBox>("txtRemoteIp")?.Text?.Trim() ?? "";
@@ -266,10 +266,6 @@ public partial class MainWindow
                 if (File.Exists(zipPath)) File.Delete(zipPath);
                 System.IO.Compression.ZipFile.CreateFromDirectory(tempDir, zipPath, System.IO.Compression.CompressionLevel.Optimal, includeBaseDirectory: false);
 
-                var top = TopLevel.GetTopLevel(this);
-                if (top?.Clipboard != null)
-                    await top.Clipboard.SetTextAsync(zipPath);
-
                 SetStatus(L.Format("st.diagExported", zipPath));
                             }
             finally
@@ -339,7 +335,7 @@ public partial class MainWindow
 
     private static string PeerSecurityKey(string ip, int port) => $"{ip.Trim()}:{port}";
 
-    // â•â• Ideas locas â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+    // Ideas
 
     // idea-bwlimit: el slider fija el limite global de ancho de banda (0 = ilimitado).
     private void Bandwidth_Changed(object? sender, RangeBaseValueChangedEventArgs e)
@@ -355,19 +351,28 @@ public partial class MainWindow
     }
 
     // Chat entre PCs en ventana independiente. Si no hay destino escrito, responde al último remitente.
-    private void OpenChat_Click(object? sender, RoutedEventArgs e) => ShowChatWindow();
+    private void OpenChat_Click(object? sender, RoutedEventArgs e) => ShowChatWindow(activate: true);
 
-    private void ShowChatWindow()
+    private void ShowChatWindow(bool activate)
     {
         if (_chatWindow != null)
         {
-            _chatWindow.Activate();
+            if (activate)
+            {
+                _chatWindow.Activate();
+            }
+
             return;
         }
 
-        _chatWindow = new ChatWindow(_chatMessages, SendChatMessageAsync);
+        _chatWindow = new ChatWindow(_chatMessages, SendChatMessageAsync, focusInputOnOpen: activate);
         _chatWindow.Closed += (_, _) => _chatWindow = null;
         _chatWindow.Show(this);
+
+        if (activate)
+        {
+            _chatWindow.Activate();
+        }
     }
 
     private async Task<bool> SendChatMessageAsync(string text)
@@ -400,19 +405,23 @@ public partial class MainWindow
         }
     }
 
-    // Chat: registrar el mensaje recibido y notificarlo sin tocar el portapapeles.
+    private static string SingleLinePreview(string text, int maxChars = 60)
+    {
+        var singleLine = text.Replace("\r\n", " ").Replace('\r', ' ').Replace('\n', ' ').Replace('\t', ' ');
+        return singleLine.Length > maxChars ? singleLine[..maxChars] + "\u2026" : singleLine;
+    }
+    // Chat: registrar el mensaje recibido y notificarlo.
     private void OnTextReceived(string ip, string text)
     {
-        _lastClipboardText = text; // evita bucles si la sincronización automática del portapapeles está activa
         var peer = _discovery?.GetPeers().FirstOrDefault(p => string.Equals(p.Ip, ip, StringComparison.OrdinalIgnoreCase));
         _lastTextSenderIp = ip;
         _lastTextSenderPort = peer?.Port ?? NetworkValidation.DefaultPort;
         var senderName = !string.IsNullOrWhiteSpace(peer?.Name) ? peer!.Name : ip;
         Dispatcher.UIThread.Post(() =>
         {
-            var preview = text.Length > 60 ? text[..60] + "\u2026" : text;
+            var preview = SingleLinePreview(text);
             _chatMessages.Add(new ChatMessage { Sender = senderName, Text = text, IsOwn = false });
-            ShowChatWindow();
+            ShowChatWindow(activate: false);
             SetStatus(L.Format("st.textReceived", senderName, preview));
 
             // Si es un enlace HTTP/S y auto-open está activo, lo abrimos
@@ -426,7 +435,7 @@ public partial class MainWindow
                     var ps = new ProcessStartInfo { FileName = text, UseShellExecute = true };
                     Process.Start(ps)?.Dispose();
                 }
-                catch (Exception ex) { Log.Warn("clipboard", "auto-open-link-failed", new { url = text, error = ex.Message }); }
+                catch (Exception ex) { Log.Warn("chat", "auto-open-link-failed", new { url = text, error = ex.Message }); }
             }
         });
     }
@@ -563,32 +572,11 @@ public partial class MainWindow
             var panel = new StackPanel { Margin = new Thickness(16), Spacing = 10, HorizontalAlignment = HorizontalAlignment.Center };
             if (bmp != null) panel.Children.Add(new Image { Source = bmp, Width = 280, Height = 280 });
             panel.Children.Add(new TextBlock { Text = link, TextWrapping = TextWrapping.Wrap, MaxWidth = 320, HorizontalAlignment = HorizontalAlignment.Center });
-            var copyBtn = new Button { Content = L["btn.copylink"], HorizontalAlignment = HorizontalAlignment.Center };
-            copyBtn.Click += async (_, _) => { var t = TopLevel.GetTopLevel(this); if (t?.Clipboard != null) await t.Clipboard.SetTextAsync(link); };
-            panel.Children.Add(copyBtn);
             var dlg = new Window { Title = L["qr.title"], Width = 360, Height = bmp != null ? 430 : 180, Content = panel, WindowStartupLocation = WindowStartupLocation.CenterOwner, CanResize = false };
             await dlg.ShowDialog(this);
         }
         catch (Exception ex) { SetStatus(L.Format("st.qrFailed", ex.Message)); }
     }
-
-    // idea-qr: pegar un enlace lancopy:// (o ip:puerto) y rellenar la conexion.
-    private async void PasteLink_Click(object? sender, RoutedEventArgs e)
-    {
-        try
-        {
-            var top = TopLevel.GetTopLevel(this);
-            var text = top?.Clipboard != null ? await top.Clipboard.TryGetTextAsync() : null;
-            var parsed = PairingLink.TryParse(text);
-            if (parsed is not { } p) { SetStatus(L["st.linkInvalid"]); return; }
-            this.FindControl<TextBox>("txtRemoteIp")!.Text = p.Ip;
-            this.FindControl<TextBox>("txtRemotePort")!.Text = p.Port.ToString();
-            if (p.Pin != null) this.FindControl<TextBox>("txtPin")!.Text = p.Pin;
-            SetStatus(L.Format("st.linkParsed", $"{p.Ip}:{p.Port}"));
-        }
-        catch (Exception ex) { SetStatus(L.Format("st.linkFailed", ex.Message)); }
-    }
-
     // idea-sendto: crear un acceso directo en la carpeta "Enviar a" de Windows.
     private void SendToIntegration_Click(object? sender, RoutedEventArgs e)
     {
@@ -722,7 +710,7 @@ public partial class MainWindow
         }
     }
 
-    // ── Paralelismo configurable ────────────────────────────────────────â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    // Paralelismo configurable
     private void Parallel_Changed(object? sender, RangeBaseValueChangedEventArgs e)
     {
         var n = Math.Max(1, Math.Min(8, (int)Math.Round(e.NewValue)));
@@ -1088,27 +1076,6 @@ public partial class MainWindow
         if (_discovery != null) _discovery.StealthMode = chk.IsChecked == true;
         SetStatus(chk.IsChecked == true ? L["st.stealthOn"] : L["st.stealthOff"]);
     }
-
-    // F4: Enviar contenido del portapapeles al peer conectado
-    private async void SendClipboard_Click(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
-    {
-        try
-        {
-            var top = Avalonia.Controls.TopLevel.GetTopLevel(this);
-            var text = top?.Clipboard != null ? await top.Clipboard.TryGetTextAsync() : null;
-            text ??= "";
-            if (string.IsNullOrEmpty(text)) { SetStatus(L["st.clipboardEmpty"]); return; }
-            LanClient? snapClient;
-            await _clientLock.WaitAsync();
-            try { snapClient = _client; } finally { _clientLock.Release(); }
-            if (snapClient == null) { SetStatus(L["st.noConnection"]); return; }
-            using var cts = new System.Threading.CancellationTokenSource(TimeSpan.FromSeconds(10));
-            await snapClient.SendTextAsync(text, cts.Token);
-            SetStatus(L.Format("st.clipboardSent", text.Length));
-        }
-        catch (Exception ex) { SetStatus(L.Format("st.error", ex.Message)); }
-    }
-
     // U6: Indicador claro de seguridad visible en la barra superior.
     private void UpdateServerModeBadge()
     {
@@ -1149,7 +1116,6 @@ public partial class MainWindow
             || !_safeModeNoRemoteDelete
             || !_requireHighRiskApproval
             || _remotePowerEnabled
-            || _autoClipboard
             || _autoOpenLinks;
 
         badge.Text = risky ? L["security.advancedBadge"] : L["security.customBadge"];
@@ -1216,53 +1182,6 @@ public partial class MainWindow
         catch (OperationCanceledException) { SetStatus(L.Format("st.broadcastDone", okPeers, failPeers)); }
         catch (Exception ex) { Log.Warn("broadcast", "broadcast-detailed-unexpected", new { error = ex.Message }); }
     }
-
-    private void StartAutoClipboardTimer()
-    {
-        _autoClipboardTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(2) };
-        _autoClipboardTimer.Tick += async (_, _) =>
-        {
-            if (_safeModeEnabled) return;
-            if (!_autoClipboard) return;
-            _autoClipboardTimer.Stop();
-            try
-            {
-                var top = TopLevel.GetTopLevel(this);
-                if (top?.Clipboard == null) return;
-                var text = await top.Clipboard.TryGetTextAsync();
-                if (string.IsNullOrEmpty(text) || text == _lastClipboardText) return;
-
-                _lastClipboardText = text;
-
-                var client = _client;
-                if (client != null && await IsConnectedAsync())
-                {
-                    try
-                    {
-                        // C9-FIX: timeout de 5s
-                        // O6: Direct await para evitar llamadas concurrentes en la misma conexión no thread-safe
-                        using var clipSendCts = new System.Threading.CancellationTokenSource(TimeSpan.FromSeconds(5));
-                        await client.SendTextAsync(text, clipSendCts.Token);
-                        Log.Debug("clipboard", "auto-synced", new { length = text.Length });
-                    }
-                    catch (Exception ex)
-                    {
-                        Log.Debug("clipboard", "auto-sync-failed", new { error = ex.Message });
-                    }
-                }
-            }
-            catch (Exception ex)
-            {
-                Log.Debug("clipboard", "poll-failed", new { error = ex.Message });
-            }
-            finally
-            {
-                if (_autoClipboard) _autoClipboardTimer.Start();
-            }
-        };
-        _autoClipboardTimer.Start();
-    }
-
     private void LocalFavorites_Click(object? sender, RoutedEventArgs e)
     {
         var btn = sender as Button;
@@ -1493,12 +1412,3 @@ public partial class MainWindow
         }
     }
 }
-
-
-
-
-
-
-
-
-

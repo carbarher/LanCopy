@@ -607,31 +607,6 @@ public partial class MainWindow
             this.FindControl<TextBox>("txtRemotePort")?.Text?.Trim() ?? "8742");
         SetStatus(_compressEnabled ? L["st.compressOn"] : L["st.compressOff"]);
     }
-
-    private void ChkAutoClipboard_Changed(object? sender, RoutedEventArgs e)
-    {
-        if (_securityToggleGuard) return;
-        _autoClipboard = (sender as CheckBox)?.IsChecked == true;
-        if (_safeModeEnabled && _autoClipboard)
-        {
-            _securityToggleGuard = true;
-            try
-            {
-                _autoClipboard = false;
-                var chk = this.FindControl<CheckBox>("chkAutoClipboard");
-                if (chk != null) chk.IsChecked = false;
-            }
-            finally { _securityToggleGuard = false; }
-            SetStatus(L["security.keepsClipboardOff"]);
-            return;
-        }
-        SaveSettings(
-            this.FindControl<TextBox>("txtRemoteIp")?.Text?.Trim() ?? "",
-            this.FindControl<TextBox>("txtRemotePort")?.Text?.Trim() ?? "8742");
-        SetStatus(_autoClipboard ? L["st.autoClipboardOn"] : L["st.autoClipboardOff"]);
-        UpdateServerModeBadge();
-    }
-
     private void ChkAutoOpenLinks_Changed(object? sender, RoutedEventArgs e)
     {
         if (_securityToggleGuard) return;
@@ -716,7 +691,6 @@ public partial class MainWindow
         _safeModeNoRemoteDelete = true;
         _requireHighRiskApproval = true;
         _remotePowerEnabled = false;
-        _autoClipboard = false;
         _autoOpenLinks = false;
 
         _server.TlsEnabled = true;
@@ -738,8 +712,6 @@ public partial class MainWindow
             if (chkSafeDelete != null) { chkSafeDelete.IsChecked = true; chkSafeDelete.IsEnabled = true; }
             var chkRisk = this.FindControl<CheckBox>("chkRequireHighRiskApproval");
             if (chkRisk != null) { chkRisk.IsChecked = true; chkRisk.IsEnabled = true; }
-            var chkAutoClip = this.FindControl<CheckBox>("chkAutoClipboard");
-            if (chkAutoClip != null) { chkAutoClip.IsChecked = false; chkAutoClip.IsEnabled = true; }
             var chkAutoLinks = this.FindControl<CheckBox>("chkAutoOpenLinks");
             if (chkAutoLinks != null) { chkAutoLinks.IsChecked = false; chkAutoLinks.IsEnabled = true; }
         }
@@ -811,7 +783,6 @@ public partial class MainWindow
                 _safeModeNoRemoteDelete = true;
                 _requireHighRiskApproval = true;
                 _remotePowerEnabled = false;
-                _autoClipboard = false;
                 _autoOpenLinks = false;
 
                 _server.TlsEnabled = true;
@@ -831,8 +802,6 @@ public partial class MainWindow
                 if (chkSafeDelete != null) { chkSafeDelete.IsChecked = true; chkSafeDelete.IsEnabled = false; }
                 var chkRisk = this.FindControl<CheckBox>("chkRequireHighRiskApproval");
                 if (chkRisk != null) { chkRisk.IsChecked = true; chkRisk.IsEnabled = false; }
-                var chkAutoClip = this.FindControl<CheckBox>("chkAutoClipboard");
-                if (chkAutoClip != null) { chkAutoClip.IsChecked = false; chkAutoClip.IsEnabled = false; }
                 var chkAutoLinks = this.FindControl<CheckBox>("chkAutoOpenLinks");
                 if (chkAutoLinks != null) { chkAutoLinks.IsChecked = false; chkAutoLinks.IsEnabled = false; }
             }
@@ -846,8 +815,6 @@ public partial class MainWindow
                 if (chkSafeDelete != null) chkSafeDelete.IsEnabled = true;
                 var chkRisk = this.FindControl<CheckBox>("chkRequireHighRiskApproval");
                 if (chkRisk != null) chkRisk.IsEnabled = true;
-                var chkAutoClip = this.FindControl<CheckBox>("chkAutoClipboard");
-                if (chkAutoClip != null) chkAutoClip.IsEnabled = true;
                 var chkAutoLinks = this.FindControl<CheckBox>("chkAutoOpenLinks");
                 if (chkAutoLinks != null) chkAutoLinks.IsEnabled = true;
                 UpdateFullDiskSessionTimer();
@@ -911,4 +878,3 @@ public partial class MainWindow
         SetStatus(L["security.fullDiskExpired"]);
     }
 }
-

@@ -38,7 +38,7 @@ public sealed partial class LanClient
         return entriesEl.Deserialize<List<FileEntry>>()!;
     }
 
-    // ── TEXT (idea-clipboard) ─────────────────────────────────────────────────────
+    // -- CHAT TEXT --
 
     public async Task SendTextAsync(string text, CancellationToken ct = default)
     {

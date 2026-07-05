@@ -20,9 +20,6 @@
                     <TextBlock Text="{l:Tr top.myip}" Foreground="{DynamicResource TextFg}" VerticalAlignment="Center"/>
                     <TextBlock x:Name="txtMyIp" Text="…" Foreground="#FFD700" FontWeight="Bold" VerticalAlignment="Center"
                                ToolTip.Tip="{l:Tr tip.myip}"/>
-                    <Button x:Name="btnCopyIp" Content="📋" Click="CopyIp_Click"
-                            Background="Transparent" Foreground="{DynamicResource TextFg}" Padding="4,1"
-                            ToolTip.Tip="{l:Tr tip.copyip}"/>
                 </StackPanel>
                 <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Spacing="6" Margin="0,2,12,2">
                     <TextBlock Text="{l:Tr top.connectto}" Foreground="{DynamicResource TextFg}" VerticalAlignment="Center"/>
@@ -40,9 +37,6 @@
                     <Button x:Name="btnQr" Content="{l:Tr btn.qr}" Click="ShowQr_Click"
                             Background="{DynamicResource InputBg}" Foreground="#FFD700" Padding="8,5"
                             ToolTip.Tip="{l:Tr tip.qr}"/>
-                    <Button x:Name="btnPasteLink" Content="{l:Tr btn.pastelink}" Click="PasteLink_Click"
-                            Background="{DynamicResource InputBg}" Foreground="{DynamicResource InputFg}" Padding="8,5"
-                            ToolTip.Tip="{l:Tr tip.pastelink}"/>
                     <Button x:Name="btnFindPeer" Content="{l:Tr btn.findpeer}" Click="Diagnose_Click"
                             Background="{DynamicResource InputBg}" Foreground="{DynamicResource InputFg}" Padding="8,5"
                             ToolTip.Tip="{l:Tr tip.findpeer}"/>
@@ -86,9 +80,6 @@
                     <Button x:Name="btnApplyLocalPort" Content="✓" Click="ApplyLocalPort_Click"
                             Background="{DynamicResource InputBg}" Foreground="#28A745" Padding="6,2" FontSize="12"
                             ToolTip.Tip="{l:Tr tip.applyport}"/>
-                    <Button x:Name="btnPairCode" Content="🔗" Click="CopyPairingCode_Click"
-                            Background="{DynamicResource InputBg}" Foreground="#FFD700" Padding="6,2" FontSize="12"
-                            ToolTip.Tip="{l:Tr tip.paircode}"/>
                     <Button x:Name="btnTrustedDevices" Content="🔐 Devices" Click="ShowTrustedDevices_Click"
                             Background="{DynamicResource InputBg}" Foreground="{DynamicResource InputFg}" Padding="6,2" FontSize="12"
                             ToolTip.Tip="Manage trusted identities, safe defaults, and risky permissions"/>
@@ -137,7 +128,6 @@
                     <CheckBox x:Name="chkCompress" Content="{l:Tr chk.compress}" Foreground="{DynamicResource TextFg}" FontSize="12"
                               IsCheckedChanged="ChkCompress_Changed"
                               ToolTip.Tip="{l:Tr tip.compress}"/>
-                    <CheckBox x:Name="chkAutoClipboard" Content="{l:Tr chk.autoClipboard}" Foreground="{DynamicResource TextFg}" FontSize="12" IsCheckedChanged="ChkAutoClipboard_Changed" ToolTip.Tip="{l:Tr tip.autoClipboard}"/>
                     <CheckBox x:Name="chkAutoOpenLinks" Content="{l:Tr chk.autoOpenLinks}" Foreground="{DynamicResource TextFg}" FontSize="12" IsCheckedChanged="ChkAutoOpenLinks_Changed" ToolTip.Tip="{l:Tr tip.autoOpenLinks}"/>
                 </StackPanel>
                 <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Spacing="6" Margin="0,2,0,2">
@@ -246,7 +236,6 @@
                             <Separator/>
                             <MenuItem x:Name="ctxLocalVerify" Header="{l:Tr ctx.verifyremote}" Click="LocalCtx_Verify" ToolTip.Tip="{l:Tr tip.ctxverifyremote}"/>
                             <Separator/>
-                            <MenuItem                          Header="{l:Tr ctx.copypath}"         Click="LocalCtx_CopyPath" ToolTip.Tip="{l:Tr tip.ctxcopypath}"/>
                         </ContextMenu>
                     </DataGrid.ContextMenu>
                     <DataGrid.Columns>
@@ -395,7 +384,6 @@
                             <Separator/>
                             <MenuItem x:Name="ctxRemoteVerify"  Header="{l:Tr ctx.verifylocal}"  Click="RemoteCtx_Verify" ToolTip.Tip="{l:Tr tip.ctxverifylocal}"/>
                             <Separator/>
-                            <MenuItem                            Header="{l:Tr ctx.copypath}"         Click="RemoteCtx_CopyPath" ToolTip.Tip="{l:Tr tip.ctxcopypath}"/>
                         </ContextMenu>
                     </DataGrid.ContextMenu>
                     <DataGrid.Columns>
@@ -464,9 +452,3 @@
         </Border>
     </Grid>
 </Window>
-
-
-
-
-
-

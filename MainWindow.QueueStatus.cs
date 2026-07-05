@@ -576,5 +576,3 @@ public partial class MainWindow
 
 }
 
-
-

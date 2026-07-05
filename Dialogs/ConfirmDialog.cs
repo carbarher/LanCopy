@@ -6,7 +6,7 @@ using LanCopy.Localization;
 
 namespace LanCopy;
 
-// DiÃ¡logo modal de confirmaciÃ³n de sobreescritura (#10)
+// Dialogo modal de confirmacion de sobreescritura (#10)
 internal sealed class ConfirmDialog : Window
 {
     public enum OverwriteAction { OverwriteAll, SkipAll, SkipSameSize, Rename, Cancel } // Q2: OverwriteOne/SkipOne eran dead values sin botones

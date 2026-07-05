@@ -83,7 +83,7 @@ public partial class MainWindow : Window, IConnectionUiHost, ITransferUiHost
     private ChatWindow? _chatWindow;
     private string? _lastTextSenderIp;
     private int _lastTextSenderPort = NetworkValidation.DefaultPort;
-    private bool _sortSmallestFirst = false; // F7: enviar archivos peque�os primero
+    private bool _sortSmallestFirst = false; // F7: enviar archivos pequenos primero
     private const int SparklineLen = 10;
 
     // Feature 8: watch folder
@@ -112,9 +112,7 @@ public partial class MainWindow : Window, IConnectionUiHost, ITransferUiHost
     private bool _requireApproval; // SEGURIDAD: pedir consentimiento antes de aceptar ficheros
     private bool _requireHighRiskApproval = true; // SEGURIDAD: confirmar localmente comandos remotos de alto riesgo
     private bool _compressEnabled;
-    private bool _autoClipboard;
     private bool _autoOpenLinks;
-    private DispatcherTimer? _autoClipboardTimer;
     private DispatcherTimer? _fullDiskSessionTimer;
     private DispatcherTimer? _safeModeSessionTimer;
     private DateTimeOffset? _fullDiskUntilUtc;
@@ -122,7 +120,6 @@ public partial class MainWindow : Window, IConnectionUiHost, ITransferUiHost
     private bool _safeModeUntilClose;
     private bool _securityToggleGuard;
     private static readonly TimeSpan FullDiskSessionDuration = TimeSpan.FromMinutes(10);
-    private string? _lastClipboardText;
     private int _bandwidthLimitMbps;
     private string _theme = "Auto"; // tema UI: Dark|Light|Auto
 
@@ -147,7 +144,7 @@ public partial class MainWindow : Window, IConnectionUiHost, ITransferUiHost
     private Button? _btnCancel;
     private Button? _btnPause;
     private Button? _btnResume;
-    // F2: verificaci�n checksum tras cada download
+    // F2: verificacion checksum tras cada download
     private bool _checksumEnabled = false;
     private TextBlock? _txtSpeed;
     private TextBlock? _txtProgressPercent;
@@ -247,7 +244,6 @@ public partial class MainWindow : Window, IConnectionUiHost, ITransferUiHost
             _discovery.Start();
 
             SetupTray(); // idea-tray
-            StartAutoClipboardTimer(); // temporizador portapapeles
             if (startupArgs != null && startupArgs.Length > 0)
             {
                 _ = ProcessStartupArgsAsync(startupArgs);
@@ -287,8 +283,6 @@ public partial class MainWindow : Window, IConnectionUiHost, ITransferUiHost
         StopStatusBlink();
         if (_watchFolderActive) StopWatch();
         _transferUiService.Shutdown();
-
-        try { _autoClipboardTimer?.Stop(); _autoClipboardTimer = null; } catch (Exception ex) { Log.Debug("ui", "stop-auto-clipboard-timer-failed", new { error = ex.Message }); }
         try { _fullDiskSessionTimer?.Stop(); _fullDiskSessionTimer = null; } catch (Exception ex) { Log.Debug("ui", "stop-full-disk-timer-failed", new { error = ex.Message }); }
         try { _safeModeSessionTimer?.Stop(); _safeModeSessionTimer = null; } catch (Exception ex) { Log.Debug("ui", "stop-safe-mode-timer-failed", new { error = ex.Message }); }
         try { _localFilterDebounce?.Stop(); _localFilterDebounce = null; } catch (Exception ex) { Log.Debug("ui", "stop-local-filter-debounce-failed", new { error = ex.Message }); }
@@ -305,6 +299,7 @@ public partial class MainWindow : Window, IConnectionUiHost, ITransferUiHost
         try { _discovery?.Stop(); _discovery = null; } catch (Exception ex) { Log.Debug("ui", "discovery-stop-on-close-failed", new { error = ex.Message }); }
         try { _client?.Dispose(); _client = null; } catch (Exception ex) { Log.Debug("ui", "client-dispose-on-close-failed", new { error = ex.Message }); }
         try { _clientDown?.Dispose(); _clientDown = null; } catch (Exception ex) { Log.Debug("ui", "download-client-dispose-on-close-failed", new { error = ex.Message }); }
+        try { _chatWindow?.Close(); _chatWindow = null; } catch (Exception ex) { Log.Debug("ui", "close-chat-window-on-exit", new { error = ex.Message }); }
         try { _uploadCts.Dispose(); } catch (Exception ex) { Log.Debug("ui", "upload-cts-dispose-on-close-failed", new { error = ex.Message }); }
         try { _downloadCts.Dispose(); } catch (Exception ex) { Log.Debug("ui", "download-cts-dispose-on-close-failed", new { error = ex.Message }); }
 
@@ -364,7 +359,7 @@ public partial class MainWindow : Window, IConnectionUiHost, ITransferUiHost
         }
 
         // F1: slider de paralelismo
-        var slider = this.FindControl<Slider>("sldParallel"); // U2: nombre correcto seg�n AXAML
+        var slider = this.FindControl<Slider>("sldParallel"); // U2: nombre correcto segun AXAML
         var lblPar = this.FindControl<TextBlock>("txtParallelValue");
         if (slider != null)
         {
@@ -437,6 +432,3 @@ public partial class MainWindow : Window, IConnectionUiHost, ITransferUiHost
 // ── Modelo: perfil de conexión (Feature 3) ────────────────────────────────────
 internal record ConnectionProfile(string Name, string Ip, string Port, string Pin = "", bool Tls = false, bool Compress = false);
 internal record PeerFolderState(string LocalPath = "", string RemotePath = "");
-
-
-

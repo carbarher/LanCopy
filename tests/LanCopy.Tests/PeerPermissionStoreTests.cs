@@ -16,7 +16,6 @@ public sealed class PeerPermissionStoreTests
         Assert.False(p.Modify);
         Assert.False(p.Delete);
         Assert.False(p.Sync);
-        Assert.False(p.Clipboard);
         Assert.False(p.Power);
     }
 
@@ -52,7 +51,6 @@ public sealed class PeerPermissionStoreTests
                 "modify": false,
                 "delete": false,
                 "sync": false,
-                "clipboard": false,
                 "power": false
               }
             }
@@ -87,7 +85,6 @@ public sealed class PeerPermissionStoreTests
                   "modify": true,
                   "delete": false,
                   "sync": false,
-                  "clipboard": false,
                   "power": false
                 }
               }
@@ -141,7 +138,6 @@ public sealed class PeerPermissionStoreTests
                 Modify: true,
                 Delete: true,
                 Sync: true,
-                Clipboard: true,
                 Power: true));
 
             store.Set("192.168.1.201", new PeerPermissionStore.Permissions());
@@ -153,7 +149,6 @@ public sealed class PeerPermissionStoreTests
             Assert.False(p.Modify);
             Assert.False(p.Delete);
             Assert.False(p.Sync);
-            Assert.False(p.Clipboard);
             Assert.False(p.Power);
         }
         finally

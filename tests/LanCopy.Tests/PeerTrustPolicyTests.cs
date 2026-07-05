@@ -14,7 +14,6 @@ public sealed class PeerTrustPolicyTests
     [InlineData(CertTrust.PeerTrustLevel.Unknown, "power")]
     [InlineData(CertTrust.PeerTrustLevel.Unknown, "delta_hashes")]
     [InlineData(CertTrust.PeerTrustLevel.Unknown, "put_delta_blocks")]
-    [InlineData(CertTrust.PeerTrustLevel.Unknown, "text")]
     [InlineData(CertTrust.PeerTrustLevel.Paired, "delete")]
     [InlineData(CertTrust.PeerTrustLevel.Paired, "power")]
     [InlineData(CertTrust.PeerTrustLevel.Paired, "delta_hashes")]
@@ -56,6 +55,7 @@ public sealed class PeerTrustPolicyTests
     [InlineData("caps")]
     [InlineData("health")]
     [InlineData("disconnect_notice")]
+    [InlineData("text")]
     public void UnknownPeers_OnlyGetMinimalCommands(string cmd)
     {
         Assert.True(PeerTrustPolicy.IsAllowed(CertTrust.PeerTrustLevel.Unknown, cmd));

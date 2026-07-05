@@ -59,32 +59,6 @@ public partial class MainWindow
         try { await TryConnectAsync(); }
         catch (Exception ex) { Log.Warn("conn", "ip-keydown-unexpected", new { error = ex.Message }); }
     }
-
-    private void CopyIp_Click(object? sender, RoutedEventArgs e)
-    {
-        var full = this.FindControl<TextBlock>("txtMyIp")?.Text ?? "";
-        var ip = full.Contains(':') ? full[..full.IndexOf(':')] : full;
-        var clipboard = TopLevel.GetTopLevel(this)?.Clipboard;
-        if (clipboard != null) _ = clipboard.SetTextAsync(ip);
-        SetStatus(L["st.ipCopied"]);
-    }
-
-    private async void CopyPairingCode_Click(object? sender, RoutedEventArgs e)
-    {
-        try
-        {
-            var code = PairingCode.Encode(_server.LocalIp, _server.Port);
-            var top = TopLevel.GetTopLevel(this);
-            if (top?.Clipboard != null) await top.Clipboard.SetTextAsync(code);
-            SetStatus(L.Format("st.codeCopied", code));
-        }
-        catch (Exception ex)
-        {
-            Log.Warn("ui", "copy-pairing-code-failed", new { error = ex.Message });
-            SetStatus(L["st.codeError"]);
-        }
-    }
-
     private async void ShowTrustedDevices_Click(object? sender, RoutedEventArgs e)
     {
         try
@@ -375,5 +349,3 @@ public partial class MainWindow
     }
 
 }
-
-

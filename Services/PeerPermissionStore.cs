@@ -13,7 +13,6 @@ public sealed class PeerPermissionStore
         bool Modify = false,
         bool Delete = false,
         bool Sync = false,
-        bool Clipboard = false,
         bool Power = false,
         DateTimeOffset? UpdatedUtc = null);
 

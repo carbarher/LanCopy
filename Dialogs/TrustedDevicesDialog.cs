@@ -1,6 +1,5 @@
 using Avalonia;
 using Avalonia.Controls;
-using Avalonia.Input.Platform;
 using Avalonia.Layout;
 using Avalonia.Media;
 using LanCopy.Localization;
@@ -25,7 +24,6 @@ internal sealed class TrustedDevicesDialog : Window
     private readonly CheckBox _chkModify = MakeCheckBox(Loc.Instance["dlg.devices.modify"]);
     private readonly CheckBox _chkDelete = MakeRiskCheckBox(Loc.Instance["dlg.devices.delete"]);
     private readonly CheckBox _chkSync = MakeRiskCheckBox(Loc.Instance["dlg.devices.sync"]);
-    private readonly CheckBox _chkClipboard = MakeRiskCheckBox(Loc.Instance["dlg.devices.clipboard"]);
     private readonly CheckBox _chkPower = MakeRiskCheckBox(Loc.Instance["dlg.devices.power"]);
 
     public TrustedDevicesDialog()
@@ -72,8 +70,6 @@ internal sealed class TrustedDevicesDialog : Window
         var btnRestrict = MakeBtn(L["dlg.devices.restrict"], "#616161");
         var btnForgetSelected = MakeBtn(L["dlg.devices.forgetSelected"], "#C0392B");
         var btnForgetAll = MakeBtn(L["dlg.devices.forgetAll"], "#8E24AA");
-        var btnCopyFingerprint = MakeBtn(L["dlg.devices.copyFingerprint"], "#455A64");
-        ToolTip.SetTip(btnCopyFingerprint, L["dlg.devices.copyFingerprintTip"]);
         var btnClose = MakeBtn(Loc.Instance["dlg.ok"], "#3E3E42");
 
         btnClose.Click += (_, _) => Close();
@@ -83,7 +79,6 @@ internal sealed class TrustedDevicesDialog : Window
         btnRestrict.Click += (_, _) => RestrictSelectedDevice();
         btnForgetSelected.Click += (_, _) => ForgetSelected();
         btnForgetAll.Click += (_, _) => ForgetAllDevices();
-        btnCopyFingerprint.Click += async (_, _) => await CopyFingerprintAsync();
 
         actions.Children.Add(btnForgetAll);
         actions.Children.Add(btnRestrict);
@@ -91,7 +86,6 @@ internal sealed class TrustedDevicesDialog : Window
         actions.Children.Add(btnResetPermissions);
         actions.Children.Add(btnSavePermissions);
         actions.Children.Add(btnForgetSelected);
-        actions.Children.Add(btnCopyFingerprint);
         actions.Children.Add(btnClose);
 
         var grid = new Grid
@@ -178,7 +172,7 @@ internal sealed class TrustedDevicesDialog : Window
         }));
         stack.Children.Add(BuildPermissionGroup(L["dlg.devices.riskyGroup"], new[]
         {
-            _chkDelete, _chkSync, _chkClipboard, _chkPower
+            _chkDelete, _chkSync, _chkPower
         }, true));
 
         return stack;
@@ -266,7 +260,6 @@ internal sealed class TrustedDevicesDialog : Window
         _chkModify.IsChecked = p.Modify;
         _chkDelete.IsChecked = p.Delete;
         _chkSync.IsChecked = p.Sync;
-        _chkClipboard.IsChecked = p.Clipboard;
         _chkPower.IsChecked = p.Power;
     }
 
@@ -284,7 +277,6 @@ internal sealed class TrustedDevicesDialog : Window
             Modify: _chkModify.IsChecked == true,
             Delete: _chkDelete.IsChecked == true,
             Sync: _chkSync.IsChecked == true,
-            Clipboard: _chkClipboard.IsChecked == true,
             Power: _chkPower.IsChecked == true));
         Reload();
     }
@@ -320,7 +312,7 @@ internal sealed class TrustedDevicesDialog : Window
             Preset.ReadOnly => new PeerPermissionStore.Permissions(Browse: true, Download: true),
             Preset.SendReceive => new PeerPermissionStore.Permissions(Browse: true, Download: true, Upload: true),
             Preset.FullShare => new PeerPermissionStore.Permissions(Browse: true, Download: true, Upload: true, Modify: true),
-            Preset.AdvancedTrusted => new PeerPermissionStore.Permissions(Browse: true, Download: true, Upload: true, Modify: true, Delete: true, Sync: true, Clipboard: true, Power: true),
+            Preset.AdvancedTrusted => new PeerPermissionStore.Permissions(Browse: true, Download: true, Upload: true, Modify: true, Delete: true, Sync: true, Power: true),
             _ => new PeerPermissionStore.Permissions()
         };
 
@@ -416,15 +408,5 @@ internal sealed class TrustedDevicesDialog : Window
         btn.Margin = new Thickness(0, 0, 6, 0);
         btn.Click += (_, _) => onClick();
         return btn;
-    }
-
-    private async Task CopyFingerprintAsync()
-    {
-        var idx = _list.SelectedIndex;
-        if (idx < 0 || idx >= _devices.Count) return;
-        var fp = _devices[idx].Fingerprint;
-        var clipboard = TopLevel.GetTopLevel(this)?.Clipboard;
-        if (clipboard != null)
-            await clipboard.SetTextAsync(fp);
     }
 }

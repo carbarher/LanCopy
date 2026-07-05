@@ -130,7 +130,7 @@ public partial class MainWindow
             }
 
             var fileList = replayQueueFiles ?? await ExpandItemsAsync(items, isUpload, ct);
-        // Q5: ordenar por tama�o si "small first" est� activado
+        // Q5: ordenar por tamano si "small first" est� activado
         if (_sortSmallestFirst && fileList != null)
             fileList = fileList.OrderBy(x => x.entry.Size).ToList();
             if (fileList == null || ct.IsCancellationRequested) return;
