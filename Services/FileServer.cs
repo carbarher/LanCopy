@@ -89,6 +89,7 @@ public sealed partial class FileServer : IAsyncDisposable
     private int _activeIpCount;
     public int CommandRateWindowSeconds { get; set; } = 10;
     public int CommandRateLimit { get; set; } = 120;
+    public int TransferCommandRateLimit { get; set; } = 1200;
     public int PinMaxFails { get; set; } = 5;
     // CachÃ© SHA-256 (path -> lastWrite,size,hash): evita leer el archivo dos veces en get.
     private readonly System.Collections.Concurrent.ConcurrentDictionary<string, (DateTime LastWrite, long Size, string Hash)> _sha256Cache = new(StringComparer.OrdinalIgnoreCase);
@@ -194,17 +195,9 @@ public sealed partial class FileServer : IAsyncDisposable
             // Modo disco completo: la unica barrera es SystemProtection + reparse.
             if (string.IsNullOrEmpty(path)) { reason = "svc.emptyPath"; return false; }
             full = System.IO.Path.GetFullPath(path);
-            // El fichero destino de un put aun no existe; comprobamos la proteccion sobre el
-            // ancestro existente mas cercano (evita falsos positivos por File.GetAttributes).
-            var checkPath = full;
-            while (!File.Exists(checkPath) && !Directory.Exists(checkPath))
-            {
-                var parent = System.IO.Path.GetDirectoryName(checkPath);
-                if (string.IsNullOrEmpty(parent) || parent == checkPath) break;
-                checkPath = parent;
-            }
-            // Remoto en disco completo: protege sistema + arbol personal del usuario.
-            if (SystemProtection.IsProtectedForRemote(checkPath)) { reason = "svc.sysProtected"; return false; }
+            // Un destino nuevo bajo D:\ o C:\ debe poder crearse, pero nunca dentro de
+            // árboles del sistema o del perfil personal.
+            if (SystemProtection.IsProtectedForRemoteWriteTarget(full)) { reason = "svc.sysProtected"; return false; }
             if (SafeFileOps.ContainsReparsePoint(full)) { reason = "svc.reparsePath"; return false; } // Q4: era string español
             return true;
         }
@@ -293,41 +286,34 @@ public sealed partial class FileServer : IAsyncDisposable
 
     private bool IsCommandRateAllowed(string ip, string cmd)
     {
-        if (CommandRateLimit <= 0) return true;
-        if (string.IsNullOrWhiteSpace(ip) || string.IsNullOrWhiteSpace(cmd)) return true;
+        var isTransfer = cmd is "get" or "get_chunk" or "put" or "put_resume" or "put_delta_blocks";
+        var limit = isTransfer ? TransferCommandRateLimit : CommandRateLimit;
+        if (limit <= 0 || string.IsNullOrWhiteSpace(ip) || string.IsNullOrWhiteSpace(cmd)) return true;
 
         var now = Environment.TickCount64;
         var windowMs = Math.Max(1, CommandRateWindowSeconds) * 1000L;
-        var key = ip; // Q3: era "{ip}|{cmd}" — rate-limit debe ser per-IP total, no per-IP-per-command (el anterior permitía 120*N comandos)
-
+        // Keep data and control in separate per-IP buckets. Folder transfers remain bounded,
+        // while chat, permissions and browsing are never starved by the data plane.
+        var key = isTransfer ? $"{ip}|transfer" : $"{ip}|control";
         var isNew = false;
         var state = _cmdRate.AddOrUpdate(
             key,
             _ => { isNew = true; return (now, 1); },
-            (_, s) => (now - s.windowStartTick >= windowMs) ? (now, 1) : (s.windowStartTick, s.count + 1));
+            (_, current) => (now - current.windowStartTick >= windowMs) ? (now, 1) : (current.windowStartTick, current.count + 1));
         if (isNew) Interlocked.Increment(ref _cmdRateCount);
 
-        // S2: limitar la limpieza del rate-table a una vez cada 30s en lugar de en cada petición
-        // — con 8192+ IPs bajo DDoS, la limpieza O(n) por cada request crearía 8M lookups/s
-        // B1: CAS atómico para que solo UN thread haga el cleanup (evita double-sweep concurrente)
-        var prevClean = Volatile.Read(ref _cmdRateLastCleanTick);
-        // B1/P1: usar _cmdRateCount O(1) en lugar de .Count O(n)
-        if (_cmdRateCount > 8192 && now - prevClean > 30_000 &&
-            Interlocked.CompareExchange(ref _cmdRateLastCleanTick, now, prevClean) == prevClean)
+        var previousClean = Volatile.Read(ref _cmdRateLastCleanTick);
+        if (_cmdRateCount > 8192 && now - previousClean > 30_000 &&
+            Interlocked.CompareExchange(ref _cmdRateLastCleanTick, now, previousClean) == previousClean)
         {
-            int removed = 0;
-            foreach (var kv in _cmdRate)
-                if (now - kv.Value.windowStartTick >= windowMs * 2)
-                    if (_cmdRate.TryRemove(kv.Key, out _)) removed++;
+            var removed = 0;
+            foreach (var entry in _cmdRate)
+                if (now - entry.Value.windowStartTick >= windowMs * 2 && _cmdRate.TryRemove(entry.Key, out _)) removed++;
             if (removed > 0) Interlocked.Add(ref _cmdRateCount, -removed);
         }
 
-        // Q4: usar > en lugar de <= para enforcement estricto del límite:
-        // con <= CommandRateLimit, dos threads concurrentes con count=limit ambos pasan (TOCTOU)
-        // B1: usar < (estricto) en lugar de <= - con <=, dos threads concurrentes con count=limit ambos pasan (TOCTOU)
-        return state.count < CommandRateLimit;
+        return state.count < limit;
     }
-
     private static bool FixedTimeEquals(string? a, string? b)
     {
         if (a is null || b is null) return false;
@@ -424,6 +410,21 @@ public sealed partial class FileServer : IAsyncDisposable
         File.WriteAllBytes(CertPath, pfxBytes);
         _serverCert = X509CertificateLoader.LoadPkcs12(pfxBytes, certPwd,
             GetCertificateKeyStorageFlags());
+    }
+
+    internal static X509Certificate2? LoadLocalCertificate()
+    {
+        try
+        {
+            if (!File.Exists(CertPath))
+                return null;
+            return X509CertificateLoader.LoadPkcs12FromFile(CertPath, GetCertPassword(), GetCertificateKeyStorageFlags());
+        }
+        catch (Exception ex)
+        {
+            Log.Warn("cert", "client-certificate-load-failed", new { error = ex.Message });
+            return null;
+        }
     }
 
     private static X509KeyStorageFlags GetCertificateKeyStorageFlags()
@@ -593,7 +594,16 @@ public sealed partial class FileServer : IAsyncDisposable
                             await ssl.AuthenticateAsServerAsync(new SslServerAuthenticationOptions
                             {
                                 ServerCertificate = _serverCert,
-                                ClientCertificateRequired = false,
+                                ClientCertificateRequired = true,
+                                RemoteCertificateValidationCallback = (_, certificate, _, _) =>
+                                {
+                                    var result = CertTrust.ValidateOrPinDetailed(ip, certificate);
+                                    var accepted = result is CertTrust.ValidationResult.TrustedKnown
+                                        or CertTrust.ValidationResult.TrustedFirstUse;
+                                    if (!accepted)
+                                        Log.Warn("cert", "incoming-client-certificate-rejected", new { ip, result });
+                                    return accepted;
+                                },
                                 EnabledSslProtocols = SslProtocols.Tls12 | SslProtocols.Tls13,
                                 CertificateRevocationCheckMode = X509RevocationMode.NoCheck
                             }, hs);
@@ -696,6 +706,7 @@ public sealed partial class FileServer : IAsyncDisposable
                         if (recursive) await HandleListRecursiveAsync(req, stream, ct);
                         else await HandleListAsync(req, stream, ct);
                         break;
+                    case "list_recursive_stream": await HandleListRecursiveStreamAsync(req, stream, ct); break;
                     case "get": await HandleGetAsync(req, stream, ct); break;
                     case "put":
                     case "put_resume":
@@ -723,7 +734,8 @@ public sealed partial class FileServer : IAsyncDisposable
                     case "sha256": await HandleSha256Async(req, stream, ct); break;
                     case "hash": await HandleHashAsync(req, stream, ct); break;
                     case "stat": await HandleStatAsync(req, stream, ct); break;
-                    case "caps": await HandleCapsAsync(req, stream, ct); break;
+                    case "stat_many": await HandleStatManyAsync(req, stream, ct); break;
+                    case "caps": await HandleCapsAsync(req, stream, ip, ct); break;
                     case "text": await HandleTextAsync(req, stream, ip, ct); break;
                     case "disconnect_notice": await HandleDisconnectNoticeAsync(stream, ip, ct); break;
                     case "health": await HandleHealthAsync(req, stream, ct); break;

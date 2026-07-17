@@ -9,7 +9,7 @@ public sealed class PeerPermissionStore
     public sealed record Permissions(
         bool Browse = true,
         bool Download = true,
-        bool Upload = false,
+        bool Upload = true,
         bool Modify = false,
         bool Delete = false,
         bool Sync = false,
@@ -106,7 +106,7 @@ public sealed class PeerPermissionStore
         if (root.ValueKind != JsonValueKind.Object)
             return map;
 
-        if (root.TryGetProperty("hosts", out var hosts) && hosts.ValueKind == JsonValueKind.Object)
+        if (TryGetPropertyIgnoreCase(root, "hosts", out var hosts) && hosts.ValueKind == JsonValueKind.Object)
         {
             foreach (var prop in hosts.EnumerateObject())
             {
@@ -122,6 +122,24 @@ public sealed class PeerPermissionStore
                 map[prop.Name] = permissions;
         }
         return map;
+    }
+
+    private static bool TryGetPropertyIgnoreCase(JsonElement obj, string property, out JsonElement value)
+    {
+        if (obj.TryGetProperty(property, out value))
+            return true;
+
+        foreach (var candidate in obj.EnumerateObject())
+        {
+            if (string.Equals(candidate.Name, property, StringComparison.OrdinalIgnoreCase))
+            {
+                value = candidate.Value;
+                return true;
+            }
+        }
+
+        value = default;
+        return false;
     }
 
     private static bool TryReadPermissions(JsonElement el, out Permissions permissions)
@@ -147,7 +165,7 @@ public sealed class PeerPermissionStore
             Directory.CreateDirectory(Path.GetDirectoryName(_path)!);
             var tmp = _path + "." + Guid.NewGuid().ToString("N") + ".tmp";
             var snap = new Snapshot { Hosts = map };
-            File.WriteAllText(tmp, JsonSerializer.Serialize(snap, new JsonSerializerOptions { WriteIndented = true }));
+            File.WriteAllText(tmp, JsonSerializer.Serialize(snap, new JsonSerializerOptions { WriteIndented = true, PropertyNamingPolicy = JsonNamingPolicy.CamelCase }));
             File.Move(tmp, _path, overwrite: true);
         }
         catch (Exception ex)

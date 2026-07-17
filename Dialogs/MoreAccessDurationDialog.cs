@@ -39,7 +39,7 @@ internal sealed class MoreAccessDurationDialog : Window
             Spacing = 8
         };
 
-        var btnCancel = MakeBtn(Loc.Instance["dlg.moreAccess.cancel"], "#3E3E42");
+        var btnCancel = MakeBtn(Loc.Instance["dlg.moreAccess.cancel"], "#C62828");
         var btn10 = MakeBtn(Loc.Instance["dlg.moreAccess.10m"], "#007ACC");
         var btn30 = MakeBtn(Loc.Instance["dlg.moreAccess.30m"], "#007ACC");
         var btnClose = MakeBtn(Loc.Instance["dlg.moreAccess.untilClose"], "#8E44AD");

@@ -334,7 +334,7 @@ public partial class MainWindow
     }
     // ══ Context menus — Remote ════════════════════════════════════════════════════
 
-    private void RemoteCtx_Opening(object? sender, System.ComponentModel.CancelEventArgs e)
+    private async void RemoteCtx_Opening(object? sender, System.ComponentModel.CancelEventArgs e)
     {
         var items = GetSelectedItems("remoteList");
         bool any = items.Count > 0;
@@ -342,6 +342,23 @@ public partial class MainWindow
         bool connected = _client != null;
         var menu = sender as ContextMenu;
 
+        if (connected)
+        {
+            try
+            {
+                using var capsCts = new CancellationTokenSource(TimeSpan.FromSeconds(3));
+                _remoteCapabilities = await _client!.GetCapabilitiesAsync(capsCts.Token);
+            }
+            catch (Exception ex)
+            {
+                _remoteCapabilities = null;
+                Log.Debug("ctx-menu", "remote-capabilities-unavailable", new { error = ex.Message });
+            }
+        }
+        else _remoteCapabilities = null;
+
+        var canModify = connected && _remoteCapabilities?.ModifyAllowed == true;
+        var canDelete = connected && _remoteCapabilities?.DeleteAllowed == true;
         var receive = ResolveMenuItem(menu, "ctxRemoteReceive");
         if (receive != null) receive.IsEnabled = any && connected;
 
@@ -350,14 +367,14 @@ public partial class MainWindow
         {
             createFolder.IsVisible = true;
             createFolder.Header = string.IsNullOrWhiteSpace(L["ctx.newfolder"]) ? "Create folder" : L["ctx.newfolder"];
-            createFolder.IsEnabled = connected;
+            createFolder.IsEnabled = canModify;
         }
 
         var rename = ResolveMenuItem(menu, "ctxRemoteRename");
-        if (rename != null) rename.IsEnabled = single && connected;
+        if (rename != null) rename.IsEnabled = single && canModify;
 
         var delete = ResolveMenuItem(menu, "ctxRemoteDelete");
-        if (delete != null) delete.IsEnabled = any && connected;
+        if (delete != null) delete.IsEnabled = any && canDelete;
 
         var verify = ResolveMenuItem(menu, "ctxRemoteVerify");
         if (verify != null) verify.IsEnabled = any && !items.Any(x => x.IsDirectory) && connected;

@@ -23,6 +23,9 @@ public partial class MainWindow
 
     private void SuspendTransferUi() => _transferUiService.SuspendTransferUi();
 
+    private void SetTransferCurrentItem(string text) => _transferUiService.SetCurrentItem(text);
+
+    void ITransferUiHost.SetTransferCurrentItem(string text) => _progressWin?.SetLine(text);
     void ITransferUiHost.StopStatusBlink() => StopStatusBlink();
 
     void ITransferUiHost.SetTransferProgress(double progressPercent, IBrush brush)

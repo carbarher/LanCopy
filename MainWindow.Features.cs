@@ -328,7 +328,10 @@ public partial class MainWindow
 
     private LanClient MakeClient(string ip, int port, bool? useTlsOverride = null)
     {
-        var pin = this.FindControl<TextBox>("txtPin")?.Text?.Trim() ?? "";
+        // Este metodo tambien se invoca desde transferencias paralelas y reconexiones.
+        // El estado del servidor es la copia sincronizada de la configuracion del PIN;
+        // consultar controles Avalonia aqui provoca excepciones de afinidad de hilo.
+        var pin = _server.RequiredPin?.Trim() ?? "";
         return new LanClient(ip, port)
         {
             Pin = string.IsNullOrEmpty(pin) ? null : pin,
@@ -363,8 +366,17 @@ public partial class MainWindow
             this.FindControl<TextBox>("txtRemotePort")?.Text ?? "8742");
     }
 
-    // Chat entre PCs en ventana independiente. Si no hay destino escrito, responde al último remitente.
-    private void OpenChat_Click(object? sender, RoutedEventArgs e) => ShowChatWindow(activate: true);
+    // Chat entre PCs en ventana independiente; el destino sigue la conversación activa.
+    private void OpenChat_Click(object? sender, RoutedEventArgs e)
+    {
+        var ip = this.FindControl<TextBox>("txtRemoteIp")?.Text?.Trim();
+        if (!string.IsNullOrWhiteSpace(ip))
+        {
+            _chatTargetIp = ip;
+            _chatTargetPort = NetworkValidation.ParsePortOrDefault(this.FindControl<TextBox>("txtRemotePort")?.Text?.Trim());
+        }
+        ShowChatWindow(activate: true);
+    }
 
     private void ShowChatWindow(bool activate)
     {
@@ -392,13 +404,8 @@ public partial class MainWindow
     {
         if (string.IsNullOrWhiteSpace(text)) { SetStatus(L["st.textEmpty"]); return false; }
 
-        var ip = this.FindControl<TextBox>("txtRemoteIp")?.Text?.Trim() ?? "";
-        var port = NetworkValidation.ParsePortOrDefault(this.FindControl<TextBox>("txtRemotePort")?.Text?.Trim());
-        if (string.IsNullOrEmpty(ip) && !string.IsNullOrWhiteSpace(_lastTextSenderIp))
-        {
-            ip = _lastTextSenderIp!;
-            port = _lastTextSenderPort;
-        }
+        var ip = _chatTargetIp ?? "";
+        var port = _chatTargetPort;
         if (string.IsNullOrEmpty(ip)) { SetStatus(L["st.connectFirst"]); return false; }
 
         try
@@ -407,7 +414,7 @@ public partial class MainWindow
             using var sendTextCts = new System.Threading.CancellationTokenSource(TimeSpan.FromSeconds(8));
             var message = text.Trim();
             await cli.SendTextAsync(message, sendTextCts.Token);
-            _chatMessages.Add(new ChatMessage { Sender = L["chat.me"], Text = message, IsOwn = true });
+            AddChatMessage(new ChatMessage { Sender = L["chat.me"], Text = message, IsOwn = true });
             SetStatus(L["st.textSent"]);
             return true;
         }
@@ -427,13 +434,13 @@ public partial class MainWindow
     private void OnTextReceived(string ip, string text)
     {
         var peer = _discovery?.GetPeers().FirstOrDefault(p => string.Equals(p.Ip, ip, StringComparison.OrdinalIgnoreCase));
-        _lastTextSenderIp = ip;
-        _lastTextSenderPort = peer?.Port ?? NetworkValidation.DefaultPort;
+        _chatTargetIp = ip;
+        _chatTargetPort = peer?.Port ?? NetworkValidation.DefaultPort;
         var senderName = !string.IsNullOrWhiteSpace(peer?.Name) ? peer!.Name : ip;
         Dispatcher.UIThread.Post(() =>
         {
             var preview = SingleLinePreview(text);
-            _chatMessages.Add(new ChatMessage { Sender = senderName, Text = text, IsOwn = false });
+            AddChatMessage(new ChatMessage { Sender = senderName, Text = text, IsOwn = false });
             ShowChatWindow(activate: false);
             SetStatus(L.Format("st.textReceived", senderName, preview));
 
@@ -454,6 +461,13 @@ public partial class MainWindow
     }
 
     // F7: Broadcast PARALELO a todos los peers descubiertos
+    private void AddChatMessage(ChatMessage message)
+    {
+        _chatMessages.Add(message);
+        while (_chatMessages.Count > MaxChatHistoryMessages)
+            _chatMessages.RemoveAt(0);
+    }
+
     private async void Broadcast_Click(object? sender, RoutedEventArgs e)
     {
         var items = GetSelectedItems("localList").Where(f => f.Name != ".." && !f.IsDirectory).ToList();

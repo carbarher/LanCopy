@@ -9,8 +9,13 @@ namespace LanCopy.Services;
 public sealed partial class FileServer
 {
     // Feature 9: capabilities — anuncia soporte de compresión y TLS al cliente
-    private async Task HandleCapsAsync(JsonElement req, Stream stream, CancellationToken ct)
+    private async Task HandleCapsAsync(JsonElement req, Stream stream, string ip, CancellationToken ct)
     {
+        var authorizer = AuthorizePeerCommand ?? CommandAuthorizer.IsAllowed;
+        var downloadAllowed = authorizer(ip, "get");
+        var uploadAllowed = !ReadOnly && authorizer(ip, "put");
+        var modifyAllowed = !ReadOnly && authorizer(ip, "rename");
+        var deleteAllowed = !ReadOnly && !SafeModeNoRemoteDelete && authorizer(ip, "delete");
         await Protocol.WriteLineAsync(stream,
             JsonSerializer.Serialize(new
             {
@@ -22,7 +27,11 @@ public sealed partial class FileServer
                 readOnly = ReadOnly,
                 safeModeNoRemoteDelete = SafeModeNoRemoteDelete,
                 allowRemoteHardDelete = AllowRemoteHardDelete,
-                text = true
+                text = true,
+                downloadAllowed,
+                uploadAllowed,
+                modifyAllowed,
+                deleteAllowed
             }), ct);
     }
 

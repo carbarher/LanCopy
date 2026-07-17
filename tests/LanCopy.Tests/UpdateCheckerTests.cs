@@ -2,6 +2,7 @@ using LanCopy.Services;
 using Xunit;
 using System.IO;
 using System.Security.Cryptography;
+using System.Runtime.InteropServices;
 using System.Text;
 using System.Text.Json;
 
@@ -9,6 +10,27 @@ namespace LanCopy.Tests;
 
 public class UpdateCheckerTests
 {
+    [Theory]
+    [InlineData("win", Architecture.X64, "LanCopy-win-x64.exe")]
+    [InlineData("win", Architecture.Arm64, "LanCopy-win-arm64.exe")]
+    [InlineData("linux", Architecture.X64, "LanCopy-linux-x64.tar.gz")]
+    [InlineData("linux", Architecture.Arm64, "LanCopy-linux-arm64.tar.gz")]
+    [InlineData("osx", Architecture.X64, "LanCopy-osx-x64.zip")]
+    [InlineData("osx", Architecture.Arm64, "LanCopy-osx-arm64.zip")]
+    public void GetPlatformAssetName_ReturnsExactReleaseAsset(string platform, Architecture architecture, string expected)
+    {
+        Assert.Equal(expected, UpdateChecker.GetPlatformAssetName(platform, architecture));
+    }
+
+    [Theory]
+    [InlineData("win", Architecture.X86)]
+    [InlineData("linux", Architecture.Arm)]
+    [InlineData("unknown", Architecture.X64)]
+    public void GetPlatformAssetName_RejectsUnsupportedTargets(string platform, Architecture architecture)
+    {
+        Assert.Null(UpdateChecker.GetPlatformAssetName(platform, architecture));
+    }
+
     [Theory]
     [InlineData("1.0.1", "1.0.0", 1)]
     [InlineData("1.0.0", "1.0.1", -1)]

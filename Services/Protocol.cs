@@ -11,7 +11,7 @@ namespace LanCopy.Services;
 internal static class Protocol
 {
     // Version del protocolo de aplicacion. Se anuncia en 'caps' para negociar compatibilidad.
-    internal const int Version = 1;
+    internal const int Version = 3;
     internal const int MinSupportedVersion = 1;
 
     internal const int BufferSize = 512 * 1024; // 512 KB -> ~20-30% mas throughput LAN 1Gbps
@@ -23,7 +23,7 @@ internal static class Protocol
 
     // Limite anti-DoS: una linea de cabecera JSON nunca deberia superar esto.
     // Sin tope, un peer malicioso podria enviar bytes sin '\n' hasta agotar la memoria (OOM).
-    internal const int MaxLineBytes = 1024 * 1024; // 1 MB
+    internal const int MaxLineBytes = 16 * 1024 * 1024; // 16 MB: permite listados grandes sin eliminar el limite anti-DoS
 
     // True si el fichero ya esta (probablemente) comprimido y conviene saltar deflate.
     internal static bool IsCompressedExtension(string path)

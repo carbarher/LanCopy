@@ -15,6 +15,12 @@ public sealed partial class LanClient : IDisposable, IAsyncDisposable
 {
     public sealed record RemoteStat(bool Exists, bool IsDirectory, long Size, long LastWriteUtcTicks);
     public sealed record RemoteHealth(int ConnCurrent, int ConnLimit, int PerIpLimit, int ActiveIps, int PinFailsTracked, int HashCacheEntries, int CommandRateTracked, int CommandRateLimit, int CommandRateWindowSeconds);
+    public sealed record RemoteCapabilities(
+        int Version,
+        bool? DownloadAllowed,
+        bool? UploadAllowed,
+        bool? ModifyAllowed = null,
+        bool? DeleteAllowed = null);
 
     private readonly string _host;
     private readonly int _port;

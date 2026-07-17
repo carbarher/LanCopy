@@ -126,4 +126,21 @@ public class SpeedSparklineTests
         Assert.Equal(2, s.Length);
         Assert.Equal('\u2588', s[1]);
     }
-}
+
+    [Fact]
+    public void MakeUnique_ExistingDirectory_AppendsCounter()
+    {
+        var dir = Path.Combine(Path.GetTempPath(), "LanCopyUniqueDir_" + System.Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(dir);
+        var target = Path.Combine(dir, "folder");
+        Directory.CreateDirectory(target);
+        try
+        {
+            var unique = PathSafety.MakeUnique(target);
+            Assert.Equal(Path.Combine(dir, "folder (2)"), unique);
+        }
+        finally
+        {
+            if (Directory.Exists(dir)) Directory.Delete(dir, recursive: true);
+        }
+    }}

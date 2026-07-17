@@ -32,6 +32,8 @@ namespace LanCopy;
 public partial class MainWindow
 {
     private bool _debounceInited = false;
+    private int _localRefreshVersion;
+    private int _remoteRefreshVersion;
     // M9: referencias cacheadas a los ListBox — evita recorrer el árbol visual en cada GetSelectedItems
     private DataGrid? _localList;
     private DataGrid? _remoteList;
@@ -224,13 +226,17 @@ public partial class MainWindow
 
     private async Task RefreshLocalAsync(bool autoRefresh = false)
     {
-        if (!string.IsNullOrEmpty(_localPath))
+        var requestedPath = _localPath;
+        var refreshVersion = Interlocked.Increment(ref _localRefreshVersion);
+        if (!string.IsNullOrEmpty(requestedPath))
         {
-            LanCopy.Services.ShareRoot.SetRoot(_localPath);
+            LanCopy.Services.ShareRoot.SetRoot(requestedPath);
         }
         try
         {
-            var entries = await Task.Run(() => GetLocalEntries(_localPath));
+            var entries = await Task.Run(() => GetLocalEntries(requestedPath));
+            if (refreshVersion != Volatile.Read(ref _localRefreshVersion) ||
+                !string.Equals(requestedPath, _localPath, StringComparison.OrdinalIgnoreCase)) return;
             var signature = ComputeEntriesSignature(entries);
             if (autoRefresh && signature == Interlocked.Read(ref _localEntriesSignature)) return;
             Interlocked.Exchange(ref _localEntriesSignature, signature);
@@ -402,6 +408,8 @@ public partial class MainWindow
         if (_isTransferring != 0 && !isRetry) return;
         if (Volatile.Read(ref _isReconnectInProgress) == 1 && !isRetry) return;
 
+        var requestedPath = _remotePath;
+        var refreshVersion = Interlocked.Increment(ref _remoteRefreshVersion);
         LanClient? snap;
         await _clientLock.WaitAsync();
         try { snap = _client; }
@@ -414,7 +422,9 @@ public partial class MainWindow
             // Sin CT, ListAsync dependía del KeepAlive TCP (~30s); varios refreshes bloqueados
             // podrían acumularse si el timer de auto-refresh disparaba durante la espera.
             using var refreshCts = new System.Threading.CancellationTokenSource(TimeSpan.FromSeconds(10));
-            var entries = await snap.ListAsync(_remotePath, refreshCts.Token);
+            var entries = await snap.ListAsync(requestedPath, refreshCts.Token);
+            if (refreshVersion != Volatile.Read(ref _remoteRefreshVersion) ||
+                !string.Equals(requestedPath, _remotePath, StringComparison.OrdinalIgnoreCase)) return;
             var signature = ComputeEntriesSignature(entries);
             if (autoRefresh && signature == Interlocked.Read(ref _remoteEntriesSignature)) return;
             Interlocked.Exchange(ref _remoteEntriesSignature, signature);
@@ -422,7 +432,8 @@ public partial class MainWindow
         }
         catch (Exception ex)
         {
-            if (!isRetry)
+            if (refreshVersion != Volatile.Read(ref _remoteRefreshVersion)) return;
+            if (!isRetry && !IsNonTransientRemoteError(ex))
             {
                 var ip = this.FindControl<TextBox>("txtRemoteIp")!.Text?.Trim() ?? "";
                 var portStr = this.FindControl<TextBox>("txtRemotePort")!.Text?.Trim() ?? "8742";
@@ -442,16 +453,13 @@ public partial class MainWindow
                     }
                 }
             }
-            await _clientLock.WaitAsync();
-            try { _client?.Dispose(); _client = null; }
-            finally { _clientLock.Release(); }
-            SetConnStatus(L["conn.disconnectedWord"], BrushError);
-            UpdateConnectButton(isConnected: false, isBusy: false);
-            UpdateRemoteCreateFolderButton(isConnected: false);
-            SetStatus(L.Format("st.remoteError", L[ex.Message]));
+            Log.Warn("browser", "remote-temporarily-unavailable", new { path = requestedPath, error = ex.Message });
+            SetStatus(IsNonTransientRemoteError(ex) ? L.Format("st.remoteError", ex.Message) : L["st.autoReconnecting"]);
         }
     }
 
+    private static bool IsNonTransientRemoteError(Exception ex)
+        => ex.Message is "svc.lineTooLong" or "svc.accessDenied" or "svc.pathNotFound" or "svc.notDirectory" or "svc.invalidPath";
     private static long ComputeEntriesSignature(List<FileEntry> entries)
     {
         unchecked

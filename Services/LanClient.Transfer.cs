@@ -316,6 +316,17 @@ public sealed partial class LanClient
                 }
             }
 
+            var supportsPutPreAck = false;
+            try
+            {
+                var capabilities = await GetCapabilitiesAsync(ct);
+                supportsPutPreAck = capabilities.Version >= 3;
+            }
+            catch (Exception ex)
+            {
+                Log.Debug("client", "upload-capabilities-probe-failed", new { path = remotePath, error = ex.Message });
+            }
+
             var idleTimeout = SelectIdleTimeout(size);
             using var idleCts = StartIdleTimeout(ct, idleTimeout);
             var ioCt = idleCts.Token;
@@ -326,8 +337,10 @@ public sealed partial class LanClient
             if (doCompress && compressedPayload != null)
             {
                 await Protocol.WriteLineAsync(stream,
-                    JsonSerializer.Serialize(new { cmd = "put", path = remotePath, size, compress = true, compressed_size = compressedSize }), ioCt);
+                    JsonSerializer.Serialize(new { cmd = "put", path = remotePath, size, compress = true, compressed_size = compressedSize, pre_ack = supportsPutPreAck }), ioCt);
                 TouchIdleTimeout(idleCts, idleTimeout);
+                if (supportsPutPreAck)
+                    await ReadPutPreAckAsync(stream, idleCts, idleTimeout, ioCt);
                 await Protocol.CopyExactAsync(compressedPayload, stream, compressedSize, WrapProgress(progress, idleCts, idleTimeout), ioCt);
                 TouchIdleTimeout(idleCts, idleTimeout);
             }
@@ -362,8 +375,10 @@ public sealed partial class LanClient
             else
             {
                 await Protocol.WriteLineAsync(stream,
-                    JsonSerializer.Serialize(new { cmd = "put", path = remotePath, size }), ioCt);
+                    JsonSerializer.Serialize(new { cmd = "put", path = remotePath, size, pre_ack = supportsPutPreAck }), ioCt);
                 TouchIdleTimeout(idleCts, idleTimeout);
+                if (supportsPutPreAck)
+                    await ReadPutPreAckAsync(stream, idleCts, idleTimeout, ioCt);
                 await Protocol.CopyExactAsync(fs, stream, size, WrapProgress(progress, idleCts, idleTimeout), ioCt);
                 TouchIdleTimeout(idleCts, idleTimeout);
             }
@@ -392,5 +407,15 @@ public sealed partial class LanClient
         {
             throw MapIdleTimeout(ex, ct);
         }
+    }
+    private static async Task ReadPutPreAckAsync(
+        Stream stream,
+        CancellationTokenSource idleCts,
+        TimeSpan idleTimeout,
+        CancellationToken ct)
+    {
+        var line = await Protocol.ReadLineAsync(stream, ct);
+        TouchIdleTimeout(idleCts, idleTimeout);
+        EnsureOk(JsonSerializer.Deserialize<JsonElement>(line));
     }
 }

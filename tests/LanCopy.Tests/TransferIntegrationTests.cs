@@ -28,6 +28,20 @@ public class TransferIntegrationTests : IDisposable
         => Path.Combine(Path.GetTempPath(), "LanCopyOutside_" + Guid.NewGuid().ToString("N"), fileName);
 
     [Fact]
+    public async Task GetStats_Returns_Existing_Missing_And_Directory_Entries()
+    {
+        await File.WriteAllTextAsync(Path.Combine(_shared, "present.txt"), "content");
+        Directory.CreateDirectory(Path.Combine(_shared, "folder"));
+
+        var stats = await Client().GetStatsAsync(["present.txt", "missing.txt", "folder"]);
+
+        Assert.True(stats["present.txt"].Exists);
+        Assert.Equal(7, stats["present.txt"].Size);
+        Assert.False(stats["missing.txt"].Exists);
+        Assert.True(stats["folder"].Exists);
+        Assert.True(stats["folder"].IsDirectory);
+    }
+    [Fact]
     public async Task Upload_Then_Download_PreservesContent()
     {
         var srcDir = Path.Combine(Path.GetTempPath(), "lc_src_" + Guid.NewGuid().ToString("N"));

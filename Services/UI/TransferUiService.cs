@@ -21,6 +21,7 @@ internal interface ITransferUiHost
     void SetTransferProgressWindow(double progressPercent, string detailText);
     void SetTransferTrayTooltip(string text);
     Task RecoverFromTransferStallAsync();
+    void SetTransferCurrentItem(string text);
 }
 
 internal sealed class TransferUiService
@@ -89,6 +90,15 @@ internal sealed class TransferUiService
         RenderTransferUi();
     }
 
+    public void SetCurrentItem(string text)
+    {
+        lock (_transferUiLock)
+        {
+            if (_transferUiState != null)
+                _transferUiState.CurrentItem = text;
+        }
+        _host.SetTransferCurrentItem(text);
+    }
     public void ReportTransferUi(bool receiving, long doneBytes, long totalBytes)
     {
         lock (_transferUiLock)
@@ -247,7 +257,7 @@ internal sealed class TransferUiService
                 : 0;
             var stalledSeconds = Math.Max(0, (int)Math.Floor((now - state.LastByteAt).TotalSeconds));
             var isStalled = !state.IsCompleted && !state.IsTerminal && state.DoneBytes < state.TotalBytes && stalledSeconds >= 10;
-            var directionText = state.Receiving ? L["st.receiving"] : L["st.sending"];
+            var directionText = state.Receiving ? L["verb.receiving"] : L["verb.sending"];
             var percentText = $"{FormatPercent(pct)}%";
 
             var statusText = directionText;
@@ -282,7 +292,8 @@ internal sealed class TransferUiService
                 var etaSeconds = speed > 0 ? remainingBytes / speed : 0;
                 var etaStr = FormatEta(etaSeconds);
                 var etaPart = string.IsNullOrEmpty(etaStr) ? "" : $"  ETA {etaStr}";
-                statusText = $"{directionText} {FormatTransferSize(state.DoneBytes)} / {FormatTransferSize(state.TotalBytes)} ({percentText}){etaPart}  —  {FormatTransferSpeed(speed)}";
+                var currentPrefix = string.IsNullOrWhiteSpace(state.CurrentItem) ? directionText : state.CurrentItem;
+                statusText = $"{currentPrefix}  {FormatTransferSize(state.DoneBytes)} / {FormatTransferSize(state.TotalBytes)} ({percentText}){etaPart}  —  {FormatTransferSpeed(speed)}";
                 detailText = FormatTransferSpeed(speed);
                 brush = _transferPulseOn ? TransferActiveBrushA : TransferActiveBrushB;
             }
@@ -386,6 +397,7 @@ internal sealed class TransferUiService
         }
 
         public bool Receiving { get; }
+        public string CurrentItem { get; set; } = "";
         public long DoneBytes { get; set; }
         public long TotalBytes { get; set; }
         public DateTimeOffset StartedAt { get; }

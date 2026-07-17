@@ -52,17 +52,20 @@ public partial class MainWindow : Window, IConnectionUiHost, ITransferUiHost
 
     private int _isUploading;    // Feature 2: bidireccional — separado de downloading
     private int _isDownloading;
+    private int _isPreparingFolder;
     // U4+Q1: usar Volatile.Read — _isUploading y _isDownloading son escritos desde hilos distintos
-    private int _isTransferring => (Volatile.Read(ref _isUploading) | Volatile.Read(ref _isDownloading));
+    private int _isTransferring => (Volatile.Read(ref _isUploading) | Volatile.Read(ref _isDownloading) | Volatile.Read(ref _isPreparingFolder));
     private CancellationTokenSource _uploadCts = new();
     private CancellationTokenSource _downloadCts = new();
     private readonly SemaphoreSlim _pauseSemaphore = new(1, 1); // Feature 1: pausa
     private int _isPaused; // 0=no, 1=pausado
 
-    // Feature 13: límite de transferencias paralelas (configurable 1-8, por defecto 4)
-    private int _maxParallel = 4;
-    private SemaphoreSlim _transferSemaphore = new(4, 4);
+    // Una conexión por lote es compatible con PCs lentos y versiones anteriores.
+    private const int AutomaticFileConcurrency = 1;
+    private int _maxParallel = AutomaticFileConcurrency;
+    private SemaphoreSlim _transferSemaphore = new(AutomaticFileConcurrency, AutomaticFileConcurrency);
     private readonly object _semLock = new(); // Q5: protege swap atómico de _transferSemaphore
+    private LanClient.RemoteCapabilities? _remoteCapabilities;
 
     private readonly BulkObservableCollection<FileEntry> _localItems = new();
     private List<FileEntry> _localItemsAll = new(); // Feature 9: filtro
@@ -81,8 +84,9 @@ public partial class MainWindow : Window, IConnectionUiHost, ITransferUiHost
     // F3: historial de textos recibidos desde peers
     private readonly System.Collections.ObjectModel.ObservableCollection<ChatMessage> _chatMessages = new();
     private ChatWindow? _chatWindow;
-    private string? _lastTextSenderIp;
-    private int _lastTextSenderPort = NetworkValidation.DefaultPort;
+    private const int MaxChatHistoryMessages = 500;
+    private string? _chatTargetIp;
+    private int _chatTargetPort = NetworkValidation.DefaultPort;
     private bool _sortSmallestFirst = false; // F7: enviar archivos pequenos primero
     private const int SparklineLen = 10;
 
@@ -130,7 +134,7 @@ public partial class MainWindow : Window, IConnectionUiHost, ITransferUiHost
 
     private static readonly string QueuePath = Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-        "LanCopy", "queue.json"); // Feature 3: cola persistente
+        "LanCopy", "queue.json");
 
     // Cached brushes — evita SolidColorBrush.Parse en cada SetConnStatus (#11)
     private static readonly SolidColorBrush BrushConnected = SolidColorBrush.Parse("#28A745");
@@ -325,6 +329,10 @@ public partial class MainWindow : Window, IConnectionUiHost, ITransferUiHost
 
         await LoadSettingsAsync();
 
+        // Las versiones anteriores podían dejar una cola en disco. Nunca se reanuda sola.
+        ClearQueue();
+        UpdateQueuePanel(0);
+
         // Título con versión: gestionar en código porque {l:Tr} es un Observable binding
         // que sobreescribiría cualquier asignación directa a Title. Suscribirse a LanguageChanged
         // para actualizar también cuando el usuario cambia el idioma.
@@ -390,10 +398,10 @@ public partial class MainWindow : Window, IConnectionUiHost, ITransferUiHost
             };
         }
 
-        // No bloquear primer render: refresco local y cola pendiente arrancan sin bloquear Opened.
+        // El arranque nunca reanuda transferencias: primero deben completarse conexión y autorizaciones.
         RefreshFavoritesCombo();
         _ = ProcessLaunchArgsAsync();
-        _ = CheckPendingQueueAsync();
+
         }
         catch (Exception ex) { Log.Warn("ui", "window-opened-unhandled", new { error = ex.Message }); }
     }

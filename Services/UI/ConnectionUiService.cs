@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Net.NetworkInformation;
 using System.Threading;
 using System.Threading.Tasks;
 using Avalonia.Media;
@@ -50,6 +51,11 @@ internal sealed class ConnectionUiService
     private DispatcherTimer? _connectionWatchdogTimer;
     private int _isConnectionProbeRunning;
     private int _isReconnectInProgress;
+    private int _lastReconnectSucceeded;
+    private int _consecutiveProbeFailures;
+    private int _networkRecoveryScheduled;
+    private int _networkHandlersAttached;
+    private long _outageStartedUtcTicks;
 
     public ConnectionUiService(IConnectionUiHost host)
     {
@@ -62,6 +68,11 @@ internal sealed class ConnectionUiService
         _connectionWatchdogTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(4) };
         _connectionWatchdogTimer.Tick += ConnectionWatchdog_Tick;
         _connectionWatchdogTimer.Start();
+        if (Interlocked.Exchange(ref _networkHandlersAttached, 1) == 0)
+        {
+            NetworkChange.NetworkAvailabilityChanged += OnNetworkAvailabilityChanged;
+            NetworkChange.NetworkAddressChanged += OnNetworkAddressChanged;
+        }
     }
 
     public void StopConnectionWatchdog()
@@ -70,6 +81,12 @@ internal sealed class ConnectionUiService
         _connectionWatchdogTimer.Stop();
         _connectionWatchdogTimer.Tick -= ConnectionWatchdog_Tick;
         _connectionWatchdogTimer = null;
+        Interlocked.Exchange(ref _consecutiveProbeFailures, 0);
+        if (Interlocked.Exchange(ref _networkHandlersAttached, 0) == 1)
+        {
+            NetworkChange.NetworkAvailabilityChanged -= OnNetworkAvailabilityChanged;
+            NetworkChange.NetworkAddressChanged -= OnNetworkAddressChanged;
+        }
     }
 
     public async Task<bool> IsConnectedAsync(CancellationToken ct = default)
@@ -93,6 +110,7 @@ internal sealed class ConnectionUiService
             connectCts.CancelAfter(TimeSpan.FromSeconds(15));
             var entries = await newClient.ListAsync(_host.RemotePath, connectCts.Token);
             _host.SetRemoteEntries(entries);
+            MarkRecovered("connect");
             _host.SetConnectionStatus(L["conn.connectedWord"], BrushConnected);
             _host.SetConnectButtonState(isConnected: true, isBusy: false);
             _host.SetRemoteCreateFolderEnabled(isEnabled: true);
@@ -123,6 +141,7 @@ internal sealed class ConnectionUiService
                     fallbackCts.CancelAfter(TimeSpan.FromSeconds(15));
                     var entries = await newClient.ListAsync("", fallbackCts.Token);
                     _host.SetRemoteEntries(entries);
+                    MarkRecovered("connect-root-fallback");
                     _host.SetConnectionStatus(L["conn.connectedWord"], BrushConnected);
                     _host.SetConnectButtonState(isConnected: true, isBusy: false);
                     _host.SetRemoteCreateFolderEnabled(isEnabled: true);
@@ -159,6 +178,9 @@ internal sealed class ConnectionUiService
 
     public async Task DisconnectAsync(bool silent = false, bool notifyPeer = false, CancellationToken ct = default)
     {
+        Interlocked.Exchange(ref _outageStartedUtcTicks, 0);
+        Interlocked.Exchange(ref _consecutiveProbeFailures, 0);
+        Interlocked.Exchange(ref _lastReconnectSucceeded, 0);
         _host.SetConnectButtonState(isConnected: true, isBusy: true);
         if (notifyPeer) await TrySendDisconnectNoticeAsync(ct);
         _host.CancelUploadTransfers();
@@ -220,17 +242,16 @@ internal sealed class ConnectionUiService
         if (Interlocked.CompareExchange(ref _isReconnectInProgress, 1, 0) != 0)
             return await WaitReconnectWindowAsync(ct);
 
+        Interlocked.Exchange(ref _lastReconnectSucceeded, 0);
+        MarkOutage("reconnect-requested");
         _host.SetReconnectInProgress(true);
         _host.SetConnectionStatus(L["conn.reconnecting"], BrushConnecting);
+        _host.SetConnectButtonState(isConnected: false, isBusy: true);
         var retryPolicy = Policy
             .Handle<Exception>(ex => ex is not OperationCanceledException)
             .WaitAndRetryAsync(
-                retryCount: 3,
-                sleepDurationProvider: attempt =>
-                {
-                    var jitter = Random.Shared.Next(150, 550);
-                    return TimeSpan.FromMilliseconds(Math.Min(5000, (int)(Math.Pow(2, attempt) * 350) + jitter));
-                },
+                retryCount: ConnectionRecoveryPolicy.ReconnectRetryCount,
+                sleepDurationProvider: ConnectionRecoveryPolicy.GetReconnectDelay,
                 onRetryAsync: (ex, _, attempt, _) =>
                 {
                     _host.SetStatus(L.Format("st.reconnecting", attempt));
@@ -257,6 +278,9 @@ internal sealed class ConnectionUiService
                 }
             }, ct);
 
+            Interlocked.Exchange(ref _consecutiveProbeFailures, 0);
+            Interlocked.Exchange(ref _lastReconnectSucceeded, 1);
+            MarkRecovered("reconnect");
             _host.SetConnectionStatus(L["conn.reconnectedWord"], BrushConnected);
             _host.SetConnectButtonState(isConnected: true, isBusy: false);
             _host.SetRemoteCreateFolderEnabled(isEnabled: true);
@@ -269,12 +293,12 @@ internal sealed class ConnectionUiService
         }
         catch (Exception ex)
         {
-            Log.Warn("conn", "reconnect-failed", new { ip, port, error = ex.Message });
+            Log.Warn("conn", "reconnect-failed", new { ip, port, error = ex.ToString() });
+            Interlocked.Exchange(ref _lastReconnectSucceeded, 0);
             _host.SetConnectionStatus(L["conn.disconnectedWord"], BrushError);
             _host.SetConnectButtonState(isConnected: false, isBusy: false);
             _host.SetRemoteCreateFolderEnabled(isEnabled: false);
             _host.SetStatus(L["st.reconnectFailed"]);
-            await _host.DisposeClientAsync(ct);
             return false;
         }
         finally
@@ -304,15 +328,23 @@ internal sealed class ConnectionUiService
             var snap = await _host.GetClientAsync();
             if (snap == null) return;
 
-            using var probeCts = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+            using var probeCts = new CancellationTokenSource(ConnectionRecoveryPolicy.ProbeTimeout);
             _ = await snap.GetHealthAsync(probeCts.Token);
+            Interlocked.Exchange(ref _consecutiveProbeFailures, 0);
         }
         catch (Exception ex)
         {
-            Log.Debug("conn", "watchdog-health-probe-failed", new { error = ex.Message });
             if (_host.IsWindowClosing || _host.IsTransferInProgress) return;
-            await DisconnectAsync(silent: true);
-            _host.SetStatus(L["st.disconnected"]);
+            MarkOutage("health-probe", ex);
+            var failures = Interlocked.Increment(ref _consecutiveProbeFailures);
+            Log.Debug("conn", "watchdog-health-probe-failed", new { failures, threshold = ConnectionRecoveryPolicy.ProbeFailureThreshold, error = ex.Message });
+            if (!ConnectionRecoveryPolicy.ShouldAttemptRecovery(failures)) return;
+
+            Interlocked.Exchange(ref _consecutiveProbeFailures, 0);
+            var ip = _host.RemoteIpText.Trim();
+            if (!int.TryParse(_host.RemotePortText.Trim(), out var port) || string.IsNullOrWhiteSpace(ip)) return;
+            _host.SetStatus(L["st.autoReconnecting"]);
+            _ = await TryReconnectAsync(ip, port, CancellationToken.None);
         }
         finally
         {
@@ -322,16 +354,64 @@ internal sealed class ConnectionUiService
 
     private async Task<bool> WaitReconnectWindowAsync(CancellationToken ct)
     {
-        const int maxChecks = 15;
+        const int maxChecks = 300; // hasta 60 s, cubre la ventana completa de reconexión
         for (int i = 0; i < maxChecks; i++)
         {
             if (ct.IsCancellationRequested) return false;
-            if (Volatile.Read(ref _isReconnectInProgress) == 0) return await IsConnectedAsync(ct);
+            if (Volatile.Read(ref _isReconnectInProgress) == 0) return Volatile.Read(ref _lastReconnectSucceeded) == 1;
             try { await Task.Delay(200, ct); }
             catch (OperationCanceledException) { return false; }
         }
 
-        return await IsConnectedAsync(ct);
+        return Volatile.Read(ref _lastReconnectSucceeded) == 1;
+    }
+
+    private void OnNetworkAvailabilityChanged(object? sender, NetworkAvailabilityEventArgs e)
+    {
+        if (!e.IsAvailable) { MarkOutage("network-unavailable"); return; }
+        ScheduleNetworkRecovery("network-available");
+    }
+
+    private void OnNetworkAddressChanged(object? sender, EventArgs e) => ScheduleNetworkRecovery("network-address-changed");
+
+    private void ScheduleNetworkRecovery(string reason)
+    {
+        if (_host.IsWindowClosing || Interlocked.CompareExchange(ref _networkRecoveryScheduled, 1, 0) != 0) return;
+        Dispatcher.UIThread.Post(async () =>
+        {
+            try
+            {
+                await Task.Delay(1500);
+                if (_host.IsWindowClosing || _host.IsTransferInProgress || await _host.GetClientAsync() == null) return;
+                var ip = _host.RemoteIpText.Trim();
+                if (!int.TryParse(_host.RemotePortText.Trim(), out var port) || string.IsNullOrWhiteSpace(ip)) return;
+                Log.Info("conn", "network-change-recovery", new { reason, ip, port });
+                _ = await TryReconnectAsync(ip, port, CancellationToken.None);
+            }
+            catch (Exception ex) { Log.Debug("conn", "network-change-recovery-failed", new { reason, error = ex.Message }); }
+            finally { Interlocked.Exchange(ref _networkRecoveryScheduled, 0); }
+        });
+    }
+
+    private void MarkOutage(string reason, Exception? ex = null)
+    {
+        var now = DateTimeOffset.UtcNow.UtcTicks;
+        if (Interlocked.CompareExchange(ref _outageStartedUtcTicks, now, 0) == 0)
+            Log.Warn("conn", "outage-started", new { reason, error = ex?.Message });
+    }
+
+    private TimeSpan GetOutageDuration()
+    {
+        var started = Interlocked.Read(ref _outageStartedUtcTicks);
+        return started == 0 ? TimeSpan.Zero : TimeSpan.FromTicks(Math.Max(0, DateTimeOffset.UtcNow.UtcTicks - started));
+    }
+
+    private void MarkRecovered(string reason)
+    {
+        var started = Interlocked.Exchange(ref _outageStartedUtcTicks, 0);
+        if (started == 0) return;
+        var durationMs = Math.Max(0, TimeSpan.FromTicks(DateTimeOffset.UtcNow.UtcTicks - started).TotalMilliseconds);
+        Log.Info("conn", "outage-recovered", new { reason, durationMs });
     }
 }
 

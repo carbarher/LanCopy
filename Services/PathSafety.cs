@@ -48,14 +48,14 @@ public static class PathSafety
     /// </summary>
     public static string MakeUnique(string dest)
     {
-        if (!File.Exists(dest)) return dest;
+        if (!File.Exists(dest) && !Directory.Exists(dest)) return dest;
         var dir = Path.GetDirectoryName(dest) ?? "";
         var name = Path.GetFileNameWithoutExtension(dest);
         var ext = Path.GetExtension(dest);
         for (int n = 2; n < 1000; n++)
         {
             var candidate = Path.Combine(dir, $"{name} ({n}){ext}");
-            if (!File.Exists(candidate)) return candidate;
+            if (!File.Exists(candidate) && !Directory.Exists(candidate)) return candidate;
         }
         // Fallback: GUID para evitar sobrescritura silenciosa.
         return Path.Combine(dir, $"{name} ({Guid.NewGuid():N}){ext}");

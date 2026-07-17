@@ -24,7 +24,7 @@ public static class CommandAuthorizer
     {
         return cmd switch
         {
-            "list" or "search" or "stat" or "caps" or "health" => permissions.Browse,
+            "list" or "list_recursive_stream" or "search" or "stat" or "stat_many" or "caps" or "health" => permissions.Browse,
             "get" or "get_chunk" or "sha1" or "sha256" or "hash" => permissions.Download,
             "put" or "put_resume" or "put_delta_blocks" => permissions.Upload,
             "rename" or "mkdir" => permissions.Modify,

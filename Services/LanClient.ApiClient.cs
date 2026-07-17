@@ -38,6 +38,41 @@ public sealed partial class LanClient
         return entriesEl.Deserialize<List<FileEntry>>()!;
     }
 
+    public sealed record RecursiveListResult(List<FileEntry> Entries, bool Truncated);
+
+    /// <summary>Reads a recursive directory listing in bounded JSON chunks.</summary>
+    public async Task<RecursiveListResult> ListRecursiveStreamAsync(string path, CancellationToken ct = default)
+    {
+        var (tcp, stream) = await OpenAsync(ct);
+        using var _ = tcp;
+        await Protocol.WriteLineAsync(stream, JsonSerializer.Serialize(new { cmd = "list_recursive_stream", path }), ct);
+
+        var header = JsonSerializer.Deserialize<JsonElement>(await Protocol.ReadLineAsync(stream, ct));
+        EnsureOk(header);
+        var entries = new List<FileEntry>();
+        while (true)
+        {
+            var response = JsonSerializer.Deserialize<JsonElement>(await Protocol.ReadLineAsync(stream, ct));
+            var status = response.TryGetProperty("status", out var statusEl) ? statusEl.GetString() : null;
+            if (string.Equals(status, "chunk", StringComparison.Ordinal))
+            {
+                if (response.TryGetProperty("entries", out var chunkEl))
+                {
+                    var chunk = chunkEl.Deserialize<List<FileEntry>>();
+                    if (chunk != null) entries.AddRange(chunk);
+                }
+                continue;
+            }
+            if (string.Equals(status, "done", StringComparison.Ordinal))
+            {
+                var truncated = response.TryGetProperty("truncated", out var truncatedEl)
+                    && truncatedEl.ValueKind == JsonValueKind.True;
+                return new RecursiveListResult(entries, truncated);
+            }
+            EnsureOk(response);
+            throw new InvalidDataException("svc.invalidListStream");
+        }
+    }
     // -- CHAT TEXT --
 
     public async Task SendTextAsync(string text, CancellationToken ct = default)
@@ -161,6 +196,52 @@ public sealed partial class LanClient
         return new RemoteStat(true, isDirectory, size, ticks);
     }
 
+    public async Task<IReadOnlyDictionary<string, RemoteStat>> GetStatsAsync(IEnumerable<string> remotePaths, CancellationToken ct = default)
+    {
+        var paths = remotePaths.Where(path => !string.IsNullOrWhiteSpace(path)).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+        if (paths.Length > 256) throw new ArgumentOutOfRangeException(nameof(remotePaths), "A maximum of 256 paths can be checked at once.");
+        if (paths.Length == 0) return new Dictionary<string, RemoteStat>(StringComparer.OrdinalIgnoreCase);
+
+        var (tcp, stream) = await OpenAsync(ct);
+        using var _ = tcp;
+        await Protocol.WriteLineAsync(stream, JsonSerializer.Serialize(new { cmd = "stat_many", paths }), ct);
+        var line = await Protocol.ReadLineAsync(stream, ct);
+        var response = JsonSerializer.Deserialize<JsonElement>(line);
+        EnsureOk(response);
+
+        var results = new Dictionary<string, RemoteStat>(StringComparer.OrdinalIgnoreCase);
+        if (!response.TryGetProperty("results", out var items) || items.ValueKind != JsonValueKind.Array) return results;
+        foreach (var item in items.EnumerateArray())
+        {
+            if (!item.TryGetProperty("path", out var pathEl)) continue;
+            var path = pathEl.GetString();
+            if (string.IsNullOrWhiteSpace(path)) continue;
+            var exists = item.TryGetProperty("exists", out var existsEl) && existsEl.ValueKind == JsonValueKind.True;
+            var directory = item.TryGetProperty("isDirectory", out var directoryEl) && directoryEl.ValueKind == JsonValueKind.True;
+            var size = item.TryGetProperty("size", out var sizeEl) && sizeEl.TryGetInt64(out var itemSize) ? itemSize : 0L;
+            var ticks = item.TryGetProperty("lastWriteUtcTicks", out var ticksEl) && ticksEl.TryGetInt64(out var itemTicks) ? itemTicks : 0L;
+            results[path] = new RemoteStat(exists, directory, size, ticks);
+        }
+        return results;
+    }
+    public async Task<RemoteCapabilities> GetCapabilitiesAsync(CancellationToken ct = default)
+    {
+        var (tcp, stream) = await OpenAsync(ct);
+        using var _ = tcp;
+        await Protocol.WriteLineAsync(stream, JsonSerializer.Serialize(new { cmd = "caps" }), ct);
+        var line = await Protocol.ReadLineAsync(stream, ct);
+        var resp = JsonSerializer.Deserialize<JsonElement>(line);
+        EnsureOk(resp);
+        bool? ReadBool(string name) => resp.TryGetProperty(name, out var el) && el.ValueKind is JsonValueKind.True or JsonValueKind.False ? el.GetBoolean() : null;
+        var version = resp.TryGetProperty("version", out var versionEl) && versionEl.TryGetInt32(out var advertisedVersion)
+            ? advertisedVersion : Protocol.MinSupportedVersion;
+        return new RemoteCapabilities(
+            version,
+            ReadBool("downloadAllowed"),
+            ReadBool("uploadAllowed"),
+            ReadBool("modifyAllowed"),
+            ReadBool("deleteAllowed"));
+    }
     // ── HEALTH ───────────────────────────────────────────────────────────────────
     public async Task<RemoteHealth?> GetHealthAsync(CancellationToken ct = default)
     {

@@ -60,7 +60,7 @@
                               IsCheckedChanged="ChkSafeMode_Changed"
                               ToolTip.Tip="{l:Tr tip.safeMode}"/>
                     <Button x:Name="btnDisableSafeModeTemp" Content="{l:Tr btn.safeModeTemp}" Click="DisableSafeModeTemporarily_Click"
-                            Background="{DynamicResource InputBg}" Foreground="#FF8A80" Padding="8,3" FontSize="12"
+                            IsVisible="False" Background="{DynamicResource InputBg}" Foreground="#FF8A80" Padding="8,3" FontSize="12"
                             ToolTip.Tip="{l:Tr tip.safeModeTemp}"/>
                     <TextBlock x:Name="txtServerModeBadge" Text="" Foreground="#28A745" FontWeight="SemiBold" VerticalAlignment="Center" FontSize="12" Margin="8,0,0,0" ToolTip.Tip="{l:Tr security.safeSummary}"/>
                     <Button x:Name="btnAdvancedToggle" Content="{l:Tr btn.advanced.show}" Click="ToggleAdvanced_Click"
@@ -161,12 +161,6 @@
                     <Slider x:Name="sldBandwidth" Width="110" Minimum="0" Maximum="12" Value="0" VerticalAlignment="Center"
                             ValueChanged="Bandwidth_Changed" ToolTip.Tip="{l:Tr tip.bw}"/>
                     <TextBlock x:Name="txtBwValue" Text="{l:Tr bw.unlimited}" Foreground="{DynamicResource MutedFg}" VerticalAlignment="Center" FontSize="12" MinWidth="60"/>
-                    <Separator Width="1" Background="{DynamicResource DividerBg}" Margin="8,0" VerticalAlignment="Stretch"/>
-                    <TextBlock Text="⚡" VerticalAlignment="Center" FontSize="12" ToolTip.Tip="{l:Tr label.parallel}"/>
-                    <Slider x:Name="sldParallel" Width="80" Minimum="1" Maximum="8" Value="4" VerticalAlignment="Center"
-                            IsSnapToTickEnabled="True" TickFrequency="1"
-                            ValueChanged="Parallel_Changed" ToolTip.Tip="{l:Tr tip.parallel}"/>
-                    <TextBlock x:Name="txtParallelValue" Text="4" Foreground="{DynamicResource MutedFg}" VerticalAlignment="Center" FontSize="12" MinWidth="14"/>
                 </StackPanel>
             </WrapPanel>
             </StackPanel>

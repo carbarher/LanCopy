@@ -39,6 +39,8 @@ internal static class TransferOptions
 
     /// <summary>Maximum number of retry passes for failed files in a transfer batch.</summary>
     public const int MaxRetryPasses = 4;
+    /// <summary>Largest batch that uses a remote stat for every destination.</summary>
+    public const int MaxPerFileOverwriteProbe = 64;
 
     /// <summary>Minimum interval (ms) between transfer progress reports.</summary>
     public const int TransferProgressIntervalMs = 200;

@@ -69,39 +69,43 @@ public partial class MainWindow
         try { if (File.Exists(QueuePath)) File.Delete(QueuePath); }
         catch (Exception ex) { Log.Warn("queue", "clear-failed", new { error = ex.Message }); }
     }
+    // Las colas persistentes causaban reintentos sorpresa al abrir la aplicación.
+    // Se conserva este punto de extensión para las rutas antiguas, pero se descarta siempre.
     private void SaveQueue(List<(FileEntry entry, string destPath)> files, bool isUpload, string ip, int port, int attempt = 0)
     {
-        try
-        {
-            Directory.CreateDirectory(Path.GetDirectoryName(QueuePath)!);
-            var uniquePairs = DeduplicateQueuePairs(files.Select(f => (f.entry.FullPath, f.destPath)));
-            if (uniquePairs.Count == 0)
-            {
-                ClearQueue();
-                UpdateQueuePanel(0);
-                return;
-            }
-            var item = new Models.QueueItem(
-                uniquePairs.Select(x => x.Path).ToArray(),
-                uniquePairs.Select(x => x.Dest).ToArray(),
-                isUpload, ip, port, DateTime.UtcNow.ToString("O"), attempt);
-
-            // M1-FIX: Usar JsonStore.WriteRawAtomic (GUID-temp) en lugar de temp fijo ".tmp"
-            // para evitar colision entre llamadas concurrentes a SaveQueue.
-            var json = System.Text.Json.JsonSerializer.Serialize(item);
-            if (!Services.JsonStore.WriteRawAtomic(QueuePath, json))
-                throw new IOException("queue write failed");
-
-            // F3: actualizar panel visual de cola
-            UpdateQueuePanel(uniquePairs.Count, uniquePairs.Select(x => Path.GetFileName(x.Path)));
-        }
-        catch (Exception ex)
-        {
-            Log.Warn("queue", "save-failed", new { error = ex.Message, isUpload, ip, port, attempt, count = files.Count });
-        }
+        ClearQueue();
+        UpdateQueuePanel(0);
+        Log.Debug("queue", "persistence-disabled", new { isUpload, ip, port, attempt, count = files.Count });
     }
 
+    private async Task<bool> WaitForQueuedTransferAuthorizationAsync(string ip, int port, bool isUpload, CancellationToken ct)
+    {
+        const int maxAttempts = 40;
+        for (var attempt = 1; attempt <= maxAttempts; attempt++)
+        {
+            ct.ThrowIfCancellationRequested();
+            try
+            {
+                using var client = MakeClient(ip, port);
+                var caps = await client.GetCapabilitiesAsync(ct);
+                var allowed = isUpload ? caps.UploadAllowed : caps.DownloadAllowed;
+                if (allowed == true)
+                {
+                    Log.Info("queue", "remote-permission-granted", new { ip, port, isUpload, attempt });
+                    return true;
+                }
+                Log.Info("queue", "awaiting-remote-permission", new { ip, port, isUpload, attempt, advertised = allowed.HasValue });
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                Log.Debug("queue", "remote-permission-check-failed", new { ip, port, isUpload, attempt, error = ex.Message });
+            }
 
+            SetStatus(L.Format("st.waitingPeerPermission", $"{ip}:{port}"));
+            await Task.Delay(TimeSpan.FromSeconds(3), ct);
+        }
+        return false;
+    }
     private async Task CheckPendingQueueAsync()
     {
         if (!File.Exists(QueuePath)) return;
@@ -155,9 +159,6 @@ public partial class MainWindow
 
             if (result == QueueResumeDialog.QueueResumeAction.Discard) { ClearQueue(); return; }
 
-            // actualizar intento antes de relanzar
-            SaveQueue(valid.Select(v => (new FileEntry { Name = Path.GetFileName(v.Path), FullPath = v.Path }, v.Dest)).ToList(), item.IsUpload, item.RemoteIp, item.RemotePort, item.Attempt + 1);
-
             this.FindControl<TextBox>("txtRemoteIp")!.Text = item.RemoteIp;
             this.FindControl<TextBox>("txtRemotePort")!.Text = item.RemotePort.ToString();
             await ConnectAsync(item.RemoteIp, item.RemotePort);
@@ -167,6 +168,14 @@ public partial class MainWindow
                 return;
             }
 
+            if (!await WaitForQueuedTransferAuthorizationAsync(item.RemoteIp, item.RemotePort, item.IsUpload, CancellationToken.None))
+            {
+                SetStatusAlert(L["svc.accessDenied"]);
+                return;
+            }
+
+            // Count an attempt only after the remote PC has approved the transfer.
+            SaveQueue(valid.Select(v => (new FileEntry { Name = Path.GetFileName(v.Path), FullPath = v.Path }, v.Dest)).ToList(), item.IsUpload, item.RemoteIp, item.RemotePort, item.Attempt + 1);
             var queuedFiles = valid.Select(v =>
             {
                 long size = 0;
@@ -192,7 +201,7 @@ public partial class MainWindow
             var startupSkipSet = await CheckOverwriteAsync(
                 queuedFiles,
                 item.IsUpload,
-                forceRemoteProbe: item.IsUpload,
+                forceRemoteProbe: false,
                 forcedAction: forceSkipSameSize ? ConfirmDialog.OverwriteAction.SkipSameSize : null);
             if (startupSkipSet == null)
             {
@@ -490,9 +499,9 @@ public partial class MainWindow
 
     private void SetStatus(string text)
     {
-        _progressWin?.SetLine(text);
         void DoSet()
         {
+            _progressWin?.SetLine(text);
             StopStatusBlink();
             if (_txtStatus != null)
             {
@@ -503,7 +512,6 @@ public partial class MainWindow
         if (Dispatcher.UIThread.CheckAccess()) DoSet();
         else Dispatcher.UIThread.Post(DoSet);
     }
-
     private static readonly SolidColorBrush AlertBrushVivid = SolidColorBrush.Parse("#FF3B30");
     private static readonly SolidColorBrush AlertBrushDim   = SolidColorBrush.Parse("#7A201C");
 

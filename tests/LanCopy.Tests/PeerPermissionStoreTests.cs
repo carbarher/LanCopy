@@ -6,13 +6,13 @@ namespace LanCopy.Tests;
 public sealed class PeerPermissionStoreTests
 {
     [Fact]
-    public void DefaultPermissions_AreSafe()
+    public void DefaultPermissions_AllowNormalTransfers_AndBlockSensitiveOperations()
     {
         var store = new PeerPermissionStore(Path.Combine(Path.GetTempPath(), "LanCopyPerms_" + Guid.NewGuid().ToString("N") + ".json"));
         var p = store.Get("192.168.1.50");
         Assert.True(p.Browse);
         Assert.True(p.Download);
-        Assert.False(p.Upload);
+        Assert.True(p.Upload);
         Assert.False(p.Modify);
         Assert.False(p.Delete);
         Assert.False(p.Sync);
@@ -115,7 +115,7 @@ public sealed class PeerPermissionStoreTests
             var p = store.Get("192.168.1.200");
             Assert.True(p.Browse);
             Assert.True(p.Download);
-            Assert.False(p.Upload);
+            Assert.True(p.Upload);
             Assert.False(p.Delete);
         }
         finally
@@ -145,7 +145,7 @@ public sealed class PeerPermissionStoreTests
             var p = store.Get("192.168.1.201");
             Assert.True(p.Browse);
             Assert.True(p.Download);
-            Assert.False(p.Upload);
+            Assert.True(p.Upload);
             Assert.False(p.Modify);
             Assert.False(p.Delete);
             Assert.False(p.Sync);
@@ -176,9 +176,39 @@ public sealed class PeerPermissionStoreTests
             var p = store.Get("192.168.1.202");
             Assert.True(p.Browse);
             Assert.True(p.Download);
-            Assert.False(p.Upload);
+            Assert.True(p.Upload);
             Assert.False(p.Delete);
             Assert.False(p.Power);
+        }
+        finally
+        {
+            if (File.Exists(path)) File.Delete(path);
+        }
+    }
+    [Fact]
+    public void SavedSnapshot_ReloadsWithAllPermissions()
+    {
+        var path = Path.Combine(Path.GetTempPath(), "LanCopyPerms_" + Guid.NewGuid().ToString("N") + ".json");
+        try
+        {
+            var initial = new PeerPermissionStore(path);
+            initial.Set("192.168.1.203", new PeerPermissionStore.Permissions(
+                Browse: true,
+                Download: false,
+                Upload: true,
+                Modify: true,
+                Delete: true,
+                Sync: true,
+                Power: true));
+
+            var reloaded = new PeerPermissionStore(path).Get("192.168.1.203");
+            Assert.True(reloaded.Browse);
+            Assert.False(reloaded.Download);
+            Assert.True(reloaded.Upload);
+            Assert.True(reloaded.Modify);
+            Assert.True(reloaded.Delete);
+            Assert.True(reloaded.Sync);
+            Assert.True(reloaded.Power);
         }
         finally
         {

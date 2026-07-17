@@ -60,7 +60,7 @@ public sealed partial class FileServer
             {
                 RecurseSubdirectories = true,
                 IgnoreInaccessible = true,
-                AttributesToSkip = FileAttributes.ReparsePoint | FileAttributes.Hidden | FileAttributes.System,
+                AttributesToSkip = FileAttributes.ReparsePoint,
                 ReturnSpecialDirectories = false,
             };
             foreach (var f in Directory.EnumerateFiles(root, "*", listOpts))
@@ -81,14 +81,71 @@ public sealed partial class FileServer
         }
         catch (Exception ex)
         {
-            // Q5: loguear en lugar de swallow silencioso — el cliente recibe lista parcial con status:ok
-            Log.Warn("server", "list-recursive-error", new { error = ex.Message });
+            // No presentar una carpeta inaccesible como vacía: impide que el cliente dé un falso éxito.
+            Log.Warn("server", "list-recursive-error", new { root, error = ex.Message });
+            await Protocol.WriteErrorAsync(stream, "svc.operationFailed", ct);
+            return;
         }
+        Log.Info("server", "list-recursive-complete", new { root, files = entries.Count });
         // M2: WriteLineJsonAsync evita string UTF-16 intermedia (listas recursivas pueden tener 100K entradas)
         await Protocol.WriteLineJsonAsync(stream, new { status = "ok", entries }, ct);
     }
 
     // Feature 2: lÃ­mite de compresiÃ³n en memoria (200 MB)
+    private const int RecursiveListChunkSize = 500;
+
+    private async Task HandleListRecursiveStreamAsync(JsonElement req, Stream stream, CancellationToken ct)
+    {
+        var reqRoot = req.TryGetProperty("path", out var rootEl) ? rootEl.GetString() ?? "" : "";
+        if (!TryGuardRead(reqRoot, out var root, out var gReason))
+        {
+            await Protocol.WriteLineAsync(stream, JsonSerializer.Serialize(new { status = "error", error = gReason }), ct);
+            return;
+        }
+
+        await Protocol.WriteLineJsonAsync(stream, new { status = "ok", stream = true }, ct);
+        var chunk = new List<FileEntry>(RecursiveListChunkSize);
+        var count = 0;
+        var truncated = false;
+        try
+        {
+            var listOpts = new System.IO.EnumerationOptions
+            {
+                RecurseSubdirectories = true,
+                IgnoreInaccessible = true,
+                AttributesToSkip = FileAttributes.ReparsePoint,
+                ReturnSpecialDirectories = false,
+            };
+            foreach (var file in Directory.EnumerateFiles(root, "*", listOpts))
+            {
+                ct.ThrowIfCancellationRequested();
+                if (RestrictToShareRoot && !ShareRoot.TryResolve(file, out _, out _)) continue;
+                if (count >= MaxListRecursiveFiles) { truncated = true; break; }
+                var info = new FileInfo(file);
+                var relativePath = Path.GetRelativePath(root, file);
+                chunk.Add(new FileEntry
+                {
+                    Name = relativePath,
+                    FullPath = relativePath,
+                    Size = info.Length,
+                    LastWriteUtcTicks = info.LastWriteTimeUtc.Ticks
+                });
+                count++;
+                if (chunk.Count < RecursiveListChunkSize) continue;
+                await Protocol.WriteLineJsonAsync(stream, new { status = "chunk", entries = chunk }, ct);
+                chunk.Clear();
+            }
+            if (chunk.Count > 0)
+                await Protocol.WriteLineJsonAsync(stream, new { status = "chunk", entries = chunk }, ct);
+            Log.Info("server", "list-recursive-stream-complete", new { root, files = count, truncated });
+            await Protocol.WriteLineJsonAsync(stream, new { status = "done", truncated }, ct);
+        }
+        catch (Exception ex)
+        {
+            Log.Warn("server", "list-recursive-stream-error", new { root, error = ex.Message, files = count });
+            await Protocol.WriteErrorAsync(stream, "svc.operationFailed", ct);
+        }
+    }
     private const long MaxCompressInMemory = 200L * 1024 * 1024;
     private static bool IsLikelyIncompressibleForGet(string path, long size)
     {
@@ -240,6 +297,8 @@ public sealed partial class FileServer
             await Protocol.WriteErrorAsync(stream, "svc.badCompressedSize", ct); // P1: bytes cacheados
             return;
         }
+        var sendPreAck = req.TryGetProperty("pre_ack", out var preAckEl) && preAckEl.ValueKind == JsonValueKind.True;
+
         // Consentimiento del receptor antes de tocar el disco.
         if (ApproveIncoming is { } approve)
         {
@@ -253,9 +312,10 @@ public sealed partial class FileServer
             if (!ok)
             {
                 Log.Info("server", "put-rejected", new { ip, file = Path.GetFileName(path) });
-                // Drenar el cuerpo para que el cliente termine de escribir y reciba el ack limpio
-                // (sin esto, el cierre con bytes sin leer provoca un RST que pierde el error).
-                await Protocol.DrainAsync(stream, wireBytes, ct);
+                // El protocolo nuevo aún no ha enviado cuerpo; responder inmediatamente.
+                // Con clientes antiguos sí hay que drenar para evitar un RST.
+                if (!sendPreAck)
+                    await Protocol.DrainAsync(stream, wireBytes, ct);
                 await Protocol.WriteErrorAsync(stream, "svc.rejected", ct); // P1: bytes cacheados
                 return;
             }
@@ -278,6 +338,9 @@ public sealed partial class FileServer
         // O4: FileInfo en lugar de File.Exists()+GetLastWriteTimeUtc() separados (2 syscalls → 1 stat)
         var fiPre = new FileInfo(path);
         var mtimePreWrite = fiPre.Exists ? fiPre.LastWriteTimeUtc : DateTimeOffset.UtcNow.UtcDateTime;
+        if (sendPreAck)
+            await Protocol.WriteLineAsync(stream, JsonSerializer.Serialize(new { status = "ok", ready = true }), ct);
+
         string sha256;
         try
         {
@@ -738,6 +801,51 @@ public sealed partial class FileServer
         }
     }
 
+    // Batched metadata lookup used by overwrite checks. It intentionally exposes only
+    // the same fields as repeated stat calls, while keeping a folder preflight bounded.
+    private async Task HandleStatManyAsync(JsonElement req, Stream stream, CancellationToken ct)
+    {
+        const int maxPaths = 256;
+        if (!req.TryGetProperty("paths", out var pathsEl) || pathsEl.ValueKind != JsonValueKind.Array
+            || pathsEl.GetArrayLength() > maxPaths)
+        {
+            await WriteBadRequestAsync(stream, ct);
+            return;
+        }
+
+        var results = new List<object>();
+        try
+        {
+            foreach (var pathEl in pathsEl.EnumerateArray())
+            {
+                if (pathEl.ValueKind != JsonValueKind.String) { await WriteBadRequestAsync(stream, ct); return; }
+                var requestedPath = pathEl.GetString() ?? "";
+                if (!TryGuardRead(requestedPath, out var path, out _))
+                {
+                    results.Add(new { path = requestedPath, exists = false });
+                    continue;
+                }
+
+                if (File.Exists(path))
+                {
+                    var file = new FileInfo(path);
+                    results.Add(new { path = requestedPath, exists = true, isDirectory = false, size = file.Length, lastWriteUtcTicks = file.LastWriteTimeUtc.Ticks });
+                }
+                else if (Directory.Exists(path))
+                {
+                    var directory = new DirectoryInfo(path);
+                    results.Add(new { path = requestedPath, exists = true, isDirectory = true, size = 0L, lastWriteUtcTicks = directory.LastWriteTimeUtc.Ticks });
+                }
+                else results.Add(new { path = requestedPath, exists = false });
+            }
+            await Protocol.WriteLineAsync(stream, JsonSerializer.Serialize(new { status = "ok", results }), ct);
+        }
+        catch (Exception ex)
+        {
+            Log.Debug("server", "stat-many-handler-failed", new { error = ex.Message });
+            await Protocol.WriteErrorAsync(stream, "svc.operationFailed", ct);
+        }
+    }
     private async Task HandleStatAsync(JsonElement req, Stream stream, CancellationToken ct)
     {
         if (!TryGetStringProperty(req, "path", out var reqPath)) { await WriteBadRequestAsync(stream, ct); return; }

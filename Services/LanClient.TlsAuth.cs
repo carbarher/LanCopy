@@ -31,11 +31,14 @@ public sealed partial class LanClient
             // TOFU real: fija la huella del cert del host en el primer uso y la verifica despues.
             CertTrust.ValidationResult trustResult = CertTrust.ValidationResult.InvalidCertificate;
             var ssl = new SslStream(stream, leaveInnerStreamOpen: false);
+            using var localCertificate = FileServer.LoadLocalCertificate()
+                ?? throw new InvalidOperationException("st.certRejected");
             try
             {
                 await ssl.AuthenticateAsClientAsync(new SslClientAuthenticationOptions
                 {
                     TargetHost = _host,
+                    ClientCertificates = new X509CertificateCollection { localCertificate },
                     EnabledSslProtocols = SslProtocols.Tls12 | SslProtocols.Tls13,
                     RemoteCertificateValidationCallback = (s, c, ch, e) =>
                     {

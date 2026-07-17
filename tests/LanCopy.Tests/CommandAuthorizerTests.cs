@@ -48,7 +48,7 @@ public sealed class CommandAuthorizerTests
     {
         var trusted = CertTrust.PeerTrustLevel.Trusted;
         var safe = new PeerPermissionStore.Permissions(Browse: true, Download: true);
-        var locked = new PeerPermissionStore.Permissions(Browse: true, Download: true);
+        var locked = new PeerPermissionStore.Permissions(Browse: true, Download: true, Upload: false);
 
         Assert.True(CommandAuthorizer.IsAllowed(trusted, safe, "list"));
         Assert.False(CommandAuthorizer.IsAllowed(trusted, locked, "put"));
@@ -58,6 +58,17 @@ public sealed class CommandAuthorizerTests
         Assert.True(CommandAuthorizer.IsAllowed(trusted, locked, "text"));
     }
 
+    [Fact]
+    public void LegacyCapabilities_DoNotAssumeMutationPermissions()
+    {
+        var capabilities = new LanClient.RemoteCapabilities(
+            Version: Protocol.MinSupportedVersion,
+            DownloadAllowed: true,
+            UploadAllowed: true);
+
+        Assert.Null(capabilities.ModifyAllowed);
+        Assert.Null(capabilities.DeleteAllowed);
+    }
     [Fact]
     public void AdvancedTrustedPreset_AllowsDangerousCommandsWhenEnabled()
     {

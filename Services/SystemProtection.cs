@@ -212,6 +212,32 @@ internal static class SystemProtection
         return false;
     }
 
+    /// <summary>
+    /// Validates a write target, including a path that does not exist yet. Unlike
+    /// <see cref="IsProtectedForRemote"/>, a new child of a drive root is allowed
+    /// unless it belongs to a known protected system or personal tree.
+    /// </summary>
+    public static bool IsProtectedForRemoteWriteTarget(string? path)
+    {
+        if (string.IsNullOrWhiteSpace(path)) return true;
+        string normalized;
+        try { normalized = Path.GetFullPath(path); }
+        catch { return true; }
+        if (IsDriveRootLike(normalized)) return true;
+
+        foreach (var root in _systemRoots)
+            if (IsUnderOrEqual(normalized, root)) return true;
+        foreach (var root in _personalRoots)
+            if (IsUnderOrEqual(normalized, root)) return true;
+
+        // Attributes can only be checked when the target already exists.
+        if (File.Exists(normalized) || Directory.Exists(normalized))
+        {
+            try { return File.GetAttributes(normalized).HasFlag(FileAttributes.System); }
+            catch { return true; }
+        }
+        return false;
+    }
     private static bool IsDriveRootLike(string path)
     {
         var trimmed = path.Trim().TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);

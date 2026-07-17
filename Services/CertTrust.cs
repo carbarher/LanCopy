@@ -46,6 +46,7 @@ public static class CertTrust
         PeerTrustLevel TrustLevel);
 
     private static readonly object _lock = new();
+    private static readonly object _saveLock = new();
     private static readonly string StorePath = Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
         "LanCopy", "known_hosts.json");
@@ -107,18 +108,31 @@ public static class CertTrust
 
     private static void Save(Dictionary<string, KnownHostEntry> map)
     {
-        try
+        lock (_saveLock)
         {
-            Directory.CreateDirectory(Path.GetDirectoryName(StorePath)!);
-            // Escritura atomica: temp unico + replace. Se usa GUID en el nombre del temp para
-            // BUG-FIX-B3: evitar colision si multiples hilos guardan concurrentemente (sharing violation).
-            var tmp = StorePath + "." + Guid.NewGuid().ToString("N") + ".tmp";
-            File.WriteAllText(tmp, JsonSerializer.Serialize(map));
-            File.Move(tmp, StorePath, overwrite: true);
-        }
-        catch (Exception ex)
-        {
-            Log.Warn("cert", "save-known-hosts-failed", new { error = ex.Message });
+            string? tmp = null;
+            try
+            {
+                Directory.CreateDirectory(Path.GetDirectoryName(StorePath)!);
+                tmp = StorePath + "." + Guid.NewGuid().ToString("N") + ".tmp";
+                File.WriteAllText(tmp, JsonSerializer.Serialize(map, new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase }));
+                if (File.Exists(StorePath))
+                    File.Replace(tmp, StorePath, null, ignoreMetadataErrors: true);
+                else
+                    File.Move(tmp, StorePath);
+            }
+            catch (Exception ex)
+            {
+                Log.Warn("cert", "save-known-hosts-failed", new { path = StorePath, error = ex.Message });
+            }
+            finally
+            {
+                if (tmp != null)
+                {
+                    try { File.Delete(tmp); }
+                    catch { }
+                }
+            }
         }
     }
 
@@ -302,9 +316,27 @@ public static class CertTrust
         return $"{clean[..8]}…{clean[^8..]}";
     }
 
+    private static bool TryGetPropertyIgnoreCase(JsonElement obj, string property, out JsonElement value)
+    {
+        if (obj.TryGetProperty(property, out value))
+            return true;
+
+        foreach (var candidate in obj.EnumerateObject())
+        {
+            if (string.Equals(candidate.Name, property, StringComparison.OrdinalIgnoreCase))
+            {
+                value = candidate.Value;
+                return true;
+            }
+        }
+
+        value = default;
+        return false;
+    }
+
     private static string? ReadOptionalString(JsonElement obj, string property)
     {
-        if (!obj.TryGetProperty(property, out var el) || el.ValueKind != JsonValueKind.String)
+        if (!TryGetPropertyIgnoreCase(obj, property, out var el) || el.ValueKind != JsonValueKind.String)
             return null;
         return el.GetString();
     }
@@ -319,7 +351,7 @@ public static class CertTrust
 
     private static PeerTrustLevel ReadOptionalTrustLevel(JsonElement obj, string property)
     {
-        if (!obj.TryGetProperty(property, out var el))
+        if (!TryGetPropertyIgnoreCase(obj, property, out var el))
             return PeerTrustLevel.Paired;
         if (el.ValueKind == JsonValueKind.Number && el.TryGetInt32(out var n)
             && Enum.IsDefined(typeof(PeerTrustLevel), n))

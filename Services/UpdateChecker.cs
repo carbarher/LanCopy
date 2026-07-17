@@ -1,4 +1,8 @@
+using System.Diagnostics;
 using System.Net.Http;
+using System.Formats.Tar;
+using System.IO.Compression;
+using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -151,14 +155,15 @@ public static class UpdateChecker
                 assets.ValueKind != System.Text.Json.JsonValueKind.Array)
                 return null;
 
-            // Determinar el sufijo esperado según la plataforma actual.
-            var suffix = GetPlatformAssetSuffix();
-            if (suffix is null) return null;
+            var platform = GetCurrentPlatform();
+            if (platform is null) return null;
+            var expectedName = GetPlatformAssetName(platform, RuntimeInformation.ProcessArchitecture);
+            if (expectedName is null) return null;
 
             foreach (var asset in assets.EnumerateArray())
             {
                 var name = asset.TryGetProperty("name", out var n) ? (n.GetString() ?? "") : "";
-                if (name.EndsWith(suffix, StringComparison.OrdinalIgnoreCase))
+                if (string.Equals(name, expectedName, StringComparison.OrdinalIgnoreCase))
                 {
                     var downloadUrl = asset.TryGetProperty("browser_download_url", out var d)
                         ? d.GetString()
@@ -168,7 +173,7 @@ public static class UpdateChecker
                 }
             }
 
-            Log.Debug("update", "no-matching-asset", new { suffix });
+            Log.Debug("update", "no-matching-asset", new { expectedName });
             return null;
             }
             finally
@@ -281,15 +286,9 @@ public static class UpdateChecker
     public static bool ApplyUpdate(string downloadedPath)
     {
         var currentExe = Environment.ProcessPath;
-        if (string.IsNullOrEmpty(currentExe))
+        if (string.IsNullOrEmpty(currentExe) || !File.Exists(downloadedPath))
         {
-            Log.Debug("update", "apply-failed", new { error = "Cannot determine current executable path" });
-            return false;
-        }
-
-        if (!File.Exists(downloadedPath))
-        {
-            Log.Debug("update", "apply-failed", new { error = "Downloaded file not found", downloadedPath });
+            Log.Debug("update", "apply-failed", new { error = "Executable or downloaded update not found", currentExe, downloadedPath });
             return false;
         }
 
@@ -303,23 +302,11 @@ public static class UpdateChecker
         try
         {
             var manifest = ParseReleaseAssetManifest(File.ReadAllText(checksumPath));
-            if (manifest is null)
+            if (manifest is null ||
+                !VerifyReleaseManifestSignature(manifest, Path.GetFileName(downloadedPath), ReleaseManifestPublicKeyPem) ||
+                !string.Equals(manifest.Sha256, ComputeSha256Hex(downloadedPath), StringComparison.OrdinalIgnoreCase))
             {
-                Log.Debug("update", "apply-failed", new { error = "Invalid checksum sidecar", checksumPath });
-                return false;
-            }
-
-            if (!VerifyReleaseManifestSignature(manifest, Path.GetFileName(downloadedPath), ReleaseManifestPublicKeyPem))
-            {
-                Log.Debug("update", "apply-failed", new { error = "Invalid release signature", checksumPath });
-                return false;
-            }
-
-            var expected = manifest.Sha256;
-            var actual = ComputeSha256Hex(downloadedPath);
-            if (!string.Equals(expected, actual, StringComparison.OrdinalIgnoreCase))
-            {
-                Log.Debug("update", "apply-failed", new { error = "Checksum mismatch", expected, actual });
+                Log.Debug("update", "apply-failed", new { error = "Release verification failed", downloadedPath });
                 return false;
             }
         }
@@ -330,53 +317,43 @@ public static class UpdateChecker
         }
 
         string? oldPath = null;
+        string? extractionDir = null;
         try
         {
-            if (OperatingSystem.IsWindows())
+            var replacementPath = downloadedPath;
+            UnixFileMode? unixMode = null;
+            if (!OperatingSystem.IsWindows())
             {
-                // Windows: no se puede sobrescribir un exe en ejecución, pero sí renombrarlo.
-                oldPath = currentExe + ".old";
-                // Eliminar un .old previo si existe.
-                if (File.Exists(oldPath))
-                    File.Delete(oldPath);
+                unixMode = File.GetUnixFileMode(currentExe);
+                extractionDir = Path.Combine(Path.GetTempPath(), "LanCopy-Update", "extract-" + Guid.NewGuid().ToString("N"));
+                Directory.CreateDirectory(extractionDir);
+                if (OperatingSystem.IsLinux() && downloadedPath.EndsWith(".tar.gz", StringComparison.OrdinalIgnoreCase))
+                    TarFile.ExtractToDirectory(downloadedPath, extractionDir, overwriteFiles: true);
+                else if (OperatingSystem.IsMacOS() && downloadedPath.EndsWith(".zip", StringComparison.OrdinalIgnoreCase))
+                    ZipFile.ExtractToDirectory(downloadedPath, extractionDir, overwriteFiles: true);
+                else
+                    throw new InvalidDataException("Unsupported update package for this platform");
 
-                File.Move(currentExe, oldPath);
-                File.Copy(downloadedPath, currentExe, overwrite: true);
-
-                Log.Info("update", "apply-success-win", new { currentExe, oldPath });
-            }
-            else
-            {
-                // Linux / macOS: sobrescribir directamente y preservar permisos.
-                File.Copy(downloadedPath, currentExe, overwrite: true);
-
-                // Restaurar bit de ejecución (chmod +x).
-                try
-                {
-                    var psi = new System.Diagnostics.ProcessStartInfo("chmod", $"+x \"{currentExe}\"")
-                    {
-                        UseShellExecute = false,
-                        CreateNoWindow = true
-                    };
-                    System.Diagnostics.Process.Start(psi)?.WaitForExit(5000);
-                }
-                catch
-                {
-                    // No es crítico; en muchos escenarios el bit ya se conserva.
-                }
-
-                Log.Info("update", "apply-success-unix", new { currentExe });
+                replacementPath = Directory.EnumerateFiles(extractionDir, "LanCopy", SearchOption.AllDirectories)
+                    .FirstOrDefault() ?? throw new InvalidDataException("LanCopy executable is missing from update package");
             }
 
-            // Lanzar la nueva versión y salir.
-            var startInfo = new System.Diagnostics.ProcessStartInfo(currentExe)
+            oldPath = currentExe + ".old";
+            if (File.Exists(oldPath)) File.Delete(oldPath);
+            File.Move(currentExe, oldPath);
+            File.Copy(replacementPath, currentExe, overwrite: true);
+            if (!OperatingSystem.IsWindows() && unixMode.HasValue) File.SetUnixFileMode(currentExe, unixMode.Value);
+
+            if (extractionDir != null)
             {
-                UseShellExecute = true
-            };
-            System.Diagnostics.Process.Start(startInfo)?.Dispose(); // O16: dispose Process
+                Directory.Delete(extractionDir, recursive: true);
+                extractionDir = null;
+            }
+
+            Log.Info("update", "apply-success", new { currentExe, oldPath });
+            Process.Start(new ProcessStartInfo(currentExe) { UseShellExecute = true })?.Dispose();
             Environment.Exit(0);
-
-            return true; // No se alcanza, pero satisface el contrato del método.
+            return true;
         }
         catch (Exception ex)
         {
@@ -384,8 +361,7 @@ public static class UpdateChecker
             {
                 try
                 {
-                    if (File.Exists(currentExe))
-                        File.Delete(currentExe);
+                    if (File.Exists(currentExe)) File.Delete(currentExe);
                     File.Move(oldPath, currentExe);
                 }
                 catch (Exception restoreEx)
@@ -396,8 +372,12 @@ public static class UpdateChecker
             Log.Debug("update", "apply-failed", new { error = ex.Message });
             return false;
         }
+        finally
+        {
+            if (extractionDir != null)
+                try { Directory.Delete(extractionDir, recursive: true); } catch { }
+        }
     }
-
     public static string ComputeSha256Hex(string filePath)
     {
         using var fs = File.OpenRead(filePath);
@@ -502,14 +482,29 @@ public static class UpdateChecker
         try { if (File.Exists(path + ".sha256")) File.Delete(path + ".sha256"); } catch { }
     }
 
-    /// <summary>
-    /// Devuelve el sufijo de nombre de archivo esperado para el asset de la plataforma actual.
-    /// </summary>
-    private static string? GetPlatformAssetSuffix()
+    internal static string? GetPlatformAssetName(string platform, Architecture architecture)
     {
-        if (OperatingSystem.IsWindows()) return ".exe";
-        if (OperatingSystem.IsLinux()) return ".tar.gz";
-        if (OperatingSystem.IsMacOS()) return ".zip";
+        var arch = architecture switch
+        {
+            Architecture.X64 => "x64",
+            Architecture.Arm64 => "arm64",
+            _ => null
+        };
+        if (arch is null) return null;
+        return platform switch
+        {
+            "win" => $"LanCopy-win-{arch}.exe",
+            "linux" => $"LanCopy-linux-{arch}.tar.gz",
+            "osx" => $"LanCopy-osx-{arch}.zip",
+            _ => null
+        };
+    }
+
+    private static string? GetCurrentPlatform()
+    {
+        if (OperatingSystem.IsWindows()) return "win";
+        if (OperatingSystem.IsLinux()) return "linux";
+        if (OperatingSystem.IsMacOS()) return "osx";
         return null;
     }
 }
