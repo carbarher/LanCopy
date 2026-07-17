@@ -19,7 +19,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - name: Setup .NET
-        uses: actions/setup-dotnet@v5
+        uses: actions/setup-dotnet@v6
         with:
           dotnet-version: '9.0.x'
       - name: Restore
@@ -37,7 +37,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - name: Setup .NET
-        uses: actions/setup-dotnet@v5
+        uses: actions/setup-dotnet@v6
         with:
           dotnet-version: '9.0.x'
       - name: Restore
@@ -51,7 +51,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - name: Setup .NET
-        uses: actions/setup-dotnet@v5
+        uses: actions/setup-dotnet@v6
         with:
           dotnet-version: '9.0.x'
       - name: Restore
@@ -95,7 +95,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - name: Setup .NET
-        uses: actions/setup-dotnet@v5
+        uses: actions/setup-dotnet@v6
         with:
           dotnet-version: '9.0.x'
       - name: Publish (${{ matrix.rid }})
@@ -183,7 +183,12 @@ jobs:
             LanCopy-${{ matrix.rid }}.tar.gz
             LanCopy-${{ matrix.rid }}.deb
             LanCopy-${{ matrix.rid }}.AppImage
-            LanCopy-${{ matrix.rid }}.*.sha256
+            LanCopy-${{ matrix.rid }}.exe.sha256
+            LanCopy-${{ matrix.rid }}.tar.gz.sha256
+            LanCopy-${{ matrix.rid }}.deb.sha256
+            LanCopy-${{ matrix.rid }}.AppImage.sha256
+            LanCopy-${{ matrix.rid }}.zip.sha256
+            LanCopy-${{ matrix.rid }}.dmg.sha256
           if-no-files-found: ignore
 
   installer:
@@ -223,7 +228,9 @@ jobs:
           & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" /DMyAppVersion=$version installer\LanCopy.iss
           $installer = Get-ChildItem installer/Output/*.exe | Select-Object -First 1
           $hash = (Get-FileHash $installer.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
-          Set-Content -NoNewline "$($installer.FullName).sha256" $hash
+          $checksum = "$($installer.FullName).sha256"
+          Set-Content -NoNewline $checksum $hash
+          if (-not (Test-Path -LiteralPath $checksum)) { throw "Installer checksum was not created." }
       - name: Upload installer
         uses: actions/upload-artifact@v7
         with:
