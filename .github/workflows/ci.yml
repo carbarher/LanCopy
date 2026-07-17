@@ -226,10 +226,11 @@ jobs:
         run: |
           $version = "${{ github.ref_name }}".TrimStart('v')
           & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" /DMyAppVersion=$version installer\LanCopy.iss
-          $installer = Get-ChildItem installer/Output/*.exe | Select-Object -First 1
+          $installer = Get-ChildItem -LiteralPath installer/Output -Filter "LanCopy-Setup-*.exe" | Sort-Object LastWriteTimeUtc | Select-Object -Last 1
+          if (-not $installer) { throw "Installer was not created." }
           $hash = (Get-FileHash $installer.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
-          $checksum = "$($installer.FullName).sha256"
-          Set-Content -NoNewline $checksum $hash
+          $checksum = Join-Path $installer.DirectoryName "$($installer.Name).sha256"
+          [IO.File]::WriteAllText($checksum, $hash, [Text.UTF8Encoding]::new($false))
           if (-not (Test-Path -LiteralPath $checksum)) { throw "Installer checksum was not created." }
       - name: Upload installer
         uses: actions/upload-artifact@v7
