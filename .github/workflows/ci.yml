@@ -112,7 +112,7 @@ jobs:
         shell: pwsh
         run: |
           $hash = (Get-FileHash "LanCopy-${{ matrix.rid }}.exe" -Algorithm SHA256).Hash.ToLowerInvariant()
-          Set-Content -NoNewline "LanCopy-${{ matrix.rid }}.exe.sha256" $hash
+          [IO.File]::WriteAllText("LanCopy-${{ matrix.rid }}.exe.sha256", $hash, [Text.UTF8Encoding]::new($false))
       - name: Package Linux (tar.gz)
         if: startsWith(matrix.rid, 'linux-')
         run: |
