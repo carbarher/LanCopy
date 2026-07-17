@@ -2,10 +2,10 @@ name: CI
 
 on:
   push:
-    branches: [ main, master ]
+    branches: [ master ]
     tags: [ 'v*' ]
   pull_request:
-    branches: [ main, master ]
+    branches: [ master ]
   workflow_dispatch:
 
 jobs:
@@ -17,9 +17,9 @@ jobs:
         os: [ windows-latest, ubuntu-latest, macos-latest ]
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Setup .NET
-        uses: actions/setup-dotnet@v4
+        uses: actions/setup-dotnet@v5
         with:
           dotnet-version: '9.0.x'
       - name: Restore
@@ -35,9 +35,9 @@ jobs:
         os: [ windows-latest, ubuntu-latest, macos-latest ]
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Setup .NET
-        uses: actions/setup-dotnet@v4
+        uses: actions/setup-dotnet@v5
         with:
           dotnet-version: '9.0.x'
       - name: Restore
@@ -49,9 +49,9 @@ jobs:
     name: Performance Guard (ubuntu)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Setup .NET
-        uses: actions/setup-dotnet@v4
+        uses: actions/setup-dotnet@v5
         with:
           dotnet-version: '9.0.x'
       - name: Restore
@@ -93,9 +93,9 @@ jobs:
             rid: osx-x64
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Setup .NET
-        uses: actions/setup-dotnet@v4
+        uses: actions/setup-dotnet@v5
         with:
           dotnet-version: '9.0.x'
       - name: Publish (${{ matrix.rid }})
@@ -173,7 +173,7 @@ jobs:
           shasum -a 256 LanCopy-${{ matrix.rid }}.zip | awk '{print $1}' > LanCopy-${{ matrix.rid }}.zip.sha256
           shasum -a 256 LanCopy-${{ matrix.rid }}.dmg | awk '{print $1}' > LanCopy-${{ matrix.rid }}.dmg.sha256
       - name: Upload
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: LanCopy-${{ matrix.rid }}
           path: |
@@ -183,6 +183,7 @@ jobs:
             LanCopy-${{ matrix.rid }}.tar.gz
             LanCopy-${{ matrix.rid }}.deb
             LanCopy-${{ matrix.rid }}.AppImage
+            LanCopy-${{ matrix.rid }}.*.sha256
           if-no-files-found: ignore
 
   installer:
@@ -191,9 +192,9 @@ jobs:
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Download win-x64 artifact
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: LanCopy-win-x64
           path: dl/win-x64
@@ -220,11 +221,16 @@ jobs:
         run: |
           $version = "${{ github.ref_name }}".TrimStart('v')
           & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" /DMyAppVersion=$version installer\LanCopy.iss
+          $installer = Get-ChildItem installer/Output/*.exe | Select-Object -First 1
+          $hash = (Get-FileHash $installer.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+          Set-Content -NoNewline "$($installer.FullName).sha256" $hash
       - name: Upload installer
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: LanCopy-Setup
-          path: installer/Output/*.exe
+          path: |
+            installer/Output/*.exe
+            installer/Output/*.sha256
 
   release:
     name: GitHub Release
@@ -235,11 +241,11 @@ jobs:
       contents: write
     steps:
       - name: Download all artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           path: artifacts
       - name: Create release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           generate_release_notes: true   # GitHub genera las notas solo
           files: |
